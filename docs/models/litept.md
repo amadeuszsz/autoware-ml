@@ -106,11 +106,13 @@ against PTv3's 27.
 !!! note "Patch size at the coarsest stages"
 
     Attention runs only at 1/8 and 1/16 resolution, where the voxel count can
-    approach `enc_patch_size`. `SerializedAttention` refuses to export when a
-    sample has fewer serialized points than the patch size, even though the
-    export-mode padding handles that case. Measure the stage-3 and stage-4
-    voxel counts on the sparsest frames you deploy against and set
-    `enc_patch_size` accordingly.
+    approach or fall below `enc_patch_size`. That is handled by the cyclic
+    window fill described in
+    [PointTransformerV3](ptv3.md#attention-window-fill-at-export), which keeps
+    the window size static and needs no configuration. It is still worth
+    measuring the stage-3 and stage-4 voxel counts on the sparsest frames you
+    deploy against: a stage that sits below one window becomes global attention
+    over that stage, which is correct but changes what the layer is doing.
 
 ## Implementation
 

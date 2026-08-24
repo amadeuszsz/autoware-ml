@@ -207,7 +207,8 @@ def test_prepare_for_export_handles_loaded_flash_attention_module() -> None:
     assert export_encoder.attention.enable_flash is False
 
 
-def test_serialized_attention_export_mode_requires_fixed_patch_size_capacity() -> None:
+def test_serialized_attention_export_mode_keeps_a_static_window_below_capacity() -> None:
+    """A sample smaller than one window exports without shrinking the window."""
     attention = SerializedAttention(
         channels=32,
         num_heads=4,
@@ -234,8 +235,12 @@ def test_serialized_attention_export_mode_requires_fixed_patch_size_capacity() -
         }
     )
 
-    with pytest.raises(ValueError, match="at least 4 serialized points"):
-        attention(point)
+    output = attention(point)
+
+    assert output.feat.shape == (3, 32)
+    # The window stays at its configured size; only the fill adapts.
+    assert attention.patch_size == 4
+    assert torch.isfinite(output.feat).all()
 
 
 def test_serialized_attention_non_export_mode_adapts_patch_size() -> None:
