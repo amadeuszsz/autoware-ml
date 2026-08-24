@@ -94,6 +94,7 @@ class TestT4Detection3DDataset:
                 "timestamp": 1700000000.1,
                 "instances": [],
                 "sweeps": [],
+                "ego2global": np.eye(4),
             }
         ]
         dataset.data_root = str(tmp_path)
