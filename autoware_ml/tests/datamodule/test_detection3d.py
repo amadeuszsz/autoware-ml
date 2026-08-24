@@ -72,10 +72,13 @@ class TestT4Detection3DDataset:
         names = output["gt_names"]
         num_points = output["gt_num_points"]
 
-        assert boxes.shape == (1, 9)
-        assert labels.tolist() == [0]
-        assert names.tolist() == ["car"]
-        assert num_points.tolist() == [12]
+        # An invalid 0-point box reaches eval and is filtered there by
+        # min_num_points, so the loader keeps both mapped instances and carries
+        # the point count through for the occlusion split.
+        assert boxes.shape == (2, 9)
+        assert labels.tolist() == [0, 2]
+        assert names.tolist() == ["car", "pedestrian"]
+        assert num_points.tolist() == [12, 0]
         assert np.allclose(boxes[0, -2:], np.array([0.1, 0.0], dtype=np.float32))
 
     def test_get_data_info_exposes_metadata_for_loader_pipeline(self, tmp_path) -> None:

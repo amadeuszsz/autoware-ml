@@ -79,7 +79,6 @@ def compute_frame_sampling_weights(
     name_mapping: Mapping[str, str],
     frame_sampling: FrameSamplingConfig | None,
     filter_attributes: list[list[str]] | None = None,
-    use_valid_flag: bool = True,
 ) -> list[float]:
     """Compute repeat-factor sampling weights for T4 detection samples."""
     if frame_sampling is None:
@@ -98,7 +97,6 @@ def compute_frame_sampling_weights(
             name_mapping,
             frame_sampling,
             normalized_filter_attributes,
-            use_valid_flag,
         )
         frame_categories.append(categories)
         for category, count in categories.items():
@@ -140,7 +138,6 @@ def _sample_sampling_categories(
     name_mapping: Mapping[str, str],
     frame_sampling: FrameSamplingConfig,
     filter_attributes: frozenset[tuple[str, str]],
-    use_valid_flag: bool,
 ) -> dict[str, int]:
     """Return sampling category counts for one frame."""
     categories = {*class_names, frame_sampling.low_pedestrian_category_name}
@@ -153,7 +150,6 @@ def _sample_sampling_categories(
             name_mapping=name_mapping,
             label_to_category=sample.get("label_to_category"),
             filter_attributes=filter_attributes,
-            use_valid_flag=use_valid_flag,
         )
         if mapped_name is None:
             continue
@@ -204,7 +200,6 @@ class T4Detection3DDataset(Dataset):
         class_names: list[str],
         name_mapping: Mapping[str, str],
         filter_attributes: list[list[str]] | None = None,
-        use_valid_flag: bool = True,
         frame_sampling: FrameSamplingConfig | None = None,
         dataset_transforms: TransformsCompose | None = None,
     ) -> None:
@@ -216,7 +211,6 @@ class T4Detection3DDataset(Dataset):
             class_names: Ordered detector class names.
             name_mapping: Mapping from dataset labels to detector labels.
             filter_attributes: Raw class-attribute pairs excluded from detection targets.
-            use_valid_flag: Whether ``bbox_3d_isvalid`` excludes sampled boxes.
             frame_sampling: Optional repeat-factor frame sampling settings.
             dataset_transforms: Optional dataset transform pipeline.
         """
@@ -235,7 +229,6 @@ class T4Detection3DDataset(Dataset):
             self.name_mapping,
             self.frame_sampling,
             filter_attributes=filter_attributes,
-            use_valid_flag=use_valid_flag,
         )
         # Serialize last: frame_weights above must run on the live list.
         self.data_infos = SerializedSampleList(data_infos)
@@ -286,7 +279,6 @@ class T4Detection3DDataModule(DataModule):
         class_names: list[str],
         name_mapping: Mapping[str, str],
         filter_attributes: list[list[str]] | None = None,
-        use_valid_flag: bool = True,
         train_frame_sampling: FrameSamplingConfig | Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -300,7 +292,6 @@ class T4Detection3DDataModule(DataModule):
             class_names: Ordered detector class names.
             name_mapping: Mapping from dataset labels to detector labels.
             filter_attributes: Raw class-attribute pairs excluded from detection targets.
-            use_valid_flag: Whether ``bbox_3d_isvalid`` excludes sampled train boxes.
             train_frame_sampling: Optional repeat-factor frame sampling
                 settings applied only to the training split.
             **kwargs: Additional base datamodule configuration.
@@ -310,7 +301,6 @@ class T4Detection3DDataModule(DataModule):
         self.class_names = class_names
         self.name_mapping = name_mapping
         self.filter_attributes = filter_attributes
-        self.use_valid_flag = use_valid_flag
         self.train_frame_sampling = coerce_frame_sampling(train_frame_sampling)
 
         def resolve_ann_file(ann_file: str) -> str:
@@ -341,7 +331,6 @@ class T4Detection3DDataModule(DataModule):
             class_names=self.class_names,
             name_mapping=self.name_mapping,
             filter_attributes=self.filter_attributes,
-            use_valid_flag=self.use_valid_flag,
             frame_sampling=self.train_frame_sampling if split == "train" else None,
             dataset_transforms=dataset_transforms,
         )
