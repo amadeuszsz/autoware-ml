@@ -1,0 +1,13 @@
+# @package _global_
+#
+# LitePT on T4Dataset J6Gen2 at 122 m. Everything outside the network - dataset,
+# transforms, optimizer, deploy settings - is inherited from the PTv3 config of
+# the same name; only the encoder and decoder head are swapped. The LitePT
+# encoder block overrides every field it shares with the PTv3 encoder, including
+# the depths and patch sizes that config narrows, so this is the full-size
+# topology rather than a tiny one.
+defaults:
+  - /tasks/segmentation3d/ptv3/voxel012_122m_t4dataset_j6gen2
+  - /tasks/segmentation3d/litept/encoder
+  - /tasks/segmentation3d/litept/seg_head
+  - _self_

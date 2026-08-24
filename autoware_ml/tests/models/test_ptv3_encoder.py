@@ -24,6 +24,7 @@ from autoware_ml.models.segmentation3d.ptv3 import (
     _PTv3SegmentationExportModule,
 )
 from autoware_ml.models.segmentation3d.ptv3_base import (
+    EncoderExportContract,
     build_ptv3_encoder_dynamic_axes,
     validate_serialization_geometry,
 )
@@ -150,6 +151,7 @@ def test_build_export_module_disables_flash_attention_without_mutating_live_enco
             seg3d_head=nn.Linear(4, 2),
             sparse_shape=torch.tensor([64, 64, 64], dtype=torch.long),
             serialized_depth=torch.tensor(6, dtype=torch.long),
+            contract=EncoderExportContract(needs_base_code=True, pooling_plan=()),
         )
 
     export_attention = export_module.encoder.attention
