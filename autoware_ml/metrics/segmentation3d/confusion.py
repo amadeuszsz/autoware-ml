@@ -32,7 +32,12 @@ def class_name_token(class_index: int, class_names: tuple[str, ...] | None) -> s
 
 @dataclass
 class ConfusionState:
-    """Synced confusion matrix for one bucket, with cached marginals."""
+    """Synced confusion matrix for one bucket, with cached marginals.
+
+    In a grouped suite the matrix is already folded onto the behaviour taxonomy,
+    so ``class_names`` are the grouped names and every metric reads it exactly as
+    it reads the per-class matrix.
+    """
 
     confusion: torch.Tensor
     class_names: tuple[str, ...] | None
