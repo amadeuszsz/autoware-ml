@@ -26,6 +26,10 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from autoware_ml.metrics.segmentation3d.eval_output import (
+    concat_frame_ids,
+    segmentation_frames_eval_output,
+)
 from autoware_ml.models.base import BaseModel
 from autoware_ml.utils.deploy import ExportSpec
 
@@ -224,14 +228,25 @@ class FRNet(BaseModel):
 
     def build_eval_output(
         self, batch: Mapping[str, Any], outputs: tuple[torch.Tensor, ...]
-    ) -> dict[str, torch.Tensor]:
-        """Pair point predictions with targets for the segmentation metric."""
+    ) -> dict[str, Any]:
+        """Pair per-frame point predictions with targets for the segmentation suites.
+
+        FRNet's logits are already at the original point level, so each point's
+        frame is its own position in the batch-concatenated ``points`` tensor,
+        bucketed by the batch ``offset``.
+        """
         point_logits = outputs[0]
-        return {
-            "seg_pred_labels": point_logits.argmax(dim=1),
-            "seg_target_labels": batch["pts_semantic_mask"],
-            "seg_coord": batch["points"][:, :3],
-        }
+        offset = batch["offset"].long()
+        point_index = torch.arange(point_logits.shape[0], device=point_logits.device)
+        return segmentation_frames_eval_output(
+            coord=batch["points"][:, :3],
+            pred_labels=point_logits.argmax(dim=1),
+            target_labels=batch["pts_semantic_mask"].long(),
+            scores=torch.softmax(point_logits, dim=1),
+            frame_ids=concat_frame_ids(offset, point_index),
+            num_frames=int(offset.shape[0]),
+            batch=batch,
+        )
 
     def predict_outputs(
         self,
