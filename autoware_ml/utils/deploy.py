@@ -33,6 +33,7 @@ import torch
 from torch.export import Dim
 
 from autoware_ml.ops.segment.scatter_reduce import register_scatter_reduce_onnx_symbolic
+from autoware_ml.utils.onnx_modifiers import restore_pruned_graph_inputs
 
 logger = logging.getLogger(__name__)
 
@@ -384,6 +385,18 @@ def export_to_onnx(
         merge_onnx_external_data(output_path)
         data_path.unlink()
         logger.info("Successfully merged external data into the ONNX file")
+
+    # The exporter prunes inputs the traced model never consumes, which leaves the
+    # artifact narrower than the interface just declared. Restore them so the graph
+    # always accepts exactly `input_names`. Runs on the final file, after any
+    # external-data merge.
+    restored = restore_pruned_graph_inputs(output_path, input_names, input_sample, dynamic_axes)
+    if restored:
+        logger.info(
+            "Restored %d declared input(s) the exporter pruned as unused: %s",
+            len(restored),
+            ", ".join(restored),
+        )
 
 
 def instantiate_modifier(modify_graph_cfg: DictConfig) -> Any:

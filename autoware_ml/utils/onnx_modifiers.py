@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -251,3 +252,59 @@ class TransHeadTensorRTModifier:
         ).modify(patched_path)
 
     __call__ = modify
+
+
+def restore_pruned_graph_inputs(
+    onnx_path: str | Path,
+    input_names: Sequence[str],
+    input_sample: Sequence[Any],
+    dynamic_axes: Mapping[str, Mapping[int, str]] | None = None,
+) -> list[str]:
+    """Re-add declared graph inputs that the ONNX exporter pruned.
+
+    The exporter drops inputs the traced model never consumes. That is normally
+    right, but it leaves the exported artifact narrower than the interface the
+    export declared, so a consumer binding by the declared list would bind more
+    tensors than the graph accepts. Configurations that gate parts of the network
+    off hit this: a tensor feeding only a disabled branch becomes dead code.
+
+    The pruned inputs are restored in their declared positions as unconnected
+    graph inputs, which ONNX permits. They carry no nodes and so cost nothing to
+    execute; a runtime simply binds them and ignores them.
+
+    Args:
+        onnx_path: Exported model to patch in place.
+        input_names: Declared input names, in declared order.
+        input_sample: Example tensors matching ``input_names`` positionally, used
+            for element type and rank.
+        dynamic_axes: Optional declared dynamic axes, used to name symbolic dims
+            so the restored inputs stay consistent with the surviving ones.
+
+    Returns:
+        Names restored, in declared order. Empty when the graph already matched.
+    """
+    _, onnx, _, helper, numpy_helper = _import_onnx_tooling()
+
+    path = Path(onnx_path)
+    if not path.exists():
+        return []
+    model = onnx.load(str(path), load_external_data=False)
+    present = {value.name for value in model.graph.input}
+    missing = [(position, name) for position, name in enumerate(input_names) if name not in present]
+    if not missing:
+        return []
+
+    for position, name in missing:
+        if position >= len(input_sample):
+            raise ValueError(f"No example tensor for declared input '{name}'.")
+        tensor = input_sample[position]
+        array = tensor.detach().cpu().numpy()
+        axes = dict((dynamic_axes or {}).get(name, {}))
+        dims: list[Any] = [axes.get(axis, int(size)) for axis, size in enumerate(array.shape)]
+        value_info = helper.make_tensor_value_info(
+            name, numpy_helper.from_array(array).data_type, dims
+        )
+        model.graph.input.insert(position, value_info)
+
+    onnx.save(model, str(path))
+    return [name for _, name in missing]

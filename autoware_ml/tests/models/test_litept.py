@@ -328,3 +328,43 @@ def test_ptv3_monolithic_export_contract_still_lists_every_tensor() -> None:
         "serialized_pooling_0_serialized_order",
         "serialized_pooling_0_serialized_inverse",
     ]
+
+
+@REQUIRES_SPARSE_CUDA
+def test_exported_encoder_graph_matches_the_declared_contract(tmp_path) -> None:
+    """The exported graph must accept exactly the inputs the contract declares.
+
+    A hardcoded expected-name list cannot catch this: it asserts what the contract
+    function returns, not what survives tracing. The exporter prunes inputs the
+    traced model never consumes, so a gated configuration - where a tensor feeds
+    only a disabled branch - silently ends up with an artifact narrower than its
+    own declared interface.
+    """
+    import onnx
+    from omegaconf import OmegaConf
+
+    from autoware_ml.utils.deploy import export_to_onnx
+
+    onnx_cfg = OmegaConf.create(
+        {"opset_version": 17, "dynamo": False, "do_constant_folding": False}
+    )
+
+    for tag, model in (("litept", build_litept_seg_model()), ("ptv3", build_seg_model())):
+        model = model.cuda().eval()
+        batch = move_batch_to_device(build_inputs(), torch.device("cuda"))
+        spec = model.build_export_specs(batch)["encoder"]
+        path = tmp_path / f"{tag}_encoder.onnx"
+
+        export_to_onnx(
+            model=spec.module,
+            input_sample=spec.args,
+            onnx_cfg=onnx_cfg,
+            input_param_names=list(spec.input_param_names),
+            output_names_override=list(spec.output_names),
+            dynamic_axes_override=spec.dynamic_axes,
+            output_path=path,
+        )
+
+        graph = onnx.load(str(path)).graph
+        assert [i.name for i in graph.input] == list(spec.input_param_names), tag
+        onnx.checker.check_model(onnx.load(str(path)))
