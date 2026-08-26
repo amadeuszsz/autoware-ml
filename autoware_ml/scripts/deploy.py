@@ -56,6 +56,7 @@ from autoware_ml.utils.onnx_precision import (
     convert_onnx_precision,
     resolve_onnx_precision,
     should_convert_precision,
+    validate_module_onnx_precision,
 )
 from autoware_ml.utils.runtime import (
     configure_torch_runtime,
@@ -234,6 +235,7 @@ def main(cfg: DictConfig) -> None:
                         "deploy.onnx.enabled=true. Disable the stage or use a supported model."
                     )
                 else:
+                    validate_module_onnx_precision(export_spec.module, module_onnx_cfg)
                     export_to_onnx(
                         export_spec.module,
                         export_spec.args,
