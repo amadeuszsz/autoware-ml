@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from autoware_ml.datamodule.common.multiview_detection3d import MultiviewDetection3DDataset
+from autoware_ml.datamodule.t4dataset.multiview_detection3d import T4MultiviewDetection3DDataset
 from autoware_ml.transforms.base import TransformsCompose
 from autoware_ml.transforms.boxes3d.loading import LoadAnnotations3D
 from autoware_ml.transforms.camera.loading import LoadMultiViewImagesFromFiles
@@ -80,6 +81,46 @@ def test_multiview_detection_dataset_applies_loader_pipeline(tmp_path: Path) -> 
     assert output["prev_exists"] == np.float32(0.0)
     assert output["gt_boxes"].shape == (1, 9)
     assert output["gt_labels"].tolist() == [0]
+
+
+def test_t4_multiview_exposes_metric_frame_context(tmp_path: Path) -> None:
+    # The metric suites need the map-frame ego pose and the map-resolvable
+    # <db>/<uuid>/<version> scene token, not the opaque annotation token.
+    ego2global = np.eye(4, dtype=np.float64)
+    ego2global[:3, 3] = [10.0, 20.0, 0.0]
+    sample = {
+        "token": "sample-1",
+        "timestamp": 123,
+        "scene_token": "opaque-annotation-token",
+        "ego2global": ego2global,
+        "lidar_points": {
+            "lidar_path": "db_x/uuid-1/0/data/LIDAR_CONCAT/0.pcd.bin",
+            "num_pts_feats": 5,
+        },
+        "images": {
+            "CAM_FRONT": {
+                "img_path": "cam.png",
+                "cam2img": np.eye(3, dtype=np.float32),
+                "lidar2cam": np.eye(4, dtype=np.float32),
+            }
+        },
+        "instances": [],
+    }
+    ann_file = tmp_path / "infos.pkl"
+    with open(ann_file, "wb") as file:
+        pickle.dump({"data_list": [sample], "metainfo": {"classes": ["car"]}}, file)
+
+    dataset = T4MultiviewDetection3DDataset(
+        data_root=str(tmp_path),
+        ann_file=str(ann_file),
+        class_names=["car"],
+        camera_order=["CAM_FRONT"],
+    )
+
+    info = dataset.get_data_info(0)
+
+    assert info["scene_token"] == "db_x/uuid-1/0"
+    assert np.allclose(info["ego2global"], ego2global)
 
 
 def test_multiview_detection_dataset_builds_prev_exists_from_scene_tokens(

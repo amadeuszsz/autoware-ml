@@ -82,7 +82,8 @@ class TestT4Detection3DDataset:
         assert np.allclose(boxes[0, -2:], np.array([0.1, 0.0], dtype=np.float32))
 
     def test_get_data_info_exposes_metadata_for_loader_pipeline(self, tmp_path) -> None:
-        lidar_path = tmp_path / "sample.bin"
+        lidar_path = tmp_path / "db" / "uuid" / "0" / "data" / "sample.bin"
+        lidar_path.parent.mkdir(parents=True)
         np.arange(10, dtype=np.float32).tofile(lidar_path)
 
         dataset = object.__new__(T4Detection3DDataset)
@@ -94,6 +95,7 @@ class TestT4Detection3DDataset:
                 "timestamp": 1700000000.1,
                 "instances": [],
                 "sweeps": [],
+                "ego2global": np.eye(4),
             }
         ]
         dataset.data_root = str(tmp_path)
