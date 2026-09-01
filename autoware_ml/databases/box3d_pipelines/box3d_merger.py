@@ -6,7 +6,7 @@ from typing import Sequence, Tuple, Set
 from types import MappingProxyType
 
 import numpy as np
-import numpy.typing as npt
+from jaxtyping import Float64
 from shapely.geometry import Polygon
 
 from autoware_ml.types.geometry import Box3DFieldIndex
@@ -69,14 +69,16 @@ class Box3DMerger(Box3DPipeline):
         return new_boxes3d_data_model
 
     def _check_boxes_overlap(
-        self, first_box3d: npt.NDArray[np.float32], second_box3d: npt.NDArray[np.float32]
+        self,
+        first_box3d: Float64[np.ndarray, " num_box_fields"],
+        second_box3d: Float64[np.ndarray, " num_box_fields"],
     ) -> bool:
         """
         Check if two 3D bounding boxes overlap in 2D projection.
 
         Args:
-          first_box3d (len(Box3DFieldIndex), ): Bounding box 1, please check Box3DFieldIndex for the field indices.
-          second_box3d (len(Box3DFieldIndex), ): Bounding box 2, please check Box3DFieldIndex for the field indices.
+          first_box3d: Bounding box 1, please check Box3DFieldIndex for the field indices.
+          second_box3d: Bounding box 2, please check Box3DFieldIndex for the field indices.
 
         Returns:
           bool: True if the two boxes overlap, False otherwise.
@@ -125,14 +127,16 @@ class Box3DMerger(Box3DPipeline):
         return polygon_1.intersects(polygon_2)
 
     def _check_boxes_proximity(
-        self, first_box3d: npt.NDArray[np.float32], second_box3d: npt.NDArray[np.float32]
+        self,
+        first_box3d: Float64[np.ndarray, " num_box_fields"],
+        second_box3d: Float64[np.ndarray, " num_box_fields"],
     ) -> bool:
         """
         Check if two 3D bounding boxes are close to each other by
           checking distance between their front and back face centers.
         Args:
-          first_box3d (len(Box3DFieldIndex), ): Bounding box 1, please check Box3DFieldIndex for the field indices.
-          second_box3d (len(Box3DFieldIndex), ): Bounding box 2, please check Box3DFieldIndex for the field indices.
+          first_box3d: Bounding box 1, please check Box3DFieldIndex for the field indices.
+          second_box3d: Bounding box 2, please check Box3DFieldIndex for the field indices.
 
         Returns:
           bool: True if the two boxes are close to each other, False otherwise.
@@ -167,14 +171,16 @@ class Box3DMerger(Box3DPipeline):
         return False
 
     def match_boxes_3d(
-        self, boxes3d_params: npt.NDArray[np.float32], boxes3d_label_names: Sequence[str]
+        self,
+        boxes3d_params: Float64[np.ndarray, "num_boxes num_box_fields"],
+        boxes3d_label_names: Sequence[str],
     ) -> MappingProxyType[str, Sequence[Tuple[int, int]]]:
         """
         Match 3D bounding boxes based on the target labels and source labels.
 
         Args:
-          boxes3d_params (N, len(Box3DFieldIndex)): 3D bounding boxes, please check Box3DFieldIndex for the field indices.
-          boxes3d_label_names (N, ): 3D bounding box label names.
+          boxes3d_params: 3D bounding boxes, please check Box3DFieldIndex for the field indices.
+          boxes3d_label_names: 3D bounding box label names.
 
         Returns:
           MappingProxyType[str, Sequence[Tuple[int, int]]]: Mapping of target labels to matched pairs of box indices.
@@ -295,9 +301,9 @@ class Box3DMerger(Box3DPipeline):
 
     def merge_boxes_3d(
         self,
-        first_box3d: npt.NDArray[np.float32],
-        second_box3d: npt.NDArray[np.float32],
-    ) -> npt.NDArray[np.float32]:
+        first_box3d: Float64[np.ndarray, " num_box_fields"],
+        second_box3d: Float64[np.ndarray, " num_box_fields"],
+    ) -> Float64[np.ndarray, " num_box_fields"]:
         """
         Merge two 3D bounding boxes. This function is implemented in the subclass.
         Args:
@@ -305,7 +311,7 @@ class Box3DMerger(Box3DPipeline):
           second_box3d: Second 3D bounding box.
 
         Returns:
-          npt.NDArray[np.float32]: Merged 3D bounding box.
+          Float64[np.ndarray, " num_box_fields"]: Merged 3D bounding box.
         """
 
         raise NotImplementedError("Subclass must implement this method")
@@ -355,16 +361,22 @@ class Box3DExtendLongerMerger(Box3DMerger):
 
     @staticmethod
     def _get_box_faces(
-        box: npt.NDArray[np.float32],
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
+        box: Float64[np.ndarray, " num_box_fields"],
+    ) -> Tuple[
+        Float64[np.ndarray, " 2"],
+        Float64[np.ndarray, " 2"],
+        Float64[np.ndarray, " 2"],
+        float,
+        float,
+    ]:
         """
         Get the faces of a 3D bounding box.
 
         Args:
-          box (len(Box3DFieldIndex), ): Bounding box, please check Box3DFieldIndex for the field indices.
+          box: Bounding box, please check Box3DFieldIndex for the field indices.
 
         Returns:
-          Tuple[np.ndarray, np.ndarray, np.ndarray, float, float]: Center, face1 center, face2 center, length, width.
+          Tuple of the center, face1 center, face2 center, length, and width.
         """
 
         x, y, length, width, yaw = (
@@ -399,9 +411,9 @@ class Box3DExtendLongerMerger(Box3DMerger):
 
     def merge_boxes_3d(
         self,
-        first_box3d: npt.NDArray[np.float32],
-        second_box3d: npt.NDArray[np.float32],
-    ) -> npt.NDArray[np.float32]:
+        first_box3d: Float64[np.ndarray, " num_box_fields"],
+        second_box3d: Float64[np.ndarray, " num_box_fields"],
+    ) -> Float64[np.ndarray, " num_box_fields"]:
         """
         Gives impression of merging two 3D bounding boxes by elongating the larger box.
 
@@ -410,11 +422,12 @@ class Box3DExtendLongerMerger(Box3DMerger):
         larger box. Then, the larger box is elongated upto that point.
 
         Args:
-          first_box3d (len(Box3DFieldIndex), ): Bounding box 1, please check Box3DFieldIndex for the field indices.
-          second_box3d (len(Box3DFieldIndex), ): Bounding box 2, please check Box3DFieldIndex for the field indices.
+          first_box3d: Bounding box 1, please check Box3DFieldIndex for the field indices.
+          second_box3d: Bounding box 2, please check Box3DFieldIndex for the field indices.
 
         Returns:
-          npt.NDArray[np.float32]: Merged 3D bounding box, please check Box3DFieldIndex for the field indices.
+          Float64[np.ndarray, " num_box_fields"]: Merged 3D bounding box, please check
+            Box3DFieldIndex for the field indices.
         """
         # Identify the centers and faces of both boxes
         box1_center, box1_face1, box1_face2, length_1, width_1 = self._get_box_faces(first_box3d)

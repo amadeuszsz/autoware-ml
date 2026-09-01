@@ -36,6 +36,7 @@ option_exec=false
 option_stop=false
 GPU_SPEC="all"
 DATA_PATH=""
+RECORDS_PATH=""
 WORKSPACE=""
 MEMORY_CONFIG=""
 MODE=""
@@ -55,6 +56,7 @@ print_help() {
     echo -e "Options:"
     echo -e "  ${GREEN}--help/-h${NC}            Display this help message"
     echo -e "  ${GREEN}--data-path${NC}          Specify the path to mount data files into /workspace/data (overrides AUTOWARE_ML_DATA_PATH if set)"
+    echo -e "  ${GREEN}--records-path${NC}       Specify the path to mount dataset record tables into /workspace/records (overrides AUTOWARE_ML_RECORDS_PATH if set)"
     echo -e "  ${GREEN}--headless${NC}           Run Autoware-ML in headless mode (default: false)"
     echo -e "  ${GREEN}--detached${NC}           Start the container in detached mode, then enter it automatically"
     echo -e "  ${GREEN}--gpus${NC}               Specify GPU devices for Docker (default: all, e.g. all or device=0,1)"
@@ -100,6 +102,11 @@ parse_arguments() {
         --data-path)
             validate_option_value "--data-path" "$2"
             DATA_PATH="$2"
+            shift
+            ;;
+        --records-path)
+            validate_option_value "--records-path" "$2"
+            RECORDS_PATH="$2"
             shift
             ;;
         --cmd)
@@ -166,6 +173,16 @@ set_variables() {
         DATA="--mount type=bind,source=${AUTOWARE_ML_DATA_PATH},target=/workspace/data,bind-propagation=rshared"
     else
         echo -e "${ORANGE}Neither --data-path nor AUTOWARE_ML_DATA_PATH is set. Not mounting any data directory.${NC}"
+    fi
+
+    # Record tables are written by the generator and read by training, so they live on
+    # their own writable mount and the data mount can stay read only.
+    if [ "$RECORDS_PATH" != "" ]; then
+        RECORDS="--mount type=bind,source=${RECORDS_PATH},target=/workspace/records,bind-propagation=rshared"
+    elif [ -n "$AUTOWARE_ML_RECORDS_PATH" ]; then
+        RECORDS="--mount type=bind,source=${AUTOWARE_ML_RECORDS_PATH},target=/workspace/records,bind-propagation=rshared"
+    else
+        echo -e "${ORANGE}Neither --records-path nor AUTOWARE_ML_RECORDS_PATH is set. Not mounting any records directory.${NC}"
     fi
 
     if [ -f /etc/localtime ]; then
@@ -293,7 +310,7 @@ print_run_command() {
         -e XAUTHORITY="${XAUTHORITY}" -e NVIDIA_DRIVER_CAPABILITIES=all \
         -e TZ="$(cat /etc/timezone)" \
         ${USER_ENV} \
-        ${LOCALTIME_MOUNT} ${WORKSPACE} ${DATA} ${CONTAINER} ${IMAGE} "${RUN_TAIL[@]}"
+        ${LOCALTIME_MOUNT} ${WORKSPACE} ${DATA} ${RECORDS} ${CONTAINER} ${IMAGE} "${RUN_TAIL[@]}"
 }
 
 # Run a new container
@@ -317,7 +334,7 @@ run() {
         -e XAUTHORITY=${XAUTHORITY} -e NVIDIA_DRIVER_CAPABILITIES=all \
         -e TZ="$(cat /etc/timezone)" \
         ${USER_ENV} \
-        ${LOCALTIME_MOUNT} ${WORKSPACE} ${DATA} ${CONTAINER} ${IMAGE} "${RUN_TAIL[@]}"
+        ${LOCALTIME_MOUNT} ${WORKSPACE} ${DATA} ${RECORDS} ${CONTAINER} ${IMAGE} "${RUN_TAIL[@]}"
 
     if [ "$option_detached" = "true" ]; then
         wait_for_container

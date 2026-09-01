@@ -21,10 +21,10 @@ flowchart TB
     end
 
     subgraph TrainingPipeline [Training Pipeline]
-        InfoFiles[Info Files]
-        InfoFiles --> LightningDataModule[Lightning Data Module]
+        Records[Dataset Records]
+        Records --> LightningDataModule[Lightning Data Module]
         LightningDataModule --> Transforms[Transforms]
-        Transforms --> Collation[Collation]
+        Transforms --> Collation[Typed Batch]
         Collation --> BatchTransfer[Batch Transfer]
         BatchTransfer --> Preprocessing[Model Preprocessing]
         Preprocessing --> ForwardPass[Forward Pass]
@@ -57,7 +57,7 @@ flowchart TB
     Hydra --> Trainer
     Hydra --> ModelWeights
 
-    style InfoFiles fill:#bbdefb,opacity:0.2,stroke:#1976d2
+    style Records fill:#bbdefb,opacity:0.2,stroke:#1976d2
     style LightningDataModule fill:#bbdefb,opacity:0.2,stroke:#1976d2
     style Transforms fill:#bbdefb,opacity:0.2,stroke:#1976d2
     style Collation fill:#bbdefb,opacity:0.2,stroke:#1976d2
@@ -88,18 +88,18 @@ See [Configuration Guide](../user-guide/configuration.md) for full details on Hy
 
 ### Data Module
 
-The `DataModule` class (extending `LightningDataModule`) manages:
-
-- Dataset creation for each split (train/val/test/predict)
-- DataLoader configuration (batch size, workers, shuffling, pin_memory, etc.)
-- Transforms (CPU-side augmentations per split)
-- Collation (batching samples together via per-key `collation_map` strategies)
+Data flows from databases. A database owns one corpus, generates its dataset records once, and
+caches them as a parquet table. The datamodule splits the records with a scenario splitter and
+serves them through one dataset class per dataset family. A `DatasetSource` pairs a database
+with its supervision coverage, so one datamodule can mix corpora with different labels.
 
 ```python
-class DataModule(L.LightningDataModule, ABC):
+class DataModule(L.LightningDataModule):
     def __init__(
         self,
-        collation_map: Mapping[str, CollationStrategy] | None = None,
+        dataset: Callable[..., Dataset],
+        sources: Sequence[DatasetSource],
+        splitter: SplitterInterface,
         train_transforms: TransformsCompose | None = None,
         val_transforms: TransformsCompose | None = None,
         test_transforms: TransformsCompose | None = None,
@@ -108,103 +108,97 @@ class DataModule(L.LightningDataModule, ABC):
         val_dataloader_cfg: DataLoaderConfig | None = None,
         test_dataloader_cfg: DataLoaderConfig | None = None,
         predict_dataloader_cfg: DataLoaderConfig | None = None,
+        train_frame_sampling: FrameSamplingConfig | None = None,
     ):
         ...
 
-    @abstractmethod
-    def _create_dataset(
-        self, split: str, transforms: TransformsCompose | None = None
-    ) -> Dataset:
+    @staticmethod
+    def collate_fn(samples: list[Sample]) -> Batch:
         ...
-
-    def collate_fn(self, batch_inputs_dicts: Sequence[dict[str, Any]]) -> dict[str, Any]:
-        ...
-
 ```
 
-The `Dataset` base class handles transforms application:
+The dataset seeds a typed `Sample` from one record and runs the transform pipeline on it. Every
+task field of a sample is optional, one dataset class serves detection, segmentation, multiview,
+and calibration workloads:
 
 ```python
 class Dataset(TorchDataset, ABC):
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        input_dict = self.get_data_info(index)
+    def __getitem__(self, index: int) -> Sample:
+        sample = self.build_seed_sample(index)
         context = PipelineContext(dataset=self, index=index)
-        return self.apply_transforms(input_dict, self.dataset_transforms, context)
+        return self.apply_transforms(sample, self.dataset_transforms, context)
 
     @abstractmethod
-    def get_data_info(self, index: int) -> dict[str, Any]:
+    def build_meta(self, record: DatasetRecord) -> FrameMeta:
         ...
 ```
 
-Datasets are expected to return metadata records. File loading and sample
-materialization should happen in transforms.
+A seed sample carries only the record and the frame metadata. File loading and sample
+materialization happen in transforms. Collation is fixed: `Batch.collate` turns a list of
+samples into the typed `Batch` the models consume, and model family specific layouts are
+derived later by the runtime preprocessing on the target device.
 
 ### Transforms
 
-Transforms are composable data augmentations applied per-sample on CPU. They follow a dict-in/dict-out pattern where each transform receives a dictionary and returns updates to merge back.
+Transforms are composable data operations applied per sample on CPU. Every transform maps a
+typed `Sample` to a new `Sample` and never mutates its input. Loading transforms read the
+dataset record of the sample, augmentations rebuild the task fields through the copy helpers of
+the sample models. Filtering and reordering of points go through the sample so aligned fields
+such as segmentation labels stay consistent by construction.
 
 ```python
 class BaseTransform(ABC):
-    def __call__(
-        self,
-        input_dict: dict[str, Any],
-        context: PipelineContext | None = None,
-    ) -> dict[str, Any]:
+    def __call__(self, sample: Sample, context: PipelineContext | None = None) -> Sample:
         self._context = context           # accessible via self.context property
-        self._validate_required_keys(input_dict)
-        self._handle_optional_keys(input_dict)
+        self._validate_required_fields(sample)
         if not self._should_apply():
-            return self.on_skip(input_dict)
-        return self.transform(input_dict)
+            return self.on_skip(sample)
+        return self.transform(sample)
 
     @abstractmethod
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
+    def transform(self, sample: Sample) -> Sample:
         ...
 
 class TransformsCompose:
-    def __init__(self, pipeline: Sequence[BaseTransform] | None = None):
-        self.pipeline = pipeline or []
+    def __init__(self, pipeline: Sequence[BaseTransform] = ()):
+        self.pipeline = list(pipeline)
 
-    def __call__(
-        self,
-        input_dict: dict[str, Any],
-        context: PipelineContext | None = None,
-    ) -> dict[str, Any]:
+    def __call__(self, sample: Sample, context: PipelineContext | None = None) -> Sample:
         for transform in self.pipeline:
-            input_dict |= transform(input_dict, context=context)
-        return input_dict
+            sample = transform(sample, context=context)
+        return sample
 ```
 
 Transforms are configured per split (train/val/test/predict) in the `DataModule` and applied during `Dataset.__getitem__()`.
 
 Public transform targets should reference the concrete implementation module, for example
-`autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile` or
+`autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps` or
 `autoware_ml.transforms.point_cloud.geometry.RandomFlip3D`. Avoid package-level re-export layers in
 `__init__.py`; imports and Hydra `_target_` paths should point at the implementation module directly.
 
 ### Runtime Data Preprocessing
 
 Runtime preprocessing is a model-owned pipeline attached through
-`BaseModel.set_data_preprocessing(...)`. It runs on the target device after
-Lightning moves the batch over, and before the model's `forward()`.
+`BaseModel.set_data_preprocessing(...)`. It runs on the target device after Lightning moves the
+batch over, and before the model's `forward()`. Every layer derives one typed `ModelInputs`
+from the batch, for example voxel grids or frustum projections, and the pipeline wraps the
+batch together with the derived inputs into a `ProcessedBatch`.
 
 ```python
 class DataPreprocessing:
     def __init__(self, pipeline: Sequence[Any] = ()):
         self.pipeline = list(pipeline)
 
-    def __call__(self, batch_inputs_dict: dict[str, Any]) -> dict[str, Any]:
-        for layer in self.pipeline:
-            batch_inputs_dict |= layer(batch_inputs_dict)
-        return batch_inputs_dict
+    def __call__(self, batch: Batch, *, is_training: bool) -> ProcessedBatch:
+        derived = [layer(batch, is_training=is_training) for layer in self.pipeline]
+        return ProcessedBatch(batch=batch, inputs=tuple(derived))
 ```
 
-`BaseModel.on_after_batch_transfer()` applies the pipeline. Output-side
-shaping (e.g., logits -> probabilities, voxel-to-point scatter) lives
-**inside the model**, not in a framework pipeline: each model handles it in
-its own `forward()`, `compute_metrics()`, and `predict_outputs()`. Keeping
-this logic in the model class avoids invisible load-bearing dependencies
-between config composition and metric correctness.
+`BaseModel.on_after_batch_transfer()` applies the pipeline. Output-side shaping (for example
+logits to probabilities, voxel-to-point scatter) lives **inside the model**, not in a framework
+pipeline: each model handles it in its own `forward()`, `compute_metrics()`, and
+`predict_outputs()`. Keeping this logic in the model class avoids invisible load-bearing
+dependencies between config composition and metric correctness.
 
 ### Model
 
@@ -229,20 +223,17 @@ class BaseModel(L.LightningModule, ABC):
 
     @abstractmethod
     def compute_metrics(
-        self, batch_inputs_dict: Mapping[str, Any], outputs: Any
+        self, processed: ProcessedBatch, outputs: Any
     ) -> dict[str, torch.Tensor]:
         ...
 
     def set_data_preprocessing(self, data_preprocessing: DataPreprocessing) -> None:
         ...
 
-    def predict_outputs(self, batch_inputs_dict: Mapping[str, Any], outputs: Any) -> Any:
+    def predict_outputs(self, processed: ProcessedBatch | None, outputs: Any) -> Any:
         ...
 
-    def get_log_batch_size(self, batch_inputs_dict: Mapping[str, Any]) -> int | None:
-        ...
-
-    def build_export_spec(self, batch_inputs_dict: Mapping[str, Any]) -> ExportSpec:
+    def build_export_spec(self, processed: ProcessedBatch) -> ExportSpec:
         ...
 
     def configure_optimizers(self) -> Optimizer | dict[str, Any]:
@@ -252,24 +243,20 @@ class BaseModel(L.LightningModule, ABC):
 The base class handles:
 
 - **Unified step logic** - All models share the same training, validation, test, and predict execution path
-- **Automatic signature inspection** - Only passes relevant kwargs to `forward()` based on the method signature captured at initialization
+- **Typed parameter binding** - Every `forward()` parameter resolves by name against the derived model inputs first and the flat batch properties second, and a required parameter that resolves to nothing raises immediately
 - **Runtime data preprocessing** - Applies the model-owned preprocessing pipeline after batch transfer
 - **Metric logging** - Logs metrics to Lightning's logger with proper prefixes
 - **Predict step** - Runs forward and formats predictions via `predict_outputs()`
 - **Export contract** - Supports a generic forward-signature-based export path and model-owned explicit export wrappers
 
-Models can have **any internal architecture**. The default path filters batch
-inputs to match the `forward()` signature using `inspect.signature()`, while
-specialized models can override hooks such as `predict_outputs()`,
-`get_log_batch_size()`, `set_data_preprocessing()`, or `build_export_spec()`
-without leaving the shared framework contract.
+Models can have **any internal architecture**. Specialized models override hooks such as
+`predict_outputs()`, `set_data_preprocessing()`, or `build_export_spec()` without leaving the
+shared framework contract.
 
 !!! note
-    When a model relies on the default signature-based path, `forward()`
-    argument names must match keys in the batch dictionary after runtime
-    preprocessing has run. Models with more specialized batching or export
-    requirements should override the relevant hooks instead of bypassing
-    `BaseModel`.
+    `forward()` argument names must match fields of the derived model inputs or properties of
+    the typed batch. Models with more specialized batching or export requirements should
+    override the relevant hooks instead of bypassing `BaseModel`.
 
 ### Deployment Pipeline
 
@@ -315,7 +302,7 @@ Configuration is done through the `deploy` section in task configs.
 | Extension Point | How                                                                                           |
 | --------------- | --------------------------------------------------------------------------------------------- |
 | New model       | Subclass `BaseModel`, implement `forward()` and `compute_metrics()`, override hooks as needed |
-| New dataset     | Subclass `DataModule` and `Dataset`                                                           |
+| New dataset     | Add a database with a records generator, subclass `Dataset` with its `build_meta()`           |
 | New transform   | Subclass `BaseTransform`, implement `transform()`                                             |
 | New task        | Create config in `configs/tasks/`                                                             |
 

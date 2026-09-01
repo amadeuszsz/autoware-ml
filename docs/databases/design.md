@@ -1,206 +1,92 @@
----
-icon: lucide/database
----
+# Dataset records
 
-# Database Design
+A dataset record table is a parquet file with one row per annotated sample. It is generated
+outside this repository and read here. The generator owns the annotations, the taxonomy, the
+sweeps and the splits. This repository owns loading and training, and nothing crosses that
+line.
 
-The database module provides a layered architecture for describing annotation databases and generating dataset records. A shared protocol and base class sit at the top, with dataset-family-specific implementations underneath. Scenario metadata (splits, versions, sampling parameters) is modelled as immutable Pydantic objects so that every database instance is fully hashable and cacheable.
+## Ownership
 
-## Architecture Overview
+| Concern | Owner |
+| --- | --- |
+| Reading the dataset annotations | the generator |
+| Resolving raw labels into trained classes | the generator |
+| Choosing sweeps per sample | the generator |
+| Assigning scenarios to train, val and test | the generator |
+| Selecting databases and splits for a run | this repository |
+| Loading points, boxes and masks into samples | this repository |
 
-```mermaid
-classDiagram
-    direction TB
+For T4dataset the generator is
+[t4dataset-generator](https://github.com/tier4/t4dataset-generator). nuScenes has no external
+generator, so its table is written here, see [nuScenes](#nuscenes).
 
-    class generate_dataset {
-        <<Hydra entrypoint>>
-        build_database()
-        main()
-    }
+## Reading a table
 
-    class DatabaseInterface {
-        <<Protocol>>
-        version
-        scenarios
-        cache_path
-        load_scenario_records()
-        process_scenario_records()
-    }
-
-    class BaseDatabase {
-        get_polars_schema()
-        get_main_database_scenario_data()
-        get_unique_scenario_data()
-        process_scenario_records()
-    }
-
-    class scenarios {
-        DatasetParams
-        ScenarioData
-        Scenarios
-    }
-
-    class schemas {
-        <<package>>
-        DatasetRecord
-        DatasetTableSchema
-        DataModelInterface
-        LidarFrameDataModel
-        LidarSourceDataModel
-        CategoryMappingDataModel
-        Box3DDataModel
-        Box3DDatasetSchema
-    }
-
-    class polars {
-        <<external>>
-        DataFrame
-        Schema
-    }
-
-    class ConcreteDatabase {
-        <<dataset-specific>>
-        process_scenario_records()
-    }
-
-    class TrainingInference {
-        <<downstream>>
-        train()
-        evaluate()
-        predict()
-    }
-
-    generate_dataset --> DatabaseInterface : instantiates via Hydra
-
-    DatabaseInterface ..> scenarios : uses Scenarios, ScenarioData
-    DatabaseInterface --> schemas : process_scenario_records()
-
-    BaseDatabase ..|> DatabaseInterface : satisfies
-    ConcreteDatabase --|> BaseDatabase : extends
-
-    schemas --> TrainingInference : Sequence[DatasetRecord] consumed by
-
-    schemas ..> polars : uses pl.DataType, pl.Schema
-```
-
-## Core Components
-
-### DatabaseInterface
-
-`DatabaseInterface` is the protocol that every database implementation must satisfy. It defines the contract for version metadata, scenario access, and record generation:
+`RecordTable` is the whole read side:
 
 ```python
-class DatabaseInterface(Protocol):
-    @property
-    def version(self) -> str: ...
+from autoware_ml.databases.record_table import RecordTable
 
-    @property
-    def scenarios(self) -> MappingProxyType[str, Scenarios]: ...
-
-    def get_unique_scenario_data(self) -> MappingProxyType[str, ScenarioData]: ...
-    def load_scenario_records(self) -> Sequence[DatasetRecord]: ...
-    def process_scenario_records(self) -> None: ...
+table = RecordTable(
+    path="/workspace/records/t4dataset.parquet",
+    data_root="/workspace/data/t4dataset/",
+    databases=["db_j6gen2_v1"],
+)
+records = table.load("train")
 ```
 
-All concrete databases are accessed through this protocol, ensuring downstream code (training, evaluation) never depends on a specific dataset format.
+- `path` is the parquet file. Nothing about a training configuration enters its name, so one
+  table is shared by every model that trains on its databases.
+- `data_root` is the read only data mount the record paths resolve against.
+- `databases` narrows the table, or is empty to keep everything.
+- `load(split)` returns the rows of one split, ordered by scenario and sample, and raises when
+  the split holds no records or a named database is absent.
 
-### BaseDatabase
-
-`BaseDatabase` provides the shared implementation of `DatabaseInterface`. It handles initialization from version and paths, caching directory creation, Polars schema retrieval, resolving the main scenario group, and deduplicating scenario data across groups:
-
-```python
-class BaseDatabase:
-    def __init__(
-        self,
-        version: str,
-        root_path: str,
-        cache_path: str,
-        cache_file_prefix_name: str,
-        num_workers: int,
-    ) -> None:
-        ...
-
-    def get_polars_schema(self) -> pl.Schema: ...
-    def get_main_database_scenario_data(self) -> Scenarios: ...
-    def get_unique_scenario_data(self) -> Mapping[str, ScenarioData]: ...
-    def process_scenario_records(self) -> None:
-        raise NotImplementedError("Subclasses must implement process_scenario_records!")
-```
-
-To add a new dataset family, subclass `BaseDatabase` and implement `process_scenario_records()`. See [T4Dataset](t4dataset.md) for a concrete example.
-
-### Scenarios
-
-The `scenarios` module models scenario metadata as immutable Pydantic objects. `DatasetParams` captures per-dataset preprocessing parameters, `ScenarioData` uniquely identifies a single scenario with its version and sampling settings, and `Scenarios` is the abstract base that concrete implementations extend to parse scenario configs based on a dataset:
-
-```python
-class DatasetParams(BaseModel):
-    dataset_name: str
-    max_sweeps: int
-    sample_steps: int
-
-class ScenarioData(BaseModel):
-    scenario_id: str
-    scenario_version: str
-    vehicle_type: str | None = None
-    location: str | None = None
-    ...
-
-class Scenarios(BaseModel):
-    version: str
-    scenario_root_path: Path
-    dataset_params: Sequence[DatasetParams]
-    scenario_data: Mapping[SplitType, Sequence[ScenarioData]] | None = None
-
-    @model_validator(mode="after")
-    def build_scenarios(self) -> None:
-        raise NotImplementedError("Subclasses must implement build_scenarios!")
-```
-
-### Schema
-
-`process_scenario_records()` — Process scenarios/samples from a database to a parquet file and save it. `BaseDatabase.get_polars_schema()` delegates to `DatasetTableSchema` so records can be serialized to Parquet via `DatasetRecord.to_dictionary()`.
-
-The schema is defined in the `autoware_ml/databases/schemas/` package and covers basic frame metadata, nested LiDAR structs, and annotation fields such as category mapping and 3D boxes. The 3D box payload is modeled by `Box3DDataModel` with its struct layout defined in `Box3DDatasetSchema`, and is stored in the top-level `boxes_3d` list column. See [Dataset Schema](schemas.md) for the full column layout, nested data models, and extension guide.
-
-### Dataset Generation (Hydra Entrypoint)
-
-The `generate_dataset.py` script is the Hydra-based entrypoint that wires everything together. It reads a YAML config, instantiates the configured database class, and triggers record generation:
-
-```python
-@hydra.main(version_base=None, config_path=_CONFIG_PATH)
-def main(cfg: DictConfig):
-    database: DatabaseInterface = instantiate(cfg.database)
-    database.process_scenario_records()
-```
-
-To run dataset generation:
+Tables live at a fixed `/workspace/records`, a separate writable mount, so the data mount can
+stay read only:
 
 ```bash
-python3 autoware_ml/scripts/generate_dataset.py \
-    --config-name default_t4dataset_generator \
-    working_dir=<working_dir> \
-    data_root_path=<data_root_path> \
-    database.num_workers=32
+./docker/container.sh --records-path /my/records   # or AUTOWARE_ML_RECORDS_PATH
 ```
 
-Configuration is done through YAML files under `autoware_ml/configs/generators/`. Override any parameter from the command line using Hydra syntax. See [Configuration Guide](../user-guide/configuration.md) for full details.
+The `configs/records/` group holds one config per corpus, see
+[configuration](../user-guide/configuration.md).
 
-## Extending the Database
+## Splits and selection
 
-| Extension Point      | How                                                                                                          |
-| -------------------- | ------------------------------------------------------------------------------------------------------------ |
-| New dataset family   | Subclass `BaseDatabase`, implement `process_scenario_records()`, register in a Hydra config                  |
-| New scenario format  | Subclass `Scenarios`, implement `build_scenarios()` to parse format-specific YAML                            |
-| New schema columns   | See [Dataset Schema](schemas.md)                                                                             |
+Every row carries `database` and `split`, so a datamodule selects data with a filter and holds
+no scenario list of its own. Splits are decided by the generator, which means the frames of one
+scenario cannot straddle a split boundary.
 
-## Implementation
+A run may mix several sources over the same or different tables. Each source declares its own
+supervision coverage and repeat factor, so a pseudo labelled corpus and a rehearsal corpus can
+train together.
 
-| Path                                          | Description                                           |
-| --------------------------------------------- | ----------------------------------------------------- |
-| `autoware_ml/databases/schemas/`              | Dataset schema package — see [schemas.md](schemas.md) |
-| `autoware_ml/databases/scenarios.py`          | `ScenarioData`, `DatasetParams`, `Scenarios`          |
-| `autoware_ml/databases/database_interface.py` | `DatabaseInterface` protocol                          |
-| `autoware_ml/databases/base_database.py`      | Shared `BaseDatabase` implementation                  |
-| `autoware_ml/scripts/generate_dataset.py`     | Hydra entrypoint for dataset generation               |
-| `autoware_ml/configs/generators/`             | YAML configs for dataset generation                   |
+## Schema
+
+`autoware_ml/databases/schemas/` defines the table, see [schemas](schemas.md). A record loads
+back into `DatasetRecord` with `DatasetRecord.load_from_dictionary(row)`, which is the contract a
+generator has to satisfy.
+
+## nuScenes
+
+nuScenes records are written here because no external generator exists:
+
+```bash
+python3 autoware_ml/scripts/generate_nuscenes_records.py --config-name nuscenes_records
+```
+
+`NuscenesRecordsWriter` builds the records with the devkit and writes them to the `out_file` of
+`configs/writers/nuscenes_records.yaml`. Its scenarios come from the official devkit scene
+splits and stamp their split onto every record.
+
+## Files
+
+| Path | Purpose |
+| --- | --- |
+| `autoware_ml/databases/record_table.py` | read access to a table |
+| `autoware_ml/databases/schemas/` | table and nested data model definitions |
+| `autoware_ml/databases/nuscenes/` | the nuScenes records writer and its generator |
+| `autoware_ml/scripts/generate_nuscenes_records.py` | entrypoint for the nuScenes table |
+| `autoware_ml/configs/records/` | one record table config per corpus |
+| `autoware_ml/configs/writers/` | the nuScenes writer config |

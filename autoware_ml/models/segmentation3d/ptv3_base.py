@@ -11,6 +11,7 @@ import torch.nn as nn
 from torch.onnx.operators import shape_as_tensor
 
 from autoware_ml.models.base import BaseModel
+from autoware_ml.preprocessing.base import ProcessedBatch
 from autoware_ml.models.segmentation3d.encoders.ptv3 import (
     Block,
     PointTransformerV3Encoder,
@@ -165,19 +166,6 @@ class PTv3BaseModel(BaseModel):
             "freeze_encoder": self.freeze_encoder,
         }
 
-    def get_log_batch_size(self, batch_inputs_dict: Mapping[str, Any]) -> int | None:
-        """Infer the effective sample batch size for logging.
-
-        Args:
-            batch_inputs_dict: Full batch dictionary from the dataloader.
-
-        Returns:
-            Sample batch size when it can be inferred, otherwise ``None``.
-        """
-        if "points" in batch_inputs_dict:
-            return len(batch_inputs_dict["points"])
-        return super().get_log_batch_size(batch_inputs_dict)
-
     def build_encoder_inputs(
         self, voxels: torch.Tensor, num_points: torch.Tensor, voxel_coords: torch.Tensor
     ) -> dict[str, torch.Tensor]:
@@ -207,19 +195,18 @@ class PTv3BaseModel(BaseModel):
         return self.encoder(self.build_encoder_inputs(voxels, num_points, voxel_coords))
 
     def _compute_export_geometry(
-        self, batch_inputs_dict: Mapping[str, torch.Tensor]
+        self, processed: ProcessedBatch
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute sparse shape and serialization depth for export.
 
         Args:
-            batch_inputs_dict: Preprocessed batch containing at least
-                ``voxels`` (used for device inference).
+            processed: Processed batch with the voxelizer outputs, used for device inference.
 
         Returns:
             ``(sparse_shape, serialization_depth)`` as long tensors on the
-            same device as ``batch_inputs_dict["voxels"]``.
+            same device as the voxels.
         """
-        device = batch_inputs_dict["voxels"].device
+        device = processed.resolve("voxels").device
         point_cloud_range = torch.tensor(self.point_cloud_range, dtype=torch.float32, device=device)
         axis_extents = (point_cloud_range[3:] - point_cloud_range[:3]) / self.grid_size
         serialization_depth = bit_length_tensor(torch.max(axis_extents))
@@ -447,12 +434,14 @@ class PTv3ExportInputs:
 
 
 def prepare_ptv3_export_inputs(
-    model: "PTv3BaseModel", batch: Mapping[str, torch.Tensor]
+    model: "PTv3BaseModel", processed: ProcessedBatch
 ) -> PTv3ExportInputs:
     """Serialize a preprocessed voxel batch and precompute its pooling metadata."""
-    sparse_shape, serialization_depth = model._compute_export_geometry(batch)
+    sparse_shape, serialization_depth = model._compute_export_geometry(processed)
     encoder_inputs = model.build_encoder_inputs(
-        batch["voxels"], batch["num_points"], batch["voxel_coords"]
+        processed.resolve("voxels"),
+        processed.resolve("num_points"),
+        processed.resolve("voxel_coords"),
     )
     point, _ = serialize_point_cloud_batch(encoder_inputs, model.EXPORT_ORDER, serialization_depth)
     pooling_metadata = build_serialized_pooling_metadata(
@@ -464,8 +453,8 @@ def prepare_ptv3_export_inputs(
     return PTv3ExportInputs(
         sparse_shape=sparse_shape,
         serialization_depth=serialization_depth,
-        voxels=batch["voxels"],
-        num_points=batch["num_points"],
+        voxels=processed.resolve("voxels"),
+        num_points=processed.resolve("num_points"),
         grid_coord=encoder_inputs["grid_coord"],
         serialized_code=point["serialized_code"],
         pooling_metadata=tuple(pooling_metadata),
@@ -516,10 +505,10 @@ class PTv3ExportContext:
 
 
 def build_ptv3_export_context(
-    model: "PTv3BaseModel", batch: Mapping[str, torch.Tensor]
+    model: "PTv3BaseModel", processed: ProcessedBatch
 ) -> PTv3ExportContext:
     """Serialize the batch, precompute pooling metadata, and run the encoder once."""
-    inputs = prepare_ptv3_export_inputs(model, batch)
+    inputs = prepare_ptv3_export_inputs(model, processed)
     encoder_module = _PTv3EncoderExportModule(
         encoder=model._prepare_encoder_export(),
         voxel_encoder=model.voxel_encoder,

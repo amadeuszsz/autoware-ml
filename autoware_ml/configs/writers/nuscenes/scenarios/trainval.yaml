@@ -1,0 +1,13 @@
+_target_: autoware_ml.databases.nuscenes.nuscenes_scenarios.NuscenesScenarios
+_convert_: all
+
+# nuScenes ships its scene splits inside the devkit, so the scenario root is the data root
+scenario_root_path: ${data_root_path}/nuscenes/
+
+# dataset_name selects the devkit version whose official scene splits build the scenarios
+dataset_params:
+  - _target_: autoware_ml.databases.scenarios.DatasetParams
+    _convert_: all
+    dataset_name: v1.0-trainval
+    max_sweeps: 10
+    sample_steps: 1

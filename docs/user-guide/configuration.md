@@ -12,7 +12,10 @@ All configs live in `autoware_ml/configs/`:
 
 ```text
 configs/
+├── records/           # Record table definitions, one per corpus
+├── datasets/          # Shared dataset parameters referenced by task configs
 ├── defaults/          # Base settings and module defaults
+├── generators/        # Dataset record generation configs
 └── tasks/             # Task-specific configs
 ```
 
@@ -65,30 +68,21 @@ A complete task config includes these sections:
 
 ### `datamodule`
 
-Controls data loading and split-specific transforms:
+Controls data sources and split-specific transforms. The datamodule reads dataset records from
+the configured record tables, keeps the split each table declares, and serves typed samples
+through the transform pipelines:
 
 ```yaml
 datamodule:
-  _target_: autoware_ml.datamodule.my_dataset.MyDataModule
-  data_root: ${data_root}
-  train_ann_file: ${data_root}/info/train.pkl
-  val_ann_file: ${data_root}/info/val.pkl
-
-  # collation_map: whitelist of batch keys and how to merge them across samples.
-  # Keys not listed here are dropped before the batch reaches the model.
-  # Strategies:
-  #   stack        - fixed-shape tensors concatenated along a new batch dim (all shapes must match)
-  #   concat       - variable-length tensors concatenated along dim 0. Adds a
-  #                  batch["offset"] key with cumulative per-sample lengths so
-  #                  downstream code can recover per-sample boundaries.
-  #   index_concat - like concat, but values are integer indices into the
-  #                  concatenated concat key (e.g. point indices into the point cloud).
-  #                  Each sample's indices are shifted by the cumulative element
-  #                  count of preceding samples so they remain globally valid after concat.
-  #   list         - variable-shape values kept as a Python list (no tensor conversion)
-  collation_map:
-    input_tensor: stack
-    gt_labels: stack
+  _target_: autoware_ml.datamodule.base.DataModule
+  dataset:
+    _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
+    _partial_: true
+  sources:
+    - records: ${records}
+      det3d: true
+      seg3d: false
+      repeat: 1
 
   train_dataloader_cfg:
     batch_size: 8
@@ -96,13 +90,50 @@ datamodule:
     shuffle: true
 
   train_transforms:
+    _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.my_transforms.my_transform.MyTransform
-        param: value
+      - _target_: autoware_ml.transforms.point_cloud.crop.PointsRangeFilter
+        point_cloud_range: ${point_cloud_range}
 ```
 
+The section is built from these blocks:
+
+- `dataset` - partial factory of the dataset family (`T4Dataset` or `NuscenesDataset`). The datamodule calls it once per split with the transform pipeline of that split.
+- `sources` - record tables served by the datamodule. Every source declares its supervision coverage (`det3d`, `seg3d`) and how often its frames appear per epoch (`repeat`), so one datamodule can mix corpora with different labels.
+- `train/val/test/predict_transforms` - per-split transform pipelines, applied per sample on CPU.
+- `train/val/test/predict_dataloader_cfg` - per-split dataloader settings.
+- `train_frame_sampling` - optional repeat factor sampling settings for the training split.
+
+The `records` value of a source comes from the `configs/records/` group and is bound through a
+defaults entry in the task config:
+
+```yaml
+defaults:
+  - /records@records: t4dataset/t4dataset_j6gen2_base
+```
+
+A record table is a parquet file generated outside this repository, by t4dataset-generator for
+T4dataset. It carries its own splits and database names, so a corpus config is just a table path,
+the data root its paths resolve against, and the databases to keep:
+
+```yaml
+_target_: autoware_ml.databases.record_table.RecordTable
+path: /workspace/records/t4dataset.parquet
+data_root: ${data_root_path}/t4dataset/
+databases:
+  - db_j6gen2_v1
+```
+
+Tables live at a fixed `/workspace/records`, mounted with `--records-path` or
+`AUTOWARE_ML_RECORDS_PATH`, so the data mount can stay read only and every user can map their
+own records directory.
+
+Collation is not configurable. `Batch.collate` turns the transformed samples into the typed
+`Batch` the models consume, and model family specific layouts are derived later by the runtime
+preprocessing on the target device.
+
 For custom components, point `_target_` at the concrete implementation module,
-for example `autoware_ml.transforms.my_transforms.my_transform.MyTransform` or
+for example `autoware_ml.transforms.point_cloud.crop.PointsRangeFilter` or
 `autoware_ml.models.common.backbones.my_backbone.MyBackbone`.
 
 ### `data_preprocessing`
@@ -233,10 +264,11 @@ defaults:
   - _self_                        # Apply this file's overrides
 
 # Override specific values
-data_root: /path/to/dataset
+batch_size: 16
 
 datamodule:
-  data_root: ${data_root}
+  train_dataloader_cfg:
+    batch_size: ${batch_size}
 ```
 
 ## Variable Interpolation
@@ -244,11 +276,10 @@ datamodule:
 Reference other config values with `${...}`:
 
 ```yaml
-data_root: /path/to/dataset
+point_cloud_range: [-122.4, -122.4, -3.0, 122.4, 122.4, 5.0]
 
-datamodule:
-  data_root: ${data_root}
-  train_ann_file: ${data_root}/info/train.pkl
+model:
+  point_cloud_range: ${point_cloud_range}
 ```
 
 Hydra resolvers:

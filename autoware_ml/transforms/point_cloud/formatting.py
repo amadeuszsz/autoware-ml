@@ -12,65 +12,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Formatting transforms shared across point-cloud pipelines."""
+"""Formatting transforms shared across point cloud pipelines."""
 
-from typing import Any
-
-import numpy as np
-
+from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.transforms.base import BaseTransform
+from autoware_ml.types.geometry import PointFeatureName
 
 
 class PreparePointCloudInput(BaseTransform):
-    """Split the ``points`` array into per-point feature fields.
+    """Normalize the intensity feature and validate the point cloud layout.
 
-    Required keys:
-        points: Point cloud array laid out as ``(x, y, z, intensity)`` with the
-            per-point time lag at ``time_lag_dim`` when the pipeline carries one.
-
-    Generated keys:
-        coord: XYZ coordinates ``(N, 3)``, float32.
-        strength: Normalised intensity ``(N, 1)``, float32 in ``[0, 1]``.
-        time_lag: Seconds elapsed since each point was captured ``(N, 1)``,
-            float32, ``0`` for the current frame. Only when ``time_lag_dim``
-            is set.
+    The transform divides the intensity column by 255 so the network consumes intensities in
+    [0, 1], and it validates the declared time lag expectation so a pipeline never mixes
+    densified and single frame clouds silently.
     """
 
-    _required_keys = ["points"]
+    _required_fields = ["points"]
 
-    def __init__(self, *, time_lag_dim: int | None) -> None:
+    def __init__(self, *, require_time_lag: bool) -> None:
         """Initialize the PreparePointCloudInput transform.
 
         Args:
-            time_lag_dim: Column of ``points`` holding the per-point time lag,
-                or ``None`` when the cloud carries no time lag.
+            require_time_lag: Whether the point cloud must carry the timestamp_difference
+                feature. Set to False for single frame pipelines, where the feature must be
+                absent.
         """
-        if time_lag_dim is not None and time_lag_dim < 4:
-            raise ValueError(
-                f"time_lag_dim must be at least 4, the first four columns hold (x, y, z, "
-                f"intensity), got {time_lag_dim}."
-            )
-        self.time_lag_dim = time_lag_dim
+        self.require_time_lag = require_time_lag
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Split raw point features into coordinate, intensity and time fields.
+    def transform(self, sample: Sample) -> Sample:
+        """Normalize the intensity feature of the point cloud.
 
         Args:
-            input_dict: Sample dictionary containing ``points``.
+            sample: Sample with a loaded point cloud.
 
         Returns:
-            Updated sample dictionary with the per-point feature fields.
+            Sample with the normalized point cloud.
         """
-        points = input_dict.pop("points")
-        expected_width = 4 if self.time_lag_dim is None else self.time_lag_dim + 1
-        if points.ndim != 2 or points.shape[1] != expected_width:
+        points = sample.points
+        has_time_lag = points.has_feature(PointFeatureName.TIMESTAMP_DIFFERENCE)
+        if self.require_time_lag and not has_time_lag:
             raise ValueError(
-                f"PreparePointCloudInput requires points with {expected_width} features for "
-                f"time_lag_dim {self.time_lag_dim}, got shape {points.shape}."
+                "PreparePointCloudInput requires the timestamp_difference feature but the "
+                f"point cloud carries {points.feature_names}."
             )
-        input_dict["coord"] = points[:, :3].astype(np.float32)
-        input_dict["strength"] = (points[:, 3:4] / 255.0).astype(np.float32)
-        if self.time_lag_dim is not None:
-            time_lag_dim = self.time_lag_dim
-            input_dict["time_lag"] = points[:, time_lag_dim : time_lag_dim + 1].astype(np.float32)
-        return input_dict
+        if not self.require_time_lag and has_time_lag:
+            raise ValueError(
+                "PreparePointCloudInput was configured without a time lag but the point cloud "
+                f"carries {points.feature_names}."
+            )
+        intensity = points.feature(PointFeatureName.INTENSITY)
+        return sample.model_copy(
+            update={"points": points.with_feature(PointFeatureName.INTENSITY, intensity / 255.0)}
+        )

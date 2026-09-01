@@ -80,7 +80,7 @@ sequenceDiagram
     participant Me as Metric
     loop each val batch
         L->>M: on_validation_batch_end(outputs, batch)
-        M->>M: build_eval_output(batch, outputs)
+        M->>M: build_eval_output(processed, outputs)
         M->>S: update(eval_out)
     end
     L->>M: on_validation_epoch_end()
@@ -99,10 +99,10 @@ Each piece of state is registered with `add_state(name, default, dist_reduce_fx)
 function torchmetrics uses to combine that state across GPUs.
 
 | Suite                                      | `prefix`   | Required keys                          | State (`dist_reduce_fx`)                                  |
-| ------------------------------------------ | ---------- | -------------------------------------- | ---------------------------------------------------------- |
-| `Detection3DMetricSuite`                   | `det3d`    | `predictions`, `gt_boxes`, `gt_labels` | per-frame box tensors as list states (`None`)               |
-| `Segmentation3DConfusionMatrixMetricSuite` | `seg3d`    | `seg_frames`                           | one confusion tensor over (filter, range) buckets (`sum`)   |
-| `Segmentation3DPointCloudMetricSuite`      | `seg3d_pt` | `seg_frames`                           | per-frame point tensors (`None`)                            |
+|--------------------------------------------|------------|----------------------------------------|-----------------------------------------------------------|
+| `Detection3DMetricSuite`                   | `det3d`    | `predictions`, `gt_boxes`, `gt_labels` | per-frame box tensors as list states (`None`)             |
+| `Segmentation3DConfusionMatrixMetricSuite` | `seg3d`    | `seg_frames`                           | one confusion tensor over (filter, range) buckets (`sum`) |
+| `Segmentation3DPointCloudMetricSuite`      | `seg3d_pt` | `seg_frames`                           | per-frame point tensors (`None`)                          |
 
 A confusion matrix is a bounded sufficient statistic, so its counts sum across ranks. Detection
 matching is score ordered inside each frame and the point-level metrics read raw points, so those
@@ -460,22 +460,22 @@ ego's overlap. An object that cannot reach ego within the horizon has an infinit
 The model runs on the following constants. Values marked config are set in the bundled dataset
 configs and tunable there, the rest are code defaults.
 
-| Constant                               | Value                                              |
-| -------------------------------------- | -------------------------------------------------- |
-| horizon                                | 4 s (config)                                       |
-| propagation time step                  | 0.1 s (config)                                     |
-| max lateral acceleration (turn bound)  | 3.0 m/s^2 (config)                                 |
-| minimum turn radius floor              | 3.0 m                                              |
-| arc samples per front                  | 21                                                 |
-| ego body radius (assumed half width)   | 1.0 m                                              |
-| object body radius                     | half the object's box width                        |
-| wheeled speed on the map               | the lanelet speed limit at the agent's position    |
-| off-map fallback speed                 | 16.7 m/s (config)                                  |
-| VRU run speeds                         | pedestrian 3.0, animal 4.0, bicycle 6.0 m/s        |
-| wheeled classes                        | car, truck, bus, train, motorcycle                 |
-| VRU classes                            | pedestrian, animal, bicycle                        |
-| static classes (footprint only)        | barrier, traffic_cone, debris, bicycle_rack, vehicle_extension |
-| corridor width                         | 3.0 m (config)                                     |
+| Constant                              | Value                                                          |
+|---------------------------------------|----------------------------------------------------------------|
+| horizon                               | 4 s (config)                                                   |
+| propagation time step                 | 0.1 s (config)                                                 |
+| max lateral acceleration (turn bound) | 3.0 m/s^2 (config)                                             |
+| minimum turn radius floor             | 3.0 m                                                          |
+| arc samples per front                 | 21                                                             |
+| ego body radius (assumed half width)  | 1.0 m                                                          |
+| object body radius                    | half the object's box width                                    |
+| wheeled speed on the map              | the lanelet speed limit at the agent's position                |
+| off-map fallback speed                | 16.7 m/s (config)                                              |
+| VRU run speeds                        | pedestrian 3.0, animal 4.0, bicycle 6.0 m/s                    |
+| wheeled classes                       | car, truck, bus, train, motorcycle                             |
+| VRU classes                           | pedestrian, animal, bicycle                                    |
+| static classes (footprint only)       | barrier, traffic_cone, debris, bicycle_rack, vehicle_extension |
+| corridor width                        | 3.0 m (config)                                                 |
 
 ### Default slices
 
@@ -1295,11 +1295,11 @@ token) is passed through.
 
 ```python
 class ModelA(BaseModel):
-    def build_eval_output(self, batch, outputs):
+    def build_eval_output(self, processed, outputs):
         return {
             "predictions": self.bbox_head.predict(outputs),
-            "gt_boxes": batch["gt_boxes"],
-            "gt_labels": batch["gt_labels"],
+            "gt_boxes": list(processed.batch.gt_boxes),
+            "gt_labels": list(processed.batch.gt_labels),
         }
 ```
 

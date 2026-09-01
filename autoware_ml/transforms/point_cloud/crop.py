@@ -12,215 +12,87 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Point-cloud cropping and centering transforms."""
+"""Point cloud cropping transforms."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import numpy as np
-import numpy.typing as npt
 
+from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.transforms.base import BaseTransform
-
-
-class CropBoxOuter(BaseTransform):
-    """Remove points that are outside a 3D bounding box."""
-
-    _required_keys = ["points"]
-
-    def __init__(self, *, crop_box: list[float]):
-        """Initialize the CropBoxOuter transform.
-
-        Args:
-            crop_box: Box bounds ``[x_min, y_min, z_min, x_max, y_max, z_max]``.
-        """
-        super().__init__()
-        if len(crop_box) != 6:
-            raise ValueError(f"crop_box must have 6 elements, got {len(crop_box)}")
-        self.crop_box = np.asarray(crop_box, dtype=np.float32)
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Keep only points inside the configured box."""
-        points: npt.NDArray[np.float32] = input_dict["points"]
-        x_min, y_min, z_min, x_max, y_max, z_max = self.crop_box
-        mask = (
-            (points[:, 0] >= x_min)
-            & (points[:, 0] <= x_max)
-            & (points[:, 1] >= y_min)
-            & (points[:, 1] <= y_max)
-            & (points[:, 2] >= z_min)
-            & (points[:, 2] <= z_max)
-        )
-        input_dict["points"] = points[mask]
-        return input_dict
-
-
-class CropBoxInner(BaseTransform):
-    """Remove points that are inside a 3D bounding box."""
-
-    _required_keys = ["points"]
-
-    def __init__(self, *, crop_box: list[float]):
-        """Initialize the CropBoxInner transform.
-
-        Args:
-            crop_box: Box bounds ``[x_min, y_min, z_min, x_max, y_max, z_max]``.
-        """
-        super().__init__()
-        if len(crop_box) != 6:
-            raise ValueError(f"crop_box must have 6 elements, got {len(crop_box)}")
-        self.crop_box = np.asarray(crop_box, dtype=np.float32)
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Keep only points outside the configured box."""
-        points: npt.NDArray[np.float32] = input_dict["points"]
-        x_min, y_min, z_min, x_max, y_max, z_max = self.crop_box
-        mask = (
-            (points[:, 0] < x_min)
-            | (points[:, 0] > x_max)
-            | (points[:, 1] < y_min)
-            | (points[:, 1] > y_max)
-            | (points[:, 2] < z_min)
-            | (points[:, 2] > z_max)
-        )
-        input_dict["points"] = points[mask]
-        return input_dict
 
 
 class PointsRangeFilter(BaseTransform):
     """Drop points outside a configured spatial range.
 
-    Operates on whichever per-point coordinate key is present in the sample
-    (``coord`` is preferred; ``points`` is supported before the sample is split
-    into ``coord`` and feature fields). All aligned per-point arrays in the
-    sample are filtered with the same mask.
+    The lower bound is inclusive and the upper bound is exclusive, so voxel indices computed
+    from the surviving points always stay inside the grid.
     """
 
-    _required_keys: list[str] = []
+    _required_fields = ["points"]
 
     def __init__(self, *, point_cloud_range: Sequence[float]) -> None:
         """Initialize the PointsRangeFilter transform.
 
         Args:
-            point_cloud_range: Bounds ``[x_min, y_min, z_min, x_max, y_max, z_max]``.
+            point_cloud_range: Bounds [x_min, y_min, z_min, x_max, y_max, z_max].
         """
+        if len(point_cloud_range) != 6:
+            raise ValueError(
+                f"point_cloud_range must have 6 elements, got {len(point_cloud_range)}."
+            )
         self.point_cloud_range = np.asarray(point_cloud_range, dtype=np.float32)
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Filter points to the configured spatial range."""
-        if "coord" in input_dict:
-            coord_key = "coord"
-        elif "points" in input_dict:
-            coord_key = "points"
-        else:
-            raise KeyError("PointsRangeFilter requires either 'coord' or 'points' in the sample.")
-        points: npt.NDArray[np.float32] = input_dict[coord_key]
+    def transform(self, sample: Sample) -> Sample:
+        """Filter the points to the configured spatial range.
+
+        Args:
+            sample: Sample with a loaded point cloud.
+
+        Returns:
+            Sample with the filtered points and aligned segmentation labels.
+        """
+        coord = sample.points.coord
         lower = self.point_cloud_range[:3]
         upper = self.point_cloud_range[3:]
-        mask = ((points[:, :3] >= lower) & (points[:, :3] < upper)).all(axis=1)
-        for key, value in list(input_dict.items()):
-            if (
-                isinstance(value, np.ndarray)
-                and value.ndim > 0
-                and value.shape[0] == points.shape[0]
-            ):
-                input_dict[key] = value[mask]
-        return input_dict
+        mask = ((coord >= lower) & (coord < upper)).all(axis=1)
+        return sample.filter_points(mask)
 
 
-class CenterShift(BaseTransform):
-    """Center point coordinates by subtracting their spatial midpoint."""
+class CropBoxInner(BaseTransform):
+    """Remove points inside one axis aligned 3D box."""
 
-    _required_keys = ["coord"]
+    _required_fields = ["points"]
 
-    def __init__(self, *, apply_z: bool = True) -> None:
-        """Initialize the CenterShift transform.
+    def __init__(self, *, crop_box: Sequence[float]) -> None:
+        """Initialize the CropBoxInner transform.
 
         Args:
-            apply_z: Whether to center the z coordinate as well.
+            crop_box: Box bounds [x_min, y_min, z_min, x_max, y_max, z_max].
         """
-        self.apply_z = apply_z
+        if len(crop_box) != 6:
+            raise ValueError(f"crop_box must have 6 elements, got {len(crop_box)}.")
+        self.crop_box = np.asarray(crop_box, dtype=np.float32)
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Center the point cloud around the origin.
+    def transform(self, sample: Sample) -> Sample:
+        """Keep only the points outside the configured box.
 
         Args:
-            input_dict: Sample dictionary updated in place.
+            sample: Sample with a loaded point cloud.
 
         Returns:
-            Updated sample dictionary.
+            Sample with the filtered points and aligned segmentation labels.
         """
-        coord = input_dict["coord"]
-        center = (coord.min(axis=0) + coord.max(axis=0)) / 2
-        if not self.apply_z:
-            center[2] = 0.0
-        input_dict["coord"] = coord - center
-        return input_dict
-
-
-class SphereCrop(BaseTransform):
-    """Keep the points closest to a selected crop center."""
-
-    _required_keys = ["coord"]
-
-    def __init__(self, *, point_max: int, mode: str = "random") -> None:
-        """Initialize the SphereCrop transform.
-
-        Args:
-            point_max: Maximum number of points kept after cropping.
-            mode: Crop-center strategy, either ``"random"`` or ``"center"``.
-        """
-        self.point_max = point_max
-        self.mode = mode
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Keep the nearest points around the selected crop center.
-
-        When called after voxelization, the dictionary holds per-voxel arrays
-        (``coord``, ``segment``, ...) plus ``inverse`` mapping the original
-        points to voxel indices, and any ``origin_*`` arrays carrying per-point
-        ground truth. Dropping voxels invalidates that mapping, so the dropped
-        voxels are also removed from the inverse and from any per-point array
-        whose length matches the original inverse length, and the surviving
-        inverse entries are renumbered to the new voxel positions.
-
-        Args:
-            input_dict: Sample dictionary updated in place.
-
-        Returns:
-            Updated sample dictionary.
-        """
-        if input_dict["coord"].shape[0] <= self.point_max:
-            return input_dict
-        if self.mode == "random":
-            center = input_dict["coord"][np.random.randint(0, input_dict["coord"].shape[0])]
-        elif self.mode == "center":
-            center = input_dict["coord"][input_dict["coord"].shape[0] // 2]
-        else:
-            raise ValueError("SphereCrop mode must be 'random' or 'center'.")
-        point_count = input_dict["coord"].shape[0]
-        distances = np.linalg.norm(input_dict["coord"] - center, axis=1)
-        keep = np.sort(np.argsort(distances)[: self.point_max])
-
-        inverse = input_dict.get("inverse")
-        pre_voxel_count: int | None = None
-        kept_input_mask: np.ndarray | None = None
-        if isinstance(inverse, np.ndarray) and inverse.shape[0] != point_count:
-            keep_mask = np.zeros(point_count, dtype=bool)
-            keep_mask[keep] = True
-            new_voxel_index = np.empty(point_count, dtype=np.int64)
-            new_voxel_index[keep] = np.arange(keep.shape[0])
-            pre_voxel_count = inverse.shape[0]
-            kept_input_mask = keep_mask[inverse]
-            input_dict["inverse"] = new_voxel_index[inverse[kept_input_mask]]
-
-        for key, value in list(input_dict.items()):
-            if key == "inverse" or not isinstance(value, np.ndarray):
-                continue
-            if value.shape[0] == point_count:
-                input_dict[key] = value[keep]
-            elif pre_voxel_count is not None and value.shape[0] == pre_voxel_count:
-                input_dict[key] = value[kept_input_mask]
-        return input_dict
+        coord = sample.points.coord
+        x_min, y_min, z_min, x_max, y_max, z_max = self.crop_box
+        mask = (
+            (coord[:, 0] < x_min)
+            | (coord[:, 0] > x_max)
+            | (coord[:, 1] < y_min)
+            | (coord[:, 1] > y_max)
+            | (coord[:, 2] < z_min)
+            | (coord[:, 2] > z_max)
+        )
+        return sample.filter_points(mask)

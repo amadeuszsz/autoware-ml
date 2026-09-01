@@ -12,12 +12,6 @@ range_width: ???
 frustum_height: ???
 frustum_width: ???
 
-datamodule:
-  collation_map:
-    points: concat
-    pts_semantic_mask: concat
-    ego2global: list
-    scene_token: list
 model:
   _target_: autoware_ml.models.segmentation3d.frnet.FRNet
   metrics: ${dataset.segmentation3d.metrics}

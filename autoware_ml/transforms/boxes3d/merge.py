@@ -12,50 +12,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Merge spatially-coupled object annotations (e.g. truck + trailer).
+"""Merge spatially coupled box annotations (for example truck plus trailer).
 
-This transform reproduces the AWML info-generation behaviour where a sub-object
-(such as a trailer) that overlaps or sits next to its target object (a truck) is
-merged into a single, elongated target box. Unmatched sub-objects are left in
-place and subsequently dropped by ``LoadAnnotations3D`` when their mapped class
-is not in ``class_names`` - exactly as AWML's ``merge_objects`` + class filtering.
+This transform reproduces the AWML info-generation behaviour where a sub-object (such as a
+trailer) that overlaps or sits next to its target object (a truck) is merged into a single,
+elongated target box. Unmatched sub-objects are left in place and subsequently dropped by
+LoadDet3DAnnotations when their mapped class is not in the detector classes, exactly as AWML's
+merge_objects plus class filtering.
 
-It runs on the raw ``instances`` list, before ``LoadAnnotations3D``, so the
-sub-object class is still distinguishable from the target via ``name_mapping``.
+It rewrites the stored box annotations of the sample record, before LoadDet3DAnnotations, so the
+sub-object class is still distinguishable from the target via name_mapping.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import pi
-from typing import Any
 
 import numpy as np
+from jaxtyping import Float64
 from shapely import affinity
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
+from autoware_ml.databases.schemas.box3d_schemas import Box3DDataModel
+from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.transforms.base import BaseTransform
 
 
 class MergeObjects3D(BaseTransform):
     """Merge a sub-object box into a nearby target box into a single box.
 
-    For each ``(target, [primary, secondary])`` rule, every ``primary`` box is
-    matched against every ``secondary`` box; a pair that overlaps in BEV or whose
-    front/back face centers are within ``distance_threshold`` is merged into one
-    box labelled ``target``. Matching is greedy: each box participates in at most
-    one merge. Unmatched boxes are left untouched.
-
-    Required keys:
-        instances: List of raw annotation dicts with ``bbox_3d`` (7 values:
-            ``[cx, cy, cz, dx, dy, dz, yaw]``) and ``gt_nusc_name``.
-
-    Generated keys:
-        instances: Rewritten list with merged instances replacing matched pairs.
+    For each (target, [primary, secondary]) rule, every primary box is matched against every
+    secondary box. A pair that overlaps in BEV or whose front or back face centers are within
+    distance_threshold is merged into one box labelled target. Matching is greedy: each box
+    participates in at most one merge. Unmatched boxes are left untouched.
     """
-
-    _required_keys = ["instances"]
 
     def __init__(
         self,
@@ -68,13 +60,13 @@ class MergeObjects3D(BaseTransform):
         """Initialize the MergeObjects3D transform.
 
         Args:
-            merge_objects: Rules ``(target, [primary_class, secondary_class])``
-                using canonical class names after ``name_mapping``.
-            name_mapping: Optional raw-to-canonical class-name mapping used to
-                classify instances before matching.
-            distance_threshold: Maximum front/back face-center distance in meters
-                for boxes to be considered adjacent.
-            merge_type: Box merge strategy, ``"extend_longer"`` or ``"union"``.
+            merge_objects: Rules (target, [primary_class, secondary_class]) using canonical
+                class names after name_mapping.
+            name_mapping: Optional raw dataset category to canonical class mapping used to
+                classify boxes before matching.
+            distance_threshold: Maximum front or back face-center distance in meters for
+                boxes to be considered adjacent.
+            merge_type: Box merge strategy, "extend_longer" or "union".
         """
         if merge_type not in {"extend_longer", "union"}:
             raise ValueError(f"merge_type must be 'extend_longer' or 'union', got {merge_type!r}.")
@@ -108,33 +100,37 @@ class MergeObjects3D(BaseTransform):
         self.distance_threshold = float(distance_threshold)
         self.merge_type = merge_type
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Merge matched primary/secondary instance pairs within the sample.
+    def transform(self, sample: Sample) -> Sample:
+        """Merge matched primary and secondary box pairs within the sample record.
 
         Args:
-            input_dict: Sample dictionary holding the raw ``instances`` list.
+            sample: Sample whose record carries 3D box annotations.
 
         Returns:
-            Updated sample dictionary whose ``instances`` list has each matched
-            pair replaced by a single merged target instance, with unmatched
-            instances left in place. Returned unchanged when there are no merge
-            rules, no instances, or no pairs matched.
+            Sample whose record has each matched pair replaced by a single merged target box,
+            with unmatched boxes left in place. Returned unchanged when there are no merge
+            rules, no boxes, or no pairs matched.
         """
         if not self.merge_objects:
-            return input_dict
+            return sample
 
-        instances = list(input_dict["instances"])
-        if not instances:
-            return input_dict
+        boxes_3d = sample.record.boxes_3d
+        if boxes_3d is None:
+            raise ValueError(
+                f"The record of sample {sample.meta.sample_id} carries no 3D box annotations."
+            )
+        boxes_3d = list(boxes_3d)
+        if not boxes_3d:
+            return sample
 
-        canonical = [self._canonical_name(inst) for inst in instances]
-        boxes = [np.asarray(inst["bbox_3d"], dtype=np.float64)[:7] for inst in instances]
+        canonical = [self._canonical_name(box) for box in boxes_3d]
+        geometries = [np.asarray(box.box3d_params[:7], dtype=np.float64) for box in boxes_3d]
         merge_function = (
             _merge_boxes_extend_longer if self.merge_type == "extend_longer" else _merge_boxes_union
         )
 
         consumed: set[int] = set()
-        merged_instances: list[dict[str, Any]] = []
+        merged_boxes: list[Box3DDataModel] = []
         for target, (primary, secondary) in self.merge_objects:
             primary_indices = [i for i, name in enumerate(canonical) if name == primary]
             secondary_indices = [i for i, name in enumerate(canonical) if name == secondary]
@@ -144,14 +140,14 @@ class MergeObjects3D(BaseTransform):
                 for j in secondary_indices:
                     if j in consumed or i == j:
                         continue
-                    if _boxes_overlap(boxes[i], boxes[j]) or _boxes_proximity(
-                        boxes[i], boxes[j], self.distance_threshold
+                    if _boxes_overlap(geometries[i], geometries[j]) or _boxes_proximity(
+                        geometries[i], geometries[j], self.distance_threshold
                     ):
-                        merged_instances.append(
-                            self._merge_instances(
-                                instances[i],
-                                instances[j],
-                                merge_function(boxes[i], boxes[j]),
+                        merged_boxes.append(
+                            self._merge_boxes(
+                                boxes_3d[i],
+                                boxes_3d[j],
+                                merge_function(geometries[i], geometries[j]),
                                 target,
                             )
                         )
@@ -160,65 +156,60 @@ class MergeObjects3D(BaseTransform):
                         break
 
         if not consumed:
-            return input_dict
+            return sample
 
-        survivors = [inst for idx, inst in enumerate(instances) if idx not in consumed]
-        input_dict["instances"] = merged_instances + survivors
-        return input_dict
+        survivors = [box for index, box in enumerate(boxes_3d) if index not in consumed]
+        record = sample.record.model_copy(update={"boxes_3d": merged_boxes + survivors})
+        return sample.model_copy(update={"record": record})
 
-    def _canonical_name(self, instance: Mapping[str, Any]) -> str | None:
-        """Resolve an instance's canonical class name via ``name_mapping``.
+    def _canonical_name(self, box: Box3DDataModel) -> str | None:
+        """Resolve the canonical class name of a box via name_mapping.
 
         Args:
-            instance: Raw annotation dict carrying ``gt_nusc_name``.
+            box: Stored box annotation.
 
         Returns:
-            The canonical class name (raw name when ``name_mapping`` is ``None``),
-            or ``None`` when the raw name maps to ``None``.
-
-        Raises:
-            KeyError: If ``gt_nusc_name`` is missing from the instance.
+            The canonical class name (the raw dataset name when name_mapping is None), or
+            None when the raw name maps to None.
         """
-        if "gt_nusc_name" not in instance:
-            raise KeyError("MergeObjects3D requires every instance to contain 'gt_nusc_name'.")
-        raw_name = instance["gt_nusc_name"]
-        raw_name = str(raw_name)
+        raw_name = box.box3d_dataset_label_name
         if self.name_mapping is None:
             return raw_name
         mapped = self.name_mapping.get(raw_name, raw_name)
         return str(mapped) if mapped is not None else None
 
     @staticmethod
-    def _merge_instances(
-        primary: Mapping[str, Any],
-        secondary: Mapping[str, Any],
-        merged_box: list[float],
+    def _merge_boxes(
+        primary: Box3DDataModel,
+        secondary: Box3DDataModel,
+        merged_geometry: list[float],
         target: str,
-    ) -> dict[str, Any]:
-        """Build one merged instance from a matched primary/secondary pair."""
-        merged = dict(primary)
-        merged["bbox_3d"] = [float(value) for value in merged_box]
-        merged["gt_nusc_name"] = target
-        merged["num_lidar_pts"] = int(primary.get("num_lidar_pts", 0)) + int(
-            secondary.get("num_lidar_pts", 0)
+    ) -> Box3DDataModel:
+        """Build one merged box from a matched primary and secondary pair.
+
+        The merged box keeps the identity fields of the primary box, carries the merged
+        geometry with the averaged velocity, and is relabelled as a fresh target object so
+        downstream resolution keys off the new dataset label name.
+        """
+        velocity = (
+            np.asarray(primary.box3d_params[7:], dtype=np.float64)
+            + np.asarray(secondary.box3d_params[7:], dtype=np.float64)
+        ) / 2.0
+        params = np.concatenate([np.asarray(merged_geometry, dtype=np.float64), velocity])
+        return primary.create_new_data_model(
+            box3d_params=params,
+            box3d_dataset_label_name=target,
+            box3d_label_name=target,
+            box3d_label_index=-1,
+            box3d_num_lidar_points=int(primary.box3d_num_lidar_points)
+            + int(secondary.box3d_num_lidar_points),
+            box3d_valid=bool(primary.box3d_valid) and bool(secondary.box3d_valid),
+            box3d_attributes=set(primary.box3d_attributes) | set(secondary.box3d_attributes),
         )
-        primary_velocity = np.asarray(primary.get("velocity", [0.0, 0.0]), dtype=np.float64)
-        secondary_velocity = np.asarray(secondary.get("velocity", [0.0, 0.0]), dtype=np.float64)
-        merged["velocity"] = ((primary_velocity + secondary_velocity) / 2.0).tolist()
-        merged["gt_attrs"] = sorted(
-            set(primary.get("gt_attrs", [])) | set(secondary.get("gt_attrs", []))
-        )
-        merged["bbox_3d_isvalid"] = bool(primary.get("bbox_3d_isvalid", True)) and bool(
-            secondary.get("bbox_3d_isvalid", True)
-        )
-        # The merged box is a fresh target object; drop any stored per-box label
-        # so downstream resolution keys off the new gt_nusc_name.
-        merged.pop("bbox_label_3d", None)
-        return merged
 
 
-def _box_corners(box: np.ndarray) -> np.ndarray:
-    """Return the four BEV corners of an oriented box ``[x, y, z, dx, dy, dz, yaw]``."""
+def _box_corners(box: Float64[np.ndarray, " 7"]) -> Float64[np.ndarray, "4 2"]:
+    """Return the four BEV corners of an oriented box [x, y, z, dx, dy, dz, yaw]."""
     x, y, _, dx, dy, _, yaw = box
     cos_yaw, sin_yaw = np.cos(yaw), np.sin(yaw)
     half_dx, half_dy = dx / 2.0, dy / 2.0
@@ -232,23 +223,27 @@ def _box_corners(box: np.ndarray) -> np.ndarray:
     )
 
 
-def _boxes_overlap(box1: np.ndarray, box2: np.ndarray) -> bool:
+def _boxes_overlap(box1: Float64[np.ndarray, " 7"], box2: Float64[np.ndarray, " 7"]) -> bool:
     """Return whether two boxes overlap in the BEV plane."""
     return Polygon(_box_corners(box1)).intersects(Polygon(_box_corners(box2)))
 
 
-def _boxes_proximity(box1: np.ndarray, box2: np.ndarray, distance_threshold: float) -> bool:
-    """Return whether any front/back face centers are within the threshold."""
+def _boxes_proximity(
+    box1: Float64[np.ndarray, " 7"], box2: Float64[np.ndarray, " 7"], distance_threshold: float
+) -> bool:
+    """Return whether any front or back face centers are within the threshold."""
 
-    def face_centers(box: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def face_centers(
+        box: Float64[np.ndarray, " 7"],
+    ) -> tuple[Float64[np.ndarray, " 3"], Float64[np.ndarray, " 3"]]:
         """Return the front and back face-center points along the box heading.
 
         Args:
-            box: Oriented box ``[x, y, z, dx, dy, dz, yaw]``.
+            box: Oriented box [x, y, z, dx, dy, dz, yaw].
 
         Returns:
-            Tuple ``(front, back)`` of ``(3,)`` face-center coordinates offset
-            from the center by half the length ``dx`` along the yaw direction.
+            Tuple (front, back) of face-center coordinates offset from the center by half
+            the length dx along the yaw direction.
         """
         x, y, z, dx, _, _, yaw = box
         front = np.array([x + dx / 2.0 * np.cos(yaw), y + dx / 2.0 * np.sin(yaw), z])
@@ -264,10 +259,20 @@ def _boxes_proximity(box1: np.ndarray, box2: np.ndarray, distance_threshold: flo
     return False
 
 
-def _merge_boxes_extend_longer(box1: np.ndarray, box2: np.ndarray) -> list[float]:
+def _merge_boxes_extend_longer(
+    box1: Float64[np.ndarray, " 7"], box2: Float64[np.ndarray, " 7"]
+) -> list[float]:
     """Merge by elongating the larger box up to the far face of the smaller box."""
 
-    def get_box_faces(box: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
+    def get_box_faces(
+        box: Float64[np.ndarray, " 7"],
+    ) -> tuple[
+        Float64[np.ndarray, " 2"],
+        Float64[np.ndarray, " 2"],
+        Float64[np.ndarray, " 2"],
+        float,
+        float,
+    ]:
         x, y, _, dx, dy, _, yaw = box
         center = np.array([x, y])
         if dx >= dy:
@@ -337,10 +342,12 @@ def _merge_boxes_extend_longer(box1: np.ndarray, box2: np.ndarray) -> list[float
     return [new_center[0], new_center[1], new_z, new_dx, new_dy, new_dz, new_yaw]
 
 
-def _merge_boxes_union(box1: np.ndarray, box2: np.ndarray) -> list[float]:
+def _merge_boxes_union(
+    box1: Float64[np.ndarray, " 7"], box2: Float64[np.ndarray, " 7"]
+) -> list[float]:
     """Merge via the minimum rotated rectangle covering both BEV footprints."""
 
-    def shapely_box(box: np.ndarray) -> Polygon:
+    def shapely_box(box: Float64[np.ndarray, " 7"]) -> Polygon:
         x, y, _, dx, dy, _, yaw = box
         rect = Polygon([(-dx / 2, -dy / 2), (dx / 2, -dy / 2), (dx / 2, dy / 2), (-dx / 2, dy / 2)])
         rect = affinity.rotate(rect, yaw, origin=(0, 0), use_radians=True)
@@ -361,7 +368,9 @@ def _merge_boxes_union(box1: np.ndarray, box2: np.ndarray) -> list[float]:
     return [new_x, new_y, new_z, new_dx, new_dy, new_dz, new_yaw]
 
 
-def _merge_center_z_and_height(box1: np.ndarray, box2: np.ndarray) -> tuple[float, float]:
+def _merge_center_z_and_height(
+    box1: Float64[np.ndarray, " 7"], box2: Float64[np.ndarray, " 7"]
+) -> tuple[float, float]:
     """Return center z and height spanning two center-based boxes."""
     bottom = min(box1[2] - box1[5] / 2.0, box2[2] - box2[5] / 2.0)
     top = max(box1[2] + box1[5] / 2.0, box2[2] + box2[5] / 2.0)

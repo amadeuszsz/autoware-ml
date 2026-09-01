@@ -17,14 +17,12 @@ datamodule:
   test_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
-  collation_map:
-    fused_img: stack
-    gt_calibration_status: stack
   train_transforms:
     pipeline:
       - _target_: autoware_ml.transforms.camera.loading.LoadImageFromFile
-      - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-        use_dim: [0, 1, 2, 3, 4]
+      - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+        sweeps_num: 1
+        use_features: [x, y, z, intensity, ring]
       - _target_: autoware_ml.transforms.point_cloud.crop.CropBoxInner
         crop_box: [-1.53, -1.15, -0.1, 5.72, 1.15, 3.1]
       - _target_: autoware_ml.transforms.camera.distortion.UndistortImage
@@ -85,13 +83,13 @@ datamodule:
         depth_colormap: jet
         intensity_colormap: turbo
       - _target_: autoware_ml.transforms.common.tensor.PermuteAxes
-        input_keys: [fused_img]
         axes: [2, 0, 1]
   val_transforms:
     pipeline:
       - _target_: autoware_ml.transforms.camera.loading.LoadImageFromFile
-      - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-        use_dim: [0, 1, 2, 3, 4]
+      - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+        sweeps_num: 1
+        use_features: [x, y, z, intensity, ring]
       - _target_: autoware_ml.transforms.point_cloud.crop.CropBoxInner
         crop_box: [-1.53, -1.15, -0.1, 5.72, 1.15, 3.1]
       - _target_: autoware_ml.transforms.camera.distortion.UndistortImage
@@ -133,14 +131,14 @@ datamodule:
         dilation_size: 1
         ego_box: [-1.53, -1.15, -0.1, 5.72, 1.15, 3.1]
       - _target_: autoware_ml.transforms.common.tensor.PermuteAxes
-        input_keys: [fused_img]
         axes: [2, 0, 1]
   test_transforms: ${datamodule.val_transforms}
   predict_transforms:
     pipeline:
       - _target_: autoware_ml.transforms.camera.loading.LoadImageFromFile
-      - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-        use_dim: [0, 1, 2, 3, 4]
+      - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+        sweeps_num: 1
+        use_features: [x, y, z, intensity, ring]
       - _target_: autoware_ml.transforms.point_cloud.crop.CropBoxInner
         crop_box: [-1.53, -1.15, -0.1, 5.72, 1.15, 3.1]
       - _target_: autoware_ml.transforms.camera.distortion.UndistortImage
@@ -182,7 +180,6 @@ datamodule:
         dilation_size: 1
         ego_box: [-1.53, -1.15, -0.1, 5.72, 1.15, 3.1]
       - _target_: autoware_ml.transforms.common.tensor.PermuteAxes
-        input_keys: [fused_img]
         axes: [2, 0, 1]
 model:
   _target_: autoware_ml.models.calibration_status.calibration_status.CalibrationStatusClassifier

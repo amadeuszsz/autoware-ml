@@ -1,21 +1,33 @@
+# Copyright 2026 TIER IV, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Camera image masking transforms."""
 
 from __future__ import annotations
 
-from typing import Any
-
 import cv2
 import numpy as np
-import numpy.typing as npt
+from jaxtyping import Num
 
+from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.transforms.base import BaseTransform
-from autoware_ml.transforms.camera.utils import as_hwc_image_list, restore_image_container
 
 
 class GridMask(BaseTransform):
-    """Apply grid masking augmentation to one image or a list of images."""
+    """Apply grid masking augmentation to every image of the image set."""
 
-    _required_keys = ["img"]
+    _required_fields = ["images"]
 
     def __init__(self, *, p: float = 0.7, ratio: float = 0.5, rotate: int = 1) -> None:
         """Initialize the GridMask transform.
@@ -29,15 +41,33 @@ class GridMask(BaseTransform):
         self.ratio = ratio
         self.rotate = rotate
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Mask images with a regular grid pattern."""
-        images, format_info = as_hwc_image_list(input_dict["img"])
-        masked = [self._grid_mask(image) for image in images]
-        input_dict["img"] = restore_image_container(input_dict["img"], masked, format_info)
-        return input_dict
+    def transform(self, sample: Sample) -> Sample:
+        """Mask every camera image with a regular grid pattern.
 
-    def _grid_mask(self, image: npt.NDArray) -> npt.NDArray:
-        """Apply the grid mask to a single image."""
+        Args:
+            sample: Sample with a loaded image set.
+
+        Returns:
+            Sample with the masked images.
+        """
+        masked = []
+        for image in sample.images.images:
+            image_hwc = np.transpose(image, (1, 2, 0))
+            masked.append(np.transpose(self._grid_mask(image_hwc), (2, 0, 1)))
+        images = sample.images.model_copy(update={"images": np.stack(masked, axis=0)})
+        return sample.model_copy(update={"images": images})
+
+    def _grid_mask(
+        self, image: Num[np.ndarray, "height width channels"]
+    ) -> Num[np.ndarray, "height width channels"]:
+        """Apply the grid mask to a single image.
+
+        Args:
+            image: Image in height, width, channels layout.
+
+        Returns:
+            Num[np.ndarray, "height width channels"]: The masked image.
+        """
         height, width = image.shape[:2]
         period = np.random.randint(32, max(33, min(height, width)))
         cut = max(1, int(period * self.ratio))

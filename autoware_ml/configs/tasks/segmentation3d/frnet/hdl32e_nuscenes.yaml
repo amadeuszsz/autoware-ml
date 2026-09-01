@@ -3,6 +3,7 @@ defaults:
   - /tasks/segmentation3d/frnet/base
   - /datasets/nuscenes/segmentation3d
   - /datasets/nuscenes/lidar
+  - /records@records: nuscenes/nuscenes_trainval
   - _self_
 
 batch_size: 16
@@ -18,11 +19,14 @@ frustum_height: 32
 frustum_width: 480
 
 datamodule:
-  _target_: autoware_ml.datamodule.nuscenes.segmentation3d.NuscenesSegmentation3DDataModule
-  data_root: ${dataset.data_root}
-  train_ann_file: ${datamodule.data_root}/nuscenes_infos_train.pkl
-  val_ann_file: ${datamodule.data_root}/nuscenes_infos_val.pkl
-  test_ann_file: ${datamodule.data_root}/nuscenes_infos_val.pkl
+  dataset:
+    _target_: autoware_ml.datamodule.nuscenes.dataset.NuscenesDataset
+    _partial_: true
+  sources:
+    - records: ${records}
+      det3d: false
+      seg3d: true
+      repeat: 1
   train_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
@@ -36,10 +40,10 @@ datamodule:
   train_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-        load_dim: 5
-        use_dim: [0, 1, 2, 3]
-      - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSegAnnotations3D
+      - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+        sweeps_num: 1
+        use_features: [x, y, z, intensity]
+      - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
         label_mapping: ${dataset.segmentation3d.seg_label_mapping}
         max_label: ${dataset.segmentation3d.max_label}
         ignore_index: ${dataset.segmentation3d.ignore_index}
@@ -59,10 +63,10 @@ datamodule:
         pre_transform:
           _target_: autoware_ml.transforms.base.TransformsCompose
           pipeline:
-            - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-              load_dim: 5
-              use_dim: [0, 1, 2, 3]
-            - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSegAnnotations3D
+            - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+              sweeps_num: 1
+              use_features: [x, y, z, intensity]
+            - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
               label_mapping: ${dataset.segmentation3d.seg_label_mapping}
               max_label: ${dataset.segmentation3d.max_label}
               ignore_index: ${dataset.segmentation3d.ignore_index}
@@ -78,10 +82,10 @@ datamodule:
         pre_transform:
           _target_: autoware_ml.transforms.base.TransformsCompose
           pipeline:
-            - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-              load_dim: 5
-              use_dim: [0, 1, 2, 3]
-            - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSegAnnotations3D
+            - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+              sweeps_num: 1
+              use_features: [x, y, z, intensity]
+            - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
               label_mapping: ${dataset.segmentation3d.seg_label_mapping}
               max_label: ${dataset.segmentation3d.max_label}
               ignore_index: ${dataset.segmentation3d.ignore_index}
@@ -101,10 +105,10 @@ datamodule:
   val_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-        load_dim: 5
-        use_dim: [0, 1, 2, 3]
-      - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSegAnnotations3D
+      - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+        sweeps_num: 1
+        use_features: [x, y, z, intensity]
+      - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
         label_mapping: ${dataset.segmentation3d.seg_label_mapping}
         max_label: ${dataset.segmentation3d.max_label}
         ignore_index: ${dataset.segmentation3d.ignore_index}
@@ -118,9 +122,9 @@ datamodule:
   predict_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-        load_dim: 5
-        use_dim: [0, 1, 2, 3]
+      - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+        sweeps_num: 1
+        use_features: [x, y, z, intensity]
       - _target_: autoware_ml.transforms.segmentation3d.range_view.RangeInterpolation
         height: ${range_height}
         width: ${range_width}

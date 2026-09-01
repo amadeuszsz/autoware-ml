@@ -12,61 +12,95 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared 3D annotation interpretation helpers."""
+"""Shared 3D annotation interpretation helpers.
+
+The helpers turn stored box annotations into detector training targets. They operate on
+Box3DDataModel records and plain arrays so both the annotation loading transform and the
+datamodule sampling weights interpret annotations through the exact same rules.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from typing import Any
 
 import numpy as np
+from jaxtyping import Float32, Float64
+
+from autoware_ml.databases.schemas.box3d_schemas import Box3DDataModel
+from autoware_ml.datamodule.samples.boxes3d import NUM_BOX_PARAMS
+from autoware_ml.types.geometry import Box3DFieldIndex
 
 FilterAttributeSet = frozenset[tuple[str, str]]
 
-# Physical sanity bound for annotation velocity: nothing on a road moves
-# faster than 150 m/s (540 km/h). Speeds above this are pipeline garbage
-# and would silently explode the velocity regression loss.
+# Physical sanity bound for annotation velocity: nothing on a road moves faster than
+# 150 m/s (540 km/h). Speeds above this are pipeline garbage and would silently explode
+# the velocity regression loss.
 MAX_ABSOLUTE_SPEED = 150.0
 
 
-def sanitize_velocity(velocity: Sequence[float] | None) -> list[float]:
-    """Return the ground-plane velocity with non-finite components zeroed.
+def sanitize_velocity(velocity: Float64[np.ndarray, " 2"]) -> Float64[np.ndarray, " 2"]:
+    """Zero the non-finite components of a ground plane velocity.
 
     Args:
-        velocity: Ground-plane ``[vx, vy]``, or ``None`` for a static annotation.
+        velocity: Ground plane velocity as [velocity_x, velocity_y].
 
     Returns:
-        The sanitized ``[vx, vy]`` list.
+        The velocity with every non-finite component replaced by zero.
     """
-    if velocity is None:
-        return [0.0, 0.0]
-    return [0.0 if not np.isfinite(v) else float(v) for v in velocity]
+    sanitized = np.array(velocity, dtype=np.float64)
+    sanitized[~np.isfinite(sanitized)] = 0.0
+    return sanitized
 
 
-def box_is_physical(box: Sequence[float], velocity: Sequence[float]) -> bool:
-    """Return whether an annotation can become a valid training target.
+def sanitize_box_params(
+    box3d_params: Float64[np.ndarray, " num_box_fields"],
+) -> Float32[np.ndarray, " num_box_params"]:
+    """Convert stored box parameters into detection target parameters.
 
-    A physically invalid box cannot be trained on: non-finite box values
-    (including float64 values that overflow the float32 cast), non-positive
-    dimensions (box size targets are log-encoded), or a ground-plane speed
-    beyond the physical bound (velocity is never range-filtered). Such
-    instances are dropped like any other non-loadable instance - geometry
-    outliers with sane values are left to the range filters downstream.
+    The vertical velocity is dropped and the ground plane velocity is sanitized before the
+    float32 cast, so a stored non-finite velocity component never decides whether the box is
+    trainable while a float64 magnitude that overflows float32 still does.
 
     Args:
-        box: ``[cx, cy, cz, dx, dy, dz, yaw]``.
-        velocity: Ground-plane ``[vx, vy]``, sanitized via
-            :func:`sanitize_velocity` so non-finite components never reach
-            the drop decision.
+        box3d_params: Stored box parameters following Box3DFieldIndex.
+
+    Returns:
+        Box parameters [x, y, z, length, width, height, yaw, velocity_x, velocity_y] as float32.
+    """
+    params = np.asarray(box3d_params, dtype=np.float64)
+    if params.shape != (len(Box3DFieldIndex),):
+        raise ValueError(
+            f"Stored box parameters must have shape ({len(Box3DFieldIndex)},), got {params.shape}."
+        )
+    velocity = sanitize_velocity(params[Box3DFieldIndex.VELOCITY_X : Box3DFieldIndex.VELOCITY_Z])
+    return np.concatenate([params[: Box3DFieldIndex.VELOCITY_X], velocity]).astype(np.float32)
+
+
+def box_is_physical(params: Float32[np.ndarray, " num_box_params"]) -> bool:
+    """Return whether a box annotation can become a valid training target.
+
+    A physically invalid box cannot be trained on: non-finite values, non-positive dimensions
+    (box size targets are log encoded), or a ground plane speed beyond the physical bound
+    (velocity is never range filtered). Such boxes are dropped like any other non-loadable
+    annotation. Geometry outliers with sane values are left to the range filters downstream.
+
+    Args:
+        params: Box parameters [x, y, z, length, width, height, yaw, velocity_x, velocity_y]
+            with the velocity sanitized via sanitize_box_params, so a non-finite velocity
+            component never reaches the drop decision.
 
     Returns:
         Whether the annotation is trainable.
     """
-    values = np.array([*box, *velocity], dtype=np.float32)
+    values = np.asarray(params, dtype=np.float32)
+    if values.shape != (NUM_BOX_PARAMS,):
+        raise ValueError(f"Box parameters must have shape ({NUM_BOX_PARAMS},), got {values.shape}.")
+    dimensions = values[Box3DFieldIndex.LENGTH : Box3DFieldIndex.YAW]
+    velocity = values[Box3DFieldIndex.VELOCITY_X : Box3DFieldIndex.VELOCITY_Z]
     return bool(
         np.isfinite(values).all()
-        and values[3:6].min() > 0.0
-        and float(np.linalg.norm(values[7:9])) <= MAX_ABSOLUTE_SPEED
+        and dimensions.min() > 0.0
+        and float(np.linalg.norm(velocity)) <= MAX_ABSOLUTE_SPEED
     )
 
 
@@ -76,10 +110,10 @@ def normalize_filter_attributes(
     """Normalize configured class-attribute exclusions for repeated lookup.
 
     Args:
-        filter_attributes: Class and attribute name pairs, or ``None`` for none.
+        filter_attributes: Class and attribute name pairs, or None for none.
 
     Returns:
-        The exclusions as a frozenset of ``(class, attribute)`` tuples.
+        The exclusions as a frozenset of (class, attribute) tuples.
     """
     if filter_attributes is None:
         return frozenset()
@@ -102,77 +136,44 @@ def normalize_filter_attributes(
 
 
 def resolve_detection_class(
-    instance: Mapping[str, Any],
+    box: Box3DDataModel,
     *,
     class_names: Sequence[str],
     name_mapping: Mapping[str, str | None] | None,
-    label_to_category: Mapping[int, str] | None = None,
     filter_attributes: Collection[tuple[str, str]] | None = None,
 ) -> str | None:
-    """Resolve one stored instance into a detector class or reject it.
+    """Resolve one stored box annotation into a detector class or reject it.
 
-    The raw annotation category (``gt_nusc_name``) together with the configured
-    ``name_mapping`` is the single source of truth for the class: the config
-    decides the taxonomy, the annotation file only delivers raw categories. The
-    pre-computed ``bbox_label_3d`` integer (which indexes the file's own,
-    possibly older, class table) is consulted *only* as a fallback when no raw
-    category name is recorded. This way changing the configured class set never
-    requires regenerating the info files: categories the current model does not
-    train are dropped by ``name_mapping``/``class_names``, and categories a file
-    predates are still picked up from their raw name.
+    The stored dataset label name together with the configured name_mapping is the single
+    source of truth for the class: the config decides the taxonomy, the record only delivers
+    raw dataset categories. The label name and index a record generation pipeline may have
+    baked in are ignored, so changing the configured class set never requires regenerating
+    the records.
 
-    Low-point boxes are not filtered here, that is the job of the point-count
-    filters (``min_num_points`` at train time, the metric suite at eval), which
-    subsume the lidar-point validity flag.
+    Low-point boxes are not filtered here, that is the job of the point-count filters
+    (min_num_points at train time, the metric suite at eval), which subsume the lidar-point
+    validity flag.
 
     Args:
-        instance: Stored annotation instance.
+        box: Stored box annotation.
         class_names: Detector class names.
-        name_mapping: Raw category to detector class mapping.
-        label_to_category: Label index to raw category, from the file's metainfo.
+        name_mapping: Raw dataset category to detector class mapping.
         filter_attributes: Normalized class and attribute exclusions.
 
     Returns:
-        The detector class name, or ``None`` when the instance is rejected.
+        The detector class name, or None when the box is rejected.
     """
-    raw_name = instance.get("gt_nusc_name")
-    if raw_name is None:
-        # Older converters store only the integer label, decode it through the
-        # annotation file's own class table (a negative label is unclassed).
-        raw_name = _resolve_stored_name(instance, label_to_category)
-    if raw_name is None:
-        return None
-
-    raw_name = str(raw_name)
+    raw_name = box.box3d_dataset_label_name
     mapped_name = _map_name(raw_name, name_mapping)
     if mapped_name is None or mapped_name not in class_names:
         return None
-    if _has_filtered_attribute(instance, raw_name, filter_attributes):
+    if _has_filtered_attribute(box.box3d_attributes, raw_name, filter_attributes):
         return None
     return mapped_name
 
 
-def _resolve_stored_name(
-    instance: Mapping[str, Any],
-    label_to_category: Mapping[int, str] | None,
-) -> str | None:
-    """Decode ``bbox_label_3d`` through the annotation file's class table.
-
-    A negative label marks a box the annotation file assigned to no class; it
-    resolves to ``None`` (dropped) rather than raising.
-    """
-    if "bbox_label_3d" not in instance or label_to_category is None:
-        return None
-    label = int(instance["bbox_label_3d"])
-    if label < 0:
-        return None
-    if label not in label_to_category:
-        raise ValueError(f"bbox_label_3d={label} is absent from the annotation class table.")
-    return str(label_to_category[label])
-
-
 def _map_name(raw_name: str, name_mapping: Mapping[str, str | None] | None) -> str | None:
-    """Map a source class name into the configured detector taxonomy."""
+    """Map a raw dataset category name into the configured detector taxonomy."""
     if name_mapping is None:
         return raw_name
     mapped_name = name_mapping.get(raw_name, raw_name)
@@ -180,12 +181,11 @@ def _map_name(raw_name: str, name_mapping: Mapping[str, str | None] | None) -> s
 
 
 def _has_filtered_attribute(
-    instance: Mapping[str, Any],
+    attributes: Collection[str],
     raw_name: str,
     filter_attributes: Collection[tuple[str, str]] | None,
 ) -> bool:
     """Return whether the raw class and attributes match an exclusion rule."""
     if not filter_attributes:
         return False
-    attributes = {str(attribute) for attribute in instance.get("gt_attrs", [])}
-    return any((raw_name, attribute) in filter_attributes for attribute in attributes)
+    return any((raw_name, str(attribute)) in filter_attributes for attribute in attributes)

@@ -28,6 +28,11 @@ from pathlib import Path
 from typing import Any
 
 import lightning as L
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from autoware_ml.preprocessing.base import ProcessedBatch
 from omegaconf import DictConfig, OmegaConf
 import torch
 from torch.export import Dim
@@ -111,14 +116,22 @@ def move_to_device(value: Any, device: torch.device) -> Any:
     return value
 
 
-def extract_input_from_batch(batch: dict[str, Any], param_name: str) -> Any:
-    """Extract one export input from a batch dictionary."""
-    if param_name not in batch:
-        raise ValueError(
-            f"Parameter '{param_name}' not found in batch. Available keys: {list(batch.keys())}"
-        )
+def extract_input_from_batch(processed: "ProcessedBatch", param_name: str) -> Any:
+    """Extract one export input from a processed batch.
 
-    input_value = batch[param_name]
+    Args:
+        processed: Processed batch the export inputs resolve against.
+        param_name: Name of the export input.
+
+    Returns:
+        The resolved input, unwrapped to the first sample for per sample sequences.
+    """
+    if not processed.has(param_name):
+        raise ValueError(
+            f"Parameter '{param_name}' is not available on the processed batch. Derived "
+            f"inputs: {list(processed.available_input_names())}."
+        )
+    input_value = processed.resolve(param_name)
     if isinstance(input_value, (list, tuple)):
         input_value = input_value[0]
     return input_value
@@ -128,29 +141,41 @@ def get_predict_batch(
     datamodule: L.LightningDataModule,
     model: L.LightningModule,
     device: torch.device,
-) -> dict[str, Any]:
-    """Load one prediction batch and apply transfer-time preprocessing."""
+) -> "ProcessedBatch":
+    """Load one prediction batch and apply transfer-time preprocessing.
+
+    Args:
+        datamodule: Data module serving the prediction split.
+        model: Model owning the runtime preprocessing.
+        device: Device the batch moves to.
+
+    Returns:
+        The processed batch on the target device.
+    """
     datamodule.setup("predict")
     predict_dataloader = datamodule.predict_dataloader()
     batch = next(iter(predict_dataloader))
-    batch = move_to_device(batch, device)
+    batch = batch.to(device)
     return model.on_after_batch_transfer(batch, dataloader_idx=0)
 
 
-def infer_export_spec(model: L.LightningModule, batch: dict[str, Any]) -> ExportSpec:
-    """Infer an export specification directly from the model forward signature."""
+def infer_export_spec(model: L.LightningModule, processed: "ProcessedBatch") -> ExportSpec:
+    """Infer an export specification directly from the model forward signature.
+
+    Args:
+        model: Model whose forward signature defines the export inputs.
+        processed: Processed batch the export inputs resolve against.
+
+    Returns:
+        Export specification with one input per forward parameter.
+    """
     forward_params = get_export_parameter_names(model)
     if not forward_params:
         raise ValueError("Model forward signature has no parameters.")
 
-    if (
-        isinstance(batch, dict)
-        and len(forward_params) == 1
-        and forward_params[0] == "batch_inputs_dict"
-    ):
-        return ExportSpec(module=model, args=(batch,), input_param_names=forward_params)
-
-    input_args = tuple(extract_input_from_batch(batch, param_name) for param_name in forward_params)
+    input_args = tuple(
+        extract_input_from_batch(processed, param_name) for param_name in forward_params
+    )
     return ExportSpec(module=model, args=input_args, input_param_names=forward_params)
 
 
@@ -169,8 +194,8 @@ def resolve_export_specs(
     Returns:
         Ordered mapping of module name to export specification.
     """
-    batch = get_predict_batch(datamodule, model, device)
-    return model.build_export_specs(batch)
+    processed = get_predict_batch(datamodule, model, device)
+    return model.build_export_specs(processed)
 
 
 def merge_module_onnx_cfg(onnx_cfg: DictConfig, module_name: str) -> DictConfig:

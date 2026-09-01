@@ -13,10 +13,13 @@ it, so absence is never silent.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 import torch
+from jaxtyping import Float32, Int64
+from torch import Tensor
+
+from autoware_ml.datamodule.samples.batch import Batch
 
 # Per-frame metadata passed through to each frame entry when the batch carries it.
 _FRAME_META_KEYS = ("ego2global", "scene_token", "timestamp")
@@ -25,13 +28,13 @@ _FRAME_BOX_KEYS = ("gt_boxes", "gt_labels")
 
 
 def segmentation_frames_eval_output(
-    coord: torch.Tensor,
-    pred_labels: torch.Tensor,
-    target_labels: torch.Tensor,
-    scores: torch.Tensor,
-    frame_ids: torch.Tensor,
+    coord: Float32[Tensor, "num_points 3"],
+    pred_labels: Int64[Tensor, " num_points"],
+    target_labels: Int64[Tensor, " num_points"],
+    scores: Float32[Tensor, "num_points num_classes"],
+    frame_ids: Int64[Tensor, " num_points"],
     num_frames: int,
-    batch: Mapping[str, Any],
+    batch: Batch,
 ) -> dict[str, Any]:
     """Split batch-concatenated per-point tensors into the ``seg_frames`` list.
 
@@ -42,16 +45,21 @@ def segmentation_frames_eval_output(
         scores: ``(N, C)`` per-class scores per point.
         frame_ids: ``(N,)`` frame index of every point.
         num_frames: Number of frames in the batch.
-        batch: Batch dictionary, per-frame metadata and detection GT are copied
-            into each frame entry when present.
+        batch: Typed batch, per-frame metadata and detection GT are copied into each frame
+            entry when present.
 
     Returns:
         ``{"seg_frames": [...]}`` with one entry per frame.
     """
-    for key in (*_FRAME_META_KEYS, *_FRAME_BOX_KEYS):
-        if key in batch and len(batch[key]) != num_frames:
+    per_frame_values = {
+        key: getattr(batch, key)
+        for key in (*_FRAME_META_KEYS, *_FRAME_BOX_KEYS)
+        if getattr(batch, key) is not None
+    }
+    for key, values in per_frame_values.items():
+        if len(values) != num_frames:
             raise ValueError(
-                f"batch[{key!r}] has {len(batch[key])} entries for {num_frames} frames, "
+                f"batch.{key} has {len(values)} entries for {num_frames} frames, "
                 "per-frame metadata must align one-to-one or points get another frame's context."
             )
     # frame_ids come from cumulative point offsets, so they are non-decreasing.
@@ -78,18 +86,20 @@ def segmentation_frames_eval_output(
             "scores": scores_split[frame_index],
         }
         for key in _FRAME_META_KEYS:
-            if key in batch:
-                frame[key] = batch[key][frame_index]
+            if key in per_frame_values:
+                frame[key] = per_frame_values[key][frame_index]
         for key in _FRAME_BOX_KEYS:
-            if key in batch:
-                frame["gt_boxes" if key == "gt_boxes" else "gt_box_labels"] = batch[key][
+            if key in per_frame_values:
+                frame["gt_boxes" if key == "gt_boxes" else "gt_box_labels"] = per_frame_values[key][
                     frame_index
                 ]
         frames.append(frame)
     return {"seg_frames": frames}
 
 
-def concat_frame_ids(offset: torch.Tensor, point_to_batch: torch.Tensor) -> torch.Tensor:
+def concat_frame_ids(
+    offset: Int64[Tensor, " batch_size"], point_to_batch: Int64[Tensor, " num_points"]
+) -> Int64[Tensor, " num_points"]:
     """Frame index per point from the batch ``offset`` (inclusive cumulative lengths).
 
     ``point_to_batch`` maps each point to its position in the batch-concatenated

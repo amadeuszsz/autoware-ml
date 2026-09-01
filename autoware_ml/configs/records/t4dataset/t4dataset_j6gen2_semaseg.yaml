@@ -1,0 +1,14 @@
+# Read access to a generated dataset record table. The table is produced outside this
+# repository by t4dataset-generator, carries its own splits and database names, and is
+# shared by every model that trains on these databases. The path is fixed: mount your
+# own writable records directory at /workspace/records, so the data mount can stay read
+# only.
+_target_: autoware_ml.databases.record_table.RecordTable
+_convert_: all
+
+path: /workspace/records/t4dataset.parquet
+data_root: ${data_root_path}/t4dataset/
+
+# Databases of the table this corpus trains on.
+databases:
+  - db_j6gen2_semaseg_v1

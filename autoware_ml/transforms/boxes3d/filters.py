@@ -17,281 +17,92 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import numpy as np
+import torch
+from jaxtyping import Int64
 
+from autoware_ml.datamodule.samples.boxes3d import Boxes3D
+from autoware_ml.datamodule.samples.point_cloud import PointCloud
+from autoware_ml.datamodule.samples.sample import Sample
+from autoware_ml.geometry.utils import points_in_boxes_3d
 from autoware_ml.transforms.base import BaseTransform
 from autoware_ml.transforms.point_cloud.time_lag import current_frame_mask
 
-_BOX_KEYS = ("gt_boxes", "gt_names", "gt_labels", "gt_num_points")
 
+def _count_current_frame_points(
+    points: PointCloud, boxes: Boxes3D
+) -> Int64[np.ndarray, " num_boxes"]:
+    """Count the current frame points inside every box.
 
-def _filter_present_box_keys(input_dict: dict[str, Any], mask: np.ndarray) -> None:
-    """Apply one per-box mask to every present box-aligned annotation key."""
-    for key in _BOX_KEYS:
-        if key in input_dict:
-            input_dict[key] = input_dict[key][mask]
-
-
-def _resolve_point_coords(input_dict: dict[str, Any]) -> np.ndarray:
-    """Return ``(N, 3)`` point coordinates from ``coord`` or ``points``.
-
-    PTv3-style pipelines split the cloud into ``coord``; pillar pipelines keep
-    the raw ``points`` array (consumed downstream by the voxel preprocessor).
-    Either is acceptable for counting points inside boxes.
-    """
-    for key in ("coord", "points"):
-        if key in input_dict:
-            return np.asarray(input_dict[key], dtype=np.float32)[:, :3]
-    raise KeyError("Point-count filters require a point cloud under 'coord' or 'points'.")
-
-
-def _current_frame_coords(
-    input_dict: dict[str, Any], time_lag_dim: int | None
-) -> np.ndarray:
-    """Return the coordinates of the points a box point count may consider.
-
-    A ground-truth box is annotated on the current frame, so its point support is a property of that
-    frame: points appended from earlier sweeps must not decide whether the box is kept, or the
-    surviving set of boxes would depend on how many sweeps the model happens to consume.
-    """
-    coord = _resolve_point_coords(input_dict)
-    mask = current_frame_mask(input_dict, time_lag_dim)
-    return coord if mask is None else coord[mask]
-
-
-def _count_points_in_rotated_boxes(
-    coord: np.ndarray,
-    boxes: np.ndarray,
-) -> np.ndarray:
-    """Count the number of points inside each oriented 3D bounding box.
+    A ground truth box is annotated on the current frame, so its point support is a property
+    of that frame: points appended from earlier sweeps must not decide whether the box is
+    kept, or the surviving set of boxes would depend on how many sweeps the model consumes.
 
     Args:
-        coord: Point coordinates of shape ``(N, 3)``.
-        boxes: Bounding boxes of shape ``(M, 7)`` with columns
-            ``[cx, cy, cz, dx, dy, dz, yaw]``.
+        points: Point cloud of the sample.
+        boxes: Boxes whose interior points are counted.
 
     Returns:
-        Integer array of shape ``(M,)`` with the point count per box.
+        Number of current frame points inside every box.
     """
-    counts = np.zeros(len(boxes), dtype=np.int64)
-    for i, box in enumerate(boxes):
-        cx, cy, cz, dx, dy, dz, yaw = box[:7]
-        cos_yaw = np.cos(-yaw)
-        sin_yaw = np.sin(-yaw)
-        # Translate to box center
-        delta = coord[:, :3] - np.array([cx, cy, cz], dtype=np.float32)
-        # Rotate into box-local frame (around z-axis)
-        local_x = delta[:, 0] * cos_yaw - delta[:, 1] * sin_yaw
-        local_y = delta[:, 0] * sin_yaw + delta[:, 1] * cos_yaw
-        local_z = delta[:, 2]
-        inside = (
-            (np.abs(local_x) <= dx / 2.0)
-            & (np.abs(local_y) <= dy / 2.0)
-            & (np.abs(local_z) <= dz / 2.0)
-        )
-        counts[i] = inside.sum()
-    return counts
-
-
-class ObjectNameFilter(BaseTransform):
-    """Keep only 3D boxes whose class name is in the allowed list.
-
-    Required keys:
-        gt_names: Per-box class name array.
-
-    Optional keys:
-        gt_boxes: 3D bounding boxes. Filtered when present.
-        gt_labels: Per-box label indices. Filtered when present.
-        gt_num_points: Per-box lidar point counts. Filtered when present.
-
-    Generated keys:
-        gt_names: Filtered class names.
-        gt_boxes: Filtered boxes (when present).
-        gt_labels: Filtered labels (when present).
-        gt_num_points: Filtered lidar point counts (when present).
-    """
-
-    _required_keys = ["gt_names"]
-
-    def __init__(self, *, classes: Sequence[str]) -> None:
-        """Initialize the ObjectNameFilter transform.
-
-        Args:
-            classes: Allowed class names retained in the sample.
-        """
-        self.classes = set(classes)
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Filter present box-aligned arrays by allowed class names.
-
-        Args:
-            input_dict: Sample dictionary containing ``gt_names``.
-
-        Returns:
-            Updated sample dictionary with disallowed classes removed.
-        """
-        mask = np.array([n in self.classes for n in input_dict["gt_names"]], dtype=bool)
-        _filter_present_box_keys(input_dict, mask)
-        return input_dict
+    mask = current_frame_mask(points)
+    coord = points.coord if mask is None else points.coord[mask]
+    inside = points_in_boxes_3d(
+        torch.from_numpy(np.ascontiguousarray(coord, dtype=np.float32)),
+        torch.from_numpy(np.ascontiguousarray(boxes.params, dtype=np.float32)),
+    )
+    return inside.sum(dim=1).numpy().astype(np.int64)
 
 
 class ObjectRangeFilter(BaseTransform):
-    """Filter 3D bounding boxes and associated labels by point-cloud range.
+    """Remove boxes whose center lies outside the configured point cloud range."""
 
-    Required keys:
-        (none)
-
-    Optional keys:
-        gt_boxes: 3D bounding boxes (Nx7 or Nx9). Filtered when present.
-        gt_num_points: Per-box lidar point counts. Filtered when present.
-
-    Generated keys:
-        gt_boxes: Filtered boxes (when present).
-        gt_names: Filtered class names (when present alongside gt_boxes).
-        gt_labels: Filtered labels (when present alongside gt_boxes).
-        gt_num_points: Filtered lidar point counts (when present alongside gt_boxes).
-    """
-
-    _required_keys: list[str] = []
-    _optional_keys = ["gt_boxes"]
+    _required_fields = ["boxes"]
 
     def __init__(self, *, point_cloud_range: Sequence[float]) -> None:
         """Initialize the ObjectRangeFilter transform.
 
         Args:
-            point_cloud_range: ``[x_min, y_min, z_min, x_max, y_max, z_max]``.
+            point_cloud_range: Range bounds [x_min, y_min, z_min, x_max, y_max, z_max].
         """
+        if len(point_cloud_range) != 6:
+            raise ValueError(
+                f"point_cloud_range must contain 6 bounds, got {list(point_cloud_range)}."
+            )
         self.point_cloud_range = np.asarray(point_cloud_range, dtype=np.float32)
 
-    def apply_defaults(self, input_dict: dict[str, Any]) -> None:
-        """No defaults needed - transform is a no-op when gt_boxes is absent."""
-        pass
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
+    def transform(self, sample: Sample) -> Sample:
         """Filter boxes whose centers fall outside the configured range.
 
         Args:
-            input_dict: Sample dictionary updated in place.
+            sample: Sample with loaded detection boxes.
 
         Returns:
-            Updated sample dictionary.
+            Sample with the out-of-range boxes removed.
         """
-        if "gt_boxes" not in input_dict:
-            return input_dict
-
-        boxes = input_dict["gt_boxes"]
-        pcr = self.point_cloud_range
-        mask = (
-            (boxes[:, 0] >= pcr[0])
-            & (boxes[:, 1] >= pcr[1])
-            & (boxes[:, 2] >= pcr[2])
-            & (boxes[:, 0] <= pcr[3])
-            & (boxes[:, 1] <= pcr[4])
-            & (boxes[:, 2] <= pcr[5])
-        )
-        _filter_present_box_keys(input_dict, mask)
-        return input_dict
-
-
-class ObjectMinPointsFilter(BaseTransform):
-    """Remove 3D boxes that contain fewer than a minimum number of points.
-
-    Required keys:
-        gt_names: Class name per box.
-
-    Optional keys:
-        gt_boxes: 3D bounding boxes (Nx7 or Nx9). Filtered when present.
-        coord: Point coordinates (Nx3 or wider). Required when gt_boxes is present.
-        points: Raw point array (Nx3 or wider). Required when gt_boxes is present and
-            coord is absent.
-        time_lag: Per-point time lag. Read when the sample carries it, so only current-frame
-            points are counted.
-        gt_num_points: Per-box lidar point counts. Filtered when present.
-
-    Generated keys:
-        gt_boxes: Filtered boxes (when present).
-        gt_names: Filtered class names.
-        gt_labels: Filtered labels (when present).
-        gt_num_points: Filtered lidar point counts (when present).
-    """
-
-    _required_keys = ["gt_names"]
-    _optional_keys = ["gt_boxes", "coord", "points"]
-
-    def __init__(self, *, min_num_points: int, time_lag_dim: int | None) -> None:
-        """Initialize the ObjectMinPointsFilter transform.
-
-        Args:
-            min_num_points: Minimum number of points required inside each box.
-            time_lag_dim: Column of ``points`` holding the per-point time lag, or ``None`` when the
-                pipeline declares that its cloud carries no time lag. Only current-frame points are
-                counted, so the surviving boxes do not depend on the number of loaded sweeps.
-        """
-        self.min_num_points = min_num_points
-        self.time_lag_dim = time_lag_dim
-
-    def apply_defaults(self, input_dict: dict[str, Any]) -> None:
-        """No defaults needed - transform is a no-op when gt_boxes is absent."""
-        pass
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Remove boxes with too few interior points.
-
-        Args:
-            input_dict: Sample dictionary updated in place.
-
-        Returns:
-            Updated sample dictionary.
-        """
-        if "gt_boxes" not in input_dict:
-            return input_dict
-
-        coord = _current_frame_coords(input_dict, self.time_lag_dim)
-        boxes = input_dict["gt_boxes"]
-        counts = _count_points_in_rotated_boxes(coord, boxes)
-        mask = counts >= self.min_num_points
-        _filter_present_box_keys(input_dict, mask)
-        return input_dict
+        centers = sample.boxes.params[:, :3]
+        lower = self.point_cloud_range[:3]
+        upper = self.point_cloud_range[3:]
+        mask = ((centers >= lower) & (centers <= upper)).all(axis=1)
+        return sample.model_copy(update={"boxes": sample.boxes.filter(mask)})
 
 
 class ObjectRangeMinPointsFilter(BaseTransform):
-    """Remove boxes below a point-count threshold within a BEV radial interval.
+    """Remove boxes below a point count threshold within a BEV radial interval.
 
-    Required keys:
-        gt_names: Class name per box.
-
-    Optional keys:
-        gt_boxes: 3D bounding boxes (Nx7 or Nx9). Filtered when present.
-        coord: Point coordinates (Nx3 or wider). Required when gt_boxes is present.
-        points: Raw point array (Nx3 or wider). Required when gt_boxes is present and
-            coord is absent.
-        time_lag: Per-point time lag. Read when the sample carries it, so only current-frame
-            points are counted.
-        gt_num_points: Per-box lidar point counts. Filtered when present.
-
-    Generated keys:
-        gt_boxes: Filtered boxes (when present).
-        gt_names: Filtered class names.
-        gt_labels: Filtered labels (when present).
-        gt_num_points: Filtered lidar point counts (when present).
+    The point counts are recomputed from the current frame points of the sample, so the
+    surviving boxes do not depend on the number of loaded sweeps.
     """
 
-    _required_keys = ["gt_names"]
-    _optional_keys = ["gt_boxes", "coord", "points"]
+    _required_fields = ["points", "boxes"]
 
-    def __init__(
-        self, *, range_radius: Sequence[float], min_num_points: int, time_lag_dim: int | None
-    ) -> None:
+    def __init__(self, *, range_radius: Sequence[float], min_num_points: int) -> None:
         """Initialize the ObjectRangeMinPointsFilter transform.
 
         Args:
-            range_radius: Radial interval ``[min_radius, max_radius]`` in meters.
+            range_radius: Radial interval [min_radius, max_radius] in meters.
             min_num_points: Minimum points required for boxes inside the interval.
-            time_lag_dim: Column of ``points`` holding the per-point time lag, or ``None`` when the
-                pipeline declares that its cloud carries no time lag. Only current-frame points are
-                counted, so the surviving boxes do not depend on the number of loaded sweeps.
         """
         if len(range_radius) != 2:
             raise ValueError(f"range_radius must contain [min, max], got {range_radius}")
@@ -303,30 +114,18 @@ class ObjectRangeMinPointsFilter(BaseTransform):
         self.min_radius = min_radius
         self.max_radius = max_radius
         self.min_num_points = min_num_points
-        self.time_lag_dim = time_lag_dim
 
-    def apply_defaults(self, input_dict: dict[str, Any]) -> None:
-        """No defaults needed because missing boxes make this transform a no-op."""
-        pass
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Filter boxes in the configured radial band by point count.
+    def transform(self, sample: Sample) -> Sample:
+        """Filter boxes in the configured radial band by current frame point count.
 
         Args:
-            input_dict: Sample dictionary updated in place.
+            sample: Sample with a loaded point cloud and detection boxes.
 
         Returns:
-            Updated sample dictionary with low-support in-range boxes removed.
+            Sample with the low-support in-range boxes removed.
         """
-        if "gt_boxes" not in input_dict:
-            return input_dict
-
-        boxes = input_dict["gt_boxes"]
-        radii = np.linalg.norm(boxes[:, :2], axis=1)
+        radii = np.linalg.norm(sample.boxes.params[:, :2], axis=1)
         in_range = (radii >= self.min_radius) & (radii < self.max_radius)
-        counts = _count_points_in_rotated_boxes(
-            _current_frame_coords(input_dict, self.time_lag_dim), boxes
-        )
+        counts = _count_current_frame_points(sample.points, sample.boxes)
         mask = ~in_range | (counts >= self.min_num_points)
-        _filter_present_box_keys(input_dict, mask)
-        return input_dict
+        return sample.model_copy(update={"boxes": sample.boxes.filter(mask)})

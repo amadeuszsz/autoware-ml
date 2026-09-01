@@ -12,76 +12,123 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Point-cloud loading transforms."""
+"""Point cloud loading helpers shared by the loading transforms."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import numpy as np
+from jaxtyping import Float32
 
-from autoware_ml.transforms.base import BaseTransform
+from autoware_ml.databases.schemas.lidar_frames import LidarFrameDataModel
+from autoware_ml.datamodule.samples.sample import Sample
+from autoware_ml.transforms.point_cloud.paths import resolve_frame_path
+from autoware_ml.types.geometry import PointFeatureName
+
+# Raw feature column names of a stored point cloud file, in storage order.
+RAW_FEATURE_NAMES = (
+    PointFeatureName.X,
+    PointFeatureName.Y,
+    PointFeatureName.Z,
+    PointFeatureName.INTENSITY,
+    PointFeatureName.RING,
+)
 
 
-class LoadPointsFromFile(BaseTransform):
-    """Load point clouds from a lidar file path stored in sample metadata.
+def coerce_feature_names(
+    feature_names: Sequence[str | PointFeatureName],
+) -> tuple[PointFeatureName, ...]:
+    """
+    Coerce configured feature names to PointFeatureName members.
 
-    Generated keys:
-        points: Loaded point array.
-        num_current_points: Number of points belonging to the current frame,
-            which is every loaded point for a single-frame loader.
+    Args:
+      feature_names: Configured feature names.
+
+    Returns:
+      tuple[PointFeatureName, ...]: Coerced feature names.
     """
 
-    _required_keys = ["lidar_path"]
-
-    def __init__(self, *, load_dim: int = 5, use_dim: Sequence[int] | int = (0, 1, 2, 3)) -> None:
-        """Initialize the LoadPointsFromFile transform.
-
-        Args:
-            load_dim: Number of features stored per point in the source file.
-            use_dim: Selected feature dimensions preserved in the loaded tensor.
-        """
-        self.load_dim = load_dim
-        self.use_dim = use_dim
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Load point data from the configured lidar file.
-
-        Args:
-            input_dict: Sample metadata containing ``lidar_path``.
-
-        Returns:
-            Updated sample dictionary with a loaded ``points`` array.
-        """
-        load_dim = int(input_dict.get("num_pts_feats", self.load_dim))
-        points = np.fromfile(input_dict["lidar_path"], dtype=np.float32).reshape(-1, load_dim)
-
-        # Loading single source sensor points
-        idx_begin = input_dict.get("idx_begin")
-        length = input_dict.get("length")
-        if idx_begin is not None and length is not None:
-            points = points[idx_begin : idx_begin + length]
-
-        # Transform points to the coordinate frame of a single source sensor
-        translation = input_dict.get("translation")
-        rotation = input_dict.get("rotation")
-        if translation is not None and rotation is not None:
-            points[:, :3] = (points[:, :3] - translation) @ rotation
-
-        use_dim = self.use_dim
-        if isinstance(use_dim, int):
-            points = points[:, :use_dim]
-        else:
-            points = points[:, list(use_dim)]
-
-        output = {"points": points.astype(np.float32), "num_current_points": points.shape[0]}
-        if idx_begin is not None:
-            output["idx_begin"] = idx_begin
-        if length is not None:
-            output["length"] = length
-
-        return output
+    return tuple(PointFeatureName(feature_name) for feature_name in feature_names)
 
 
-__all__ = ["LoadPointsFromFile"]
+def load_frame_points(
+    data_root: str, lidar_frame: LidarFrameDataModel
+) -> Float32[np.ndarray, "num_points num_features"]:
+    """
+    Load the raw point matrix of one lidar frame.
+
+    Args:
+      data_root: Root directory of the dataset files.
+      lidar_frame: Lidar frame data model of the frame.
+
+    Returns:
+      Float32[np.ndarray, "num_points num_features"]: Raw point matrix with the stored feature
+        layout.
+    """
+
+    path = resolve_frame_path(data_root, lidar_frame.lidar_pointcloud_path)
+    num_features = lidar_frame.lidar_pointcloud_num_features
+    return np.fromfile(path, dtype=np.float32).reshape(-1, num_features)
+
+
+def select_raw_features(
+    points: Float32[np.ndarray, "num_points num_features"],
+    feature_names: Sequence[PointFeatureName],
+) -> Float32[np.ndarray, "num_points num_selected_features"]:
+    """
+    Select raw feature columns by name from a raw point matrix.
+
+    Args:
+      points: Raw point matrix with the stored feature layout.
+      feature_names: Names of the raw feature columns to select, in the requested order.
+
+    Returns:
+      Float32[np.ndarray, "num_points num_selected_features"]: Selected feature columns.
+    """
+
+    column_indices = []
+    for feature_name in feature_names:
+        if feature_name not in RAW_FEATURE_NAMES:
+            raise ValueError(
+                f"{feature_name} is not a raw point feature, available: {RAW_FEATURE_NAMES}."
+            )
+        column_index = RAW_FEATURE_NAMES.index(feature_name)
+        if column_index >= points.shape[1]:
+            raise ValueError(
+                f"The stored point cloud carries {points.shape[1]} features and has no "
+                f"column for {feature_name}."
+            )
+        column_indices.append(column_index)
+    return points[:, column_indices]
+
+
+def keyframe_lidar_frame(sample: Sample) -> LidarFrameDataModel:
+    """
+    Get the keyframe lidar frame of a sample record.
+
+    Args:
+      sample: Sample holding the dataset record.
+
+    Returns:
+      LidarFrameDataModel: The keyframe lidar frame.
+    """
+
+    if not len(sample.record.lidar_frames):
+        raise ValueError(f"The record of sample {sample.meta.sample_id} has no lidar frames.")
+    keyframe = sample.record.lidar_frames[0]
+    if not keyframe.lidar_keyframe:
+        raise ValueError(
+            f"The first lidar frame of sample {sample.meta.sample_id} is not the keyframe."
+        )
+    return keyframe
+
+
+__all__ = [
+    "RAW_FEATURE_NAMES",
+    "coerce_feature_names",
+    "keyframe_lidar_frame",
+    "load_frame_points",
+    "resolve_frame_path",
+    "select_raw_features",
+]

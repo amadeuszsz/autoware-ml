@@ -94,6 +94,7 @@ class ScenarioData(BaseModel):
       sample_steps: Number of steps to sample.
       vehicle_type: Type of the vehicle.
       location: Location of the scenario.
+      split: Split the scenario belongs to, written to every record of the scenario.
     """
 
     # Set model config to frozen and strict
@@ -106,6 +107,7 @@ class ScenarioData(BaseModel):
     sample_steps: int
     vehicle_type: str | None = None
     location: str | None = None
+    split: str = "train"
 
     def __str__(self) -> str:
         """

@@ -12,21 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Segmentation-annotation loading transforms."""
+"""Segmentation annotation loading transforms."""
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
+from jaxtyping import Int64
 
+from autoware_ml.datamodule.samples.sample import Sample
+from autoware_ml.datamodule.samples.segmentation3d import SegmentationLabels
 from autoware_ml.transforms.base import BaseTransform
+from autoware_ml.transforms.point_cloud.loading import keyframe_lidar_frame, resolve_frame_path
 
 
-class LoadSegAnnotations3D(BaseTransform):
-    """Load raw point-wise segmentation labels from metadata paths."""
+class LoadSeg3DAnnotations(BaseTransform):
+    """Load per point semantic labels from the mask file of the sample record.
 
-    _required_keys = ["pts_semantic_mask_path"]
+    The semantic mask of the keyframe lidar frame stores one raw label per current frame point.
+    The raw labels are remapped to training labels in one of two exclusive modes. With
+    label_mapping the stored values are raw integer labels and the mapping translates them
+    directly, the nuScenes lidarseg layout. With class_mapping the stored values index the
+    category mapping of the record and the mapping translates the category names, the T4
+    layout. Values without a mapping entry become ignore_index.
+
+    The produced segment covers the current frame points only. For a densified cloud
+    PreparePointSegInput pads the labels to the full point count, so no transform that filters
+    or reorders points may run in between.
+    """
+
+    _required_fields = ["points"]
 
     def __init__(
         self,
@@ -37,22 +51,21 @@ class LoadSegAnnotations3D(BaseTransform):
         class_mapping: dict[str, int] | None = None,
         ignore_index: int = -1,
     ) -> None:
-        """Initialize the LoadSegAnnotations3D transform.
+        """Initialize the LoadSeg3DAnnotations transform.
 
         Args:
             dtype: Raw label dtype stored on disk.
-            label_mapping: Optional raw-label to training-label mapping.
+            label_mapping: Optional raw label to training label mapping.
             max_label: Optional maximum raw label used to size the lookup table.
-            class_mapping: Optional category-name to training-label mapping.
+            class_mapping: Optional category name to training label mapping.
             ignore_index: Ignore label used for unknown categories.
         """
         if (label_mapping is None) == (class_mapping is None):
             raise ValueError(
-                "LoadSegAnnotations3D requires exactly one of 'label_mapping' "
-                "(raw-int -> train-label, e.g. nuScenes) or 'class_mapping' "
-                "(category-name -> train-label with per-sample "
-                "'pts_semantic_mask_categories', e.g. T4); "
-                f"got label_mapping={label_mapping is not None}, "
+                "LoadSeg3DAnnotations requires exactly one of 'label_mapping' "
+                "(raw int to train label, e.g. nuScenes) or 'class_mapping' "
+                "(category name to train label resolved through the category mapping of the "
+                f"record, e.g. T4), got label_mapping={label_mapping is not None}, "
                 f"class_mapping={class_mapping is not None}."
             )
         self.dtype = np.dtype(dtype)
@@ -61,52 +74,71 @@ class LoadSegAnnotations3D(BaseTransform):
         self.class_mapping = class_mapping
         self.ignore_index = ignore_index
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Load point-wise semantic labels from the configured mask file.
+    def transform(self, sample: Sample) -> Sample:
+        """Load the semantic labels of the current frame from the mask file of the record.
 
         Args:
-            input_dict: Sample metadata containing ``pts_semantic_mask_path``.
+            sample: Sample holding the dataset record and a loaded point cloud.
 
         Returns:
-            Updated sample dictionary with ``pts_semantic_mask``.
+            Sample with the current frame segmentation labels.
         """
-        labels = np.fromfile(input_dict["pts_semantic_mask_path"], dtype=self.dtype).astype(
-            np.int64
-        )
-        idx_begin = input_dict.get("idx_begin")
-        length = input_dict.get("length")
-
-        if idx_begin is not None and length is not None:
-            labels = labels[idx_begin : idx_begin + length]
+        keyframe = keyframe_lidar_frame(sample)
+        if keyframe.lidar_pointcloud_semantic_mask_path is None:
+            raise ValueError(
+                f"The record of sample {sample.meta.sample_id} has no semantic mask path on "
+                "its keyframe lidar frame."
+            )
+        path = resolve_frame_path(sample.data_root, keyframe.lidar_pointcloud_semantic_mask_path)
+        raw_labels = np.fromfile(path, dtype=self.dtype).astype(np.int64)
 
         if self.class_mapping is not None:
-            if "pts_semantic_mask_categories" not in input_dict:
-                raise KeyError(
-                    "LoadSegAnnotations3D was configured with 'class_mapping' but the sample "
-                    "has no 'pts_semantic_mask_categories' to remap from. Provide the per-sample "
-                    "categories, or configure 'label_mapping' for raw-integer masks."
-                )
-            categories = input_dict["pts_semantic_mask_categories"]
-            lookup_size = max(int(label) for label in categories.values()) + 1 if categories else 0
-            lookup = np.full(lookup_size, fill_value=self.ignore_index, dtype=np.int64)
-            for category_name, raw_label in categories.items():
-                lookup[int(raw_label)] = self.class_mapping.get(
-                    str(category_name), self.ignore_index
-                )
-            mapped = np.full(labels.shape, self.ignore_index, dtype=np.int64)
-            valid = (labels >= 0) & (labels < lookup.shape[0])
-            mapped[valid] = lookup[labels[valid]]
-            labels = mapped
-        else:  # label_mapping is set (guaranteed exclusive by __init__)
-            lookup_size = (
-                self.max_label + 1 if self.max_label is not None else max(self.label_mapping) + 1
-            )
-            lookup = np.full(lookup_size, fill_value=self.ignore_index, dtype=np.int64)
-            for source_label, target_label in self.label_mapping.items():
-                lookup[int(source_label)] = int(target_label)
-            mapped = np.full(labels.shape, self.ignore_index, dtype=np.int64)
-            valid = (labels >= 0) & (labels < lookup.shape[0])
-            mapped[valid] = lookup[labels[valid]]
-            labels = mapped
+            lookup = self._category_lookup(sample)
+        else:
+            lookup = self._label_lookup()
 
-        return {"pts_semantic_mask": labels}
+        labels = np.full(raw_labels.shape, self.ignore_index, dtype=np.int64)
+        valid = (raw_labels >= 0) & (raw_labels < lookup.shape[0])
+        labels[valid] = lookup[raw_labels[valid]]
+        return sample.model_copy(update={"segment": SegmentationLabels(labels=labels)})
+
+    def _category_lookup(self, sample: Sample) -> Int64[np.ndarray, " lookup_size"]:
+        """Build the raw label lookup table from the category mapping of the record.
+
+        Args:
+            sample: Sample holding the dataset record.
+
+        Returns:
+            Int64[np.ndarray, " lookup_size"]: Training label per raw label.
+        """
+        category_mapping = sample.record.category_mapping
+        if category_mapping is None:
+            raise ValueError(
+                "LoadSeg3DAnnotations was configured with 'class_mapping' but the record "
+                f"of sample {sample.meta.sample_id} carries no category mapping to remap "
+                "from. Provide the category mapping, or configure 'label_mapping' for raw "
+                "integer masks."
+            )
+        lookup_size = 0
+        if len(category_mapping.category_indices):
+            lookup_size = max(category_mapping.category_indices) + 1
+        lookup = np.full(lookup_size, fill_value=self.ignore_index, dtype=np.int64)
+        for category_name, raw_label in zip(
+            category_mapping.category_names, category_mapping.category_indices
+        ):
+            lookup[raw_label] = self.class_mapping.get(category_name, self.ignore_index)
+        return lookup
+
+    def _label_lookup(self) -> Int64[np.ndarray, " lookup_size"]:
+        """Build the raw label lookup table from the configured label mapping.
+
+        Returns:
+            Int64[np.ndarray, " lookup_size"]: Training label per raw label.
+        """
+        lookup_size = (
+            self.max_label + 1 if self.max_label is not None else max(self.label_mapping) + 1
+        )
+        lookup = np.full(lookup_size, fill_value=self.ignore_index, dtype=np.int64)
+        for source_label, target_label in self.label_mapping.items():
+            lookup[int(source_label)] = int(target_label)
+        return lookup

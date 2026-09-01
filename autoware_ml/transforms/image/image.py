@@ -12,36 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Image-specific transforms.
+"""Image space photometric transforms."""
 
-This module contains reusable image-domain augmentations and preprocessing
-transforms used by detection and fusion models.
-"""
-
-from typing import Any
+from __future__ import annotations
 
 import cv2
 import numpy as np
 
+from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.transforms.base import BaseTransform
 
 
 class PhotometricDistortion(BaseTransform):
-    """Apply random brightness, contrast, saturation, and hue to RGB channels.
+    """Apply random brightness, contrast, saturation, and hue to the calibration image.
 
-    Operates on img (H, W, 3). Assumes uint8 [0, 255] input in BGR format.
-
-    Required keys:
-        - img: (H, W, 3) uint8 BGR image.
-
-    Optional keys:
-        - None
-
-    Generated keys:
-        - img: Modified in-place with photometric distortions (when applied).
+    The distortions run in HSV space on the color channels of the calibration image, before the
+    lidar fusion appends the depth and intensity channels.
     """
 
-    _required_keys = ["img"]
+    _required_fields = ["calibration"]
 
     def __init__(
         self,
@@ -51,39 +40,38 @@ class PhotometricDistortion(BaseTransform):
         contrast: float = 0.0,
         saturation: float = 0.0,
         hue: float = 0.0,
-    ):
+    ) -> None:
         """Initialize the PhotometricDistortion transform.
 
         Args:
-            p: Probability of applying augmentation.
-            brightness: Max brightness deviation [0, 1].
-            contrast: Max contrast deviation [0, 1].
-            saturation: Max saturation deviation [0, 1].
-            hue: Max hue deviation [0, 0.5].
+            p: Probability of applying the augmentation.
+            brightness: Max brightness deviation in [0, 1].
+            contrast: Max contrast deviation in [0, 1].
+            saturation: Max saturation deviation in [0, 1].
+            hue: Max hue deviation in [0, 0.5].
         """
-        super().__init__()
         self.p = p
         self.brightness = brightness
         self.contrast = contrast
         self.saturation = saturation
         self.hue = hue
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Apply photometric distortion to RGB channels of an image.
+    def transform(self, sample: Sample) -> Sample:
+        """Apply the photometric distortion to the calibration image.
 
         Args:
-            input_dict: Sample dictionary containing an ``img`` entry.
+            sample: Sample with a loaded calibration image.
 
         Returns:
-            Updated sample dictionary with distorted image values.
+            Sample with the distorted image.
         """
-        # img is (H, W, 3) uint8
-        img = input_dict["img"]
+        calibration = sample.calibration
+        if calibration.image is None:
+            raise ValueError("PhotometricDistortion requires a loaded calibration image.")
+        image = calibration.image.astype(np.uint8)
 
-        # Convert to HSV
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV).astype(np.float32)
 
-        # Apply distortions
         if self.brightness > 0:
             hsv[..., 2] *= np.random.uniform(1 - self.brightness, 1 + self.brightness)
 
@@ -91,7 +79,6 @@ class PhotometricDistortion(BaseTransform):
             hsv[..., 1] *= np.random.uniform(1 - self.saturation, 1 + self.saturation)
 
         if self.contrast > 0:
-            # Simple contrast: scale V around 127.5
             factor = np.random.uniform(1 - self.contrast, 1 + self.contrast)
             hsv[..., 2] = (hsv[..., 2] - 127.5) * factor + 127.5
 
@@ -99,9 +86,8 @@ class PhotometricDistortion(BaseTransform):
             hsv[..., 0] += np.random.uniform(-self.hue, self.hue) * 179.0
             hsv[..., 0] = np.mod(hsv[..., 0], 180.0)
 
-        # Clip and convert back
         hsv = np.clip(hsv, 0, 255).astype(np.uint8)
-        img_aug = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+        distorted = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
-        input_dict["img"] = img_aug
-        return input_dict
+        calibration = calibration.model_copy(update={"image": distorted.astype(np.float32)})
+        return sample.model_copy(update={"calibration": calibration})

@@ -12,22 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Frustum-range preprocessing for Segmentation3D models."""
+"""Frustum range preprocessing for Segmentation3D models."""
 
 from __future__ import annotations
 
 import math
-from typing import Any
 
 import torch
+from jaxtyping import Float32, Int64
+from torch import Tensor
+
+from autoware_ml.datamodule.samples.batch import Batch
+from autoware_ml.preprocessing.base import ModelInputs
+
+
+class FrustumInputs(ModelInputs):
+    """Frustum range view inputs of one batch.
+
+    Attributes:
+      points: Concatenated point features of the batch.
+      coors: Per point range view coordinates as (batch_index, row, col).
+      voxel_coors: Unique range view coordinates.
+      inverse_map: Index mapping from each point to its voxel_coors entry.
+      sample_count: Number of samples in the batch.
+      pts_semantic_mask: Concatenated per point semantic labels, when labels exist.
+      semantic_seg: Dense range view semantic targets, when labels exist.
+    """
+
+    points: Float32[Tensor, "total_points num_features"]
+    coors: Int64[Tensor, "total_points 3"]
+    voxel_coors: Int64[Tensor, "num_frustums 3"]
+    inverse_map: Int64[Tensor, " total_points"]
+    sample_count: int
+    pts_semantic_mask: Int64[Tensor, " total_points"] | None
+    semantic_seg: Int64[Tensor, "batch_size height width"] | None
 
 
 class FrustumRangePreprocessor:
-    """Convert batched points into FRNet frustum and range-view tensors.
+    """Convert batched points into FRNet frustum and range view tensors.
 
-    The preprocessor projects points into range-view bins, groups them into
-    frustum voxels, and assembles the tensors expected by FRNet. It is
-    stateless and operates as a plain callable on the batch dictionary.
+    The preprocessor projects points into range view bins, groups them into frustum voxels,
+    and assembles the tensors expected by FRNet. It is stateless and operates as a plain
+    callable on the typed batch.
     """
 
     def __init__(
@@ -42,10 +68,10 @@ class FrustumRangePreprocessor:
         """Initialize the frustum range preprocessor.
 
         Args:
-            height: Range-image height.
-            width: Range-image width.
-            fov_up: Upward field-of-view limit in degrees.
-            fov_down: Downward field-of-view limit in degrees.
+            height: Range image height.
+            width: Range image width.
+            fov_up: Upward field of view limit in degrees.
+            fov_down: Downward field of view limit in degrees.
             ignore_index: Ignore label used for segmentation targets.
             num_classes: Number of trainable semantic classes.
         """
@@ -57,44 +83,31 @@ class FrustumRangePreprocessor:
         self.ignore_index = int(ignore_index)
         self.num_classes = int(num_classes)
 
-    def __call__(
-        self, batch_inputs_dict: dict[str, Any], *, is_training: bool = False
-    ) -> dict[str, Any]:
-        """Project concatenated point clouds into FRNet range-view tensors.
+    def __call__(self, batch: Batch, *, is_training: bool = False) -> FrustumInputs:
+        """Project the batched point clouds into FRNet range view tensors.
 
-        Reads the concatenated batch produced by :meth:`DataModule.collate_fn`,
-        derives per-point batch indices from ``offset``, projects every point
-        into a 2D range-view cell, and returns the tensors expected by FRNet's
-        voxel encoder and backbone.
-        When per-point labels are provided, a dense semantic target image is
-        computed via majority vote for each sample.
+        Derives per point batch indices from the point cloud batch, projects every point into
+        a 2D range view cell, and returns the tensors expected by FRNet's voxel encoder and
+        backbone. When per point labels exist, a dense semantic target image is computed via
+        majority vote for each sample.
 
         Args:
-            batch_inputs_dict: Batch dictionary containing the concatenated
-                ``points`` tensor, the cumulative per-sample ``offset``
-                tensor, and an optional concatenated ``pts_semantic_mask``.
-            is_training: Accepted for pipeline-contract compatibility; the
-                projection is mode-independent, so the value is unused.
+            batch: Collated typed batch with point clouds.
+            is_training: Accepted for pipeline contract compatibility, the projection is mode
+                independent, so the value is unused.
 
         Returns:
-            Dictionary with:
-                * ``points``: the input point cloud, unchanged.
-                * ``coors``: per-point ``(batch_index, row, col)`` range-view
-                  coordinates.
-                * ``voxel_coors``: unique range-view coordinates.
-                * ``inverse_map``: index mapping from each point to its
-                  ``voxel_coors`` entry.
-                * ``sample_count``: number of samples in the batch.
-                * ``pts_semantic_mask`` and ``semantic_seg`` when labels were
-                  provided.
+            The frustum range view inputs.
         """
-        points: torch.Tensor = batch_inputs_dict["points"]
-        offset: torch.Tensor = batch_inputs_dict["offset"]
-        labels: torch.Tensor | None = batch_inputs_dict.get("pts_semantic_mask")
+        del is_training
+        if batch.point_cloud is None:
+            raise ValueError("FrustumRangePreprocessor requires a point cloud batch.")
+        points = batch.point_cloud.concatenated
+        labels = batch.segment
         device = points.device
 
-        sample_count = int(offset.numel())
-        lengths = torch.cat([offset[:1], offset[1:] - offset[:-1]])
+        lengths = torch.tensor(batch.point_cloud.lengths, device=device, dtype=torch.long)
+        sample_count = int(lengths.numel())
         batch_index = torch.repeat_interleave(
             torch.arange(sample_count, device=device, dtype=torch.long), lengths
         )
@@ -111,20 +124,20 @@ class FrustumRangePreprocessor:
         coors = torch.stack([batch_index, proj_y, proj_x], dim=1)
         voxel_coors, inverse_map = torch.unique(coors, return_inverse=True, dim=0)
 
-        outputs: dict[str, Any] = {
-            "points": points,
-            "coors": coors,
-            "voxel_coors": voxel_coors,
-            "inverse_map": inverse_map,
-            "sample_count": sample_count,
-        }
-
+        semantic_seg = None
         if labels is not None:
             labels = labels.long()
-            outputs["pts_semantic_mask"] = labels
-            outputs["semantic_seg"] = self._range_view_targets(coors, labels, sample_count, device)
+            semantic_seg = self._range_view_targets(coors, labels, sample_count, device)
 
-        return outputs
+        return FrustumInputs(
+            points=points,
+            coors=coors,
+            voxel_coors=voxel_coors,
+            inverse_map=inverse_map,
+            sample_count=sample_count,
+            pts_semantic_mask=labels,
+            semantic_seg=semantic_seg,
+        )
 
     def _range_view_targets(
         self,
@@ -133,23 +146,22 @@ class FrustumRangePreprocessor:
         sample_count: int,
         device: torch.device,
     ) -> torch.Tensor:
-        """Build per-sample dense range-view label maps via majority vote.
+        """Build per sample dense range view label maps via majority vote.
 
-        The computation is vectorized across the whole batch: per-point
-        ``(batch, row, col, class)`` votes accumulate into one 4D tensor and
-        the per-cell argmax produces the dense target image. Cells with no
-        valid (non-ignored) points keep ``ignore_index``.
+        The computation is vectorized across the whole batch: per point
+        (batch, row, col, class) votes accumulate into one 4D tensor and the per cell argmax
+        produces the dense target image. Cells with no valid points keep ignore_index.
 
         Args:
-            coors: Per-point range-view coordinates of shape ``(N, 3)`` with
-                columns ``(batch_index, row, col)``.
-            labels: Concatenated per-point semantic labels of shape ``(N,)``.
+            coors: Per point range view coordinates of shape (N, 3) with columns
+                (batch_index, row, col).
+            labels: Concatenated per point semantic labels of shape (N,).
             sample_count: Number of samples in the batch.
             device: Target device for the output tensor.
 
         Returns:
-            A tensor of shape ``(sample_count, height, width)`` containing
-            the dense range-view semantic targets.
+            A tensor of shape (sample_count, height, width) containing the dense range view
+            semantic targets.
         """
         seg_label = torch.full(
             (sample_count, self.height, self.width),

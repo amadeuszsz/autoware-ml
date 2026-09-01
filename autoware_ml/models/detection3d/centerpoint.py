@@ -21,7 +21,7 @@ around the reusable PointPillars and CenterPoint detection components.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import torch
@@ -32,6 +32,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from autoware_ml.metrics.base import MetricSuite
 from autoware_ml.metrics.detection3d.eval_output import detection_eval_output
 from autoware_ml.models.base import BaseModel
+from autoware_ml.preprocessing.base import ProcessedBatch
 from autoware_ml.utils.deploy import ExportSpec
 from autoware_ml.utils.point_cloud.batching import infer_batch_size_from_voxel_coords
 
@@ -107,9 +108,17 @@ class CenterPointDetectionModel(BaseModel):
         self.pts_neck = pts_neck
         self.bbox_head = bbox_head
 
-    def build_eval_output(self, batch: Mapping[str, Any], outputs: Any) -> dict[str, Any]:
-        """Decode detections and pair them with ground truth for metrics."""
-        return detection_eval_output(self.bbox_head.predict(outputs), batch)
+    def build_eval_output(self, processed: ProcessedBatch, outputs: Any) -> dict[str, Any]:
+        """Decode detections and pair them with ground truth for metrics.
+
+        Args:
+            processed: Processed batch of the evaluation step.
+            outputs: Raw head outputs returned by :meth:`forward`.
+
+        Returns:
+            Flat eval output dict consumed by the detection metric.
+        """
+        return detection_eval_output(self.bbox_head.predict(outputs), processed.batch)
 
     def forward(
         self,
@@ -136,49 +145,72 @@ class CenterPointDetectionModel(BaseModel):
 
     def compute_metrics(
         self,
-        batch_inputs_dict: dict[str, Any],
+        processed: ProcessedBatch,
         outputs: dict[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]:
-        """Compute CenterPoint training losses."""
+        """Compute CenterPoint training losses.
+
+        Args:
+            processed: Processed batch after runtime preprocessing.
+            outputs: Raw head outputs returned by :meth:`forward`.
+
+        Returns:
+            Dictionary of loss terms produced by the detection head.
+        """
         return self.bbox_head.loss(
-            outputs, batch_inputs_dict["gt_boxes"], batch_inputs_dict["gt_labels"]
+            outputs, processed.resolve("gt_boxes"), processed.resolve("gt_labels")
         )
 
     def predict_outputs(
-        self, batch_inputs_dict: dict[str, Any], outputs: dict[str, torch.Tensor]
+        self, processed: ProcessedBatch | None, outputs: dict[str, torch.Tensor]
     ) -> Any:
-        """Decode predictions for inference."""
-        del batch_inputs_dict
+        """Decode predictions for inference.
+
+        Args:
+            processed: Processed batch of the prediction step, unused.
+            outputs: Raw head outputs returned by :meth:`forward`.
+
+        Returns:
+            Decoded detector predictions for the current batch.
+        """
+        del processed
         return self.bbox_head.predict(outputs)
 
-    def get_log_batch_size(self, batch_inputs_dict: dict[str, Any]) -> int | None:
-        """Log the sample count instead of voxel count for lidar detection."""
-        return len(batch_inputs_dict["gt_boxes"])
+    def build_export_spec(self, processed: ProcessedBatch) -> ExportSpec:
+        """Reject single-module CenterPoint deployment export.
 
-    def build_export_spec(self, batch_inputs_dict: Mapping[str, Any]) -> ExportSpec:
-        """Reject single-module CenterPoint deployment export."""
-        del batch_inputs_dict
+        Args:
+            processed: Example processed batch, unused.
+        """
+        del processed
         raise RuntimeError("CenterPoint deployment uses split modules; call build_export_specs().")
 
-    def build_export_specs(self, batch_inputs_dict: Mapping[str, Any]) -> dict[str, ExportSpec]:
+    def build_export_specs(self, processed: ProcessedBatch) -> dict[str, ExportSpec]:
         """Build split CenterPoint deployment export specifications.
 
         The exported ABI follows the original CenterPoint deployment split:
         decorated pillar features feed the PFN ONNX module, and dense BEV
         spatial features feed the backbone/neck/head ONNX module. Scatter is a
         runtime preprocessing step between the two exported modules.
+
+        Args:
+            processed: Example processed batch used to derive export inputs.
+
+        Returns:
+            Ordered mapping of module name to export specification.
         """
-        batch_size = infer_batch_size_from_voxel_coords(batch_inputs_dict["voxel_coords"])
+        voxel_coords = processed.resolve("voxel_coords")
+        batch_size = infer_batch_size_from_voxel_coords(voxel_coords)
         with torch.no_grad():
             input_features = self.pts_voxel_encoder.decorate(
-                batch_inputs_dict["voxels"],
-                batch_inputs_dict["num_points"],
-                batch_inputs_dict["voxel_coords"],
+                processed.resolve("voxels"),
+                processed.resolve("num_points"),
+                voxel_coords,
             )
             pillar_features = self.pts_voxel_encoder.encode_decorated(input_features).squeeze(1)
             spatial_features = self.pts_middle_encoder(
                 pillar_features,
-                batch_inputs_dict["voxel_coords"],
+                voxel_coords,
                 batch_size=batch_size,
             )
 

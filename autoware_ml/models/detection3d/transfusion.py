@@ -31,6 +31,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from autoware_ml.metrics.base import MetricSuite
 from autoware_ml.metrics.detection3d.eval_output import detection_eval_output
 from autoware_ml.models.base import BaseModel
+from autoware_ml.preprocessing.base import ProcessedBatch
 from autoware_ml.utils.deploy import ExportSpec
 from autoware_ml.utils.point_cloud.batching import infer_batch_size_from_voxel_coords
 
@@ -154,9 +155,17 @@ class TransFusionDetectionModel(BaseModel):
         self.pts_neck = pts_neck
         self.bbox_head = bbox_head
 
-    def build_eval_output(self, batch: Mapping[str, Any], outputs: Any) -> dict[str, Any]:
-        """Decode detections and pair them with ground truth for metrics."""
-        return detection_eval_output(self.bbox_head.predict(outputs), batch)
+    def build_eval_output(self, processed: ProcessedBatch, outputs: Any) -> dict[str, Any]:
+        """Decode detections and pair them with ground truth for metrics.
+
+        Args:
+            processed: Processed batch of the evaluation step.
+            outputs: Raw head outputs returned by :meth:`forward`.
+
+        Returns:
+            Flat eval output dict consumed by the detection metric.
+        """
+        return detection_eval_output(self.bbox_head.predict(outputs), processed.batch)
 
     def _forward_with_batch_size(
         self,
@@ -202,51 +211,47 @@ class TransFusionDetectionModel(BaseModel):
 
     def compute_metrics(
         self,
-        batch_inputs_dict: dict[str, Any],
+        processed: ProcessedBatch,
         outputs: dict[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]:
         """Compute training losses for one detection batch.
 
         Args:
-            batch_inputs_dict: Full batch dictionary.
+            processed: Processed batch after runtime preprocessing.
             outputs: Raw head outputs returned by :meth:`forward`.
 
         Returns:
             Dictionary of loss terms produced by the detection head.
         """
         return self.bbox_head.loss(
-            outputs, batch_inputs_dict["gt_boxes"], batch_inputs_dict["gt_labels"]
+            outputs, processed.resolve("gt_boxes"), processed.resolve("gt_labels")
         )
 
     def predict_outputs(
-        self, batch_inputs_dict: dict[str, Any], outputs: dict[str, torch.Tensor]
+        self, processed: ProcessedBatch | None, outputs: dict[str, torch.Tensor]
     ) -> Any:
         """Decode predictions for inference.
 
         Args:
-            batch_inputs_dict: Full batch dictionary.
+            processed: Processed batch of the prediction step, unused.
             outputs: Raw head outputs returned by :meth:`forward`.
 
         Returns:
             Decoded detector predictions for the current batch.
         """
-        del batch_inputs_dict
+        del processed
         return self.bbox_head.predict(outputs)
 
-    def get_log_batch_size(self, batch_inputs_dict: dict[str, Any]) -> int | None:
-        """Log the sample count instead of voxel count for lidar detection."""
-        return len(batch_inputs_dict["gt_boxes"])
-
-    def build_export_spec(self, batch_inputs_dict: dict[str, Any]) -> ExportSpec:
+    def build_export_spec(self, processed: ProcessedBatch) -> ExportSpec:
         """Build an export specification with explicit tensor inputs.
 
         Args:
-            batch_inputs_dict: Preprocessed example batch used to derive export inputs.
+            processed: Example processed batch used to derive export inputs.
 
         Returns:
             Export specification for ONNX and TensorRT deployment.
         """
-        batch_size = infer_batch_size_from_voxel_coords(batch_inputs_dict["voxel_coords"])
+        batch_size = infer_batch_size_from_voxel_coords(processed.resolve("voxel_coords"))
         pts_middle_encoder = self.pts_middle_encoder
         if hasattr(pts_middle_encoder, "prepare_for_export"):
             pts_middle_encoder = pts_middle_encoder.prepare_for_export()
@@ -260,9 +265,9 @@ class TransFusionDetectionModel(BaseModel):
                 batch_size=batch_size,
             ),
             args=(
-                batch_inputs_dict["voxels"],
-                batch_inputs_dict["num_points"],
-                batch_inputs_dict["voxel_coords"],
+                processed.resolve("voxels"),
+                processed.resolve("num_points"),
+                processed.resolve("voxel_coords"),
             ),
             input_param_names=["voxels", "num_points", "coors"],
             output_names=["cls_score0", "bbox_pred0", "dir_cls_pred0"],

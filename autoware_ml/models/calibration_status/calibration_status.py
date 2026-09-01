@@ -25,6 +25,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from autoware_ml.models.base import BaseModel
+from autoware_ml.preprocessing.base import ProcessedBatch
 from autoware_ml.utils.deploy import ExportSpec
 
 
@@ -84,29 +85,37 @@ class CalibrationStatusClassifier(BaseModel):
         return logits
 
     def predict_outputs(
-        self, batch_inputs_dict: Mapping[str, Any], outputs: torch.Tensor
+        self, processed: ProcessedBatch | None, outputs: torch.Tensor
     ) -> torch.Tensor:
-        """Convert logits into class probabilities."""
-        del batch_inputs_dict
+        """Convert logits into class probabilities.
+
+        Args:
+            processed: Processed batch of the prediction step, unused.
+            outputs: Classification logits returned by :meth:`forward`.
+
+        Returns:
+            Class probabilities.
+        """
+        del processed
         return self.head.predict(outputs)
 
     def compute_metrics(
         self,
-        batch_inputs_dict: Mapping[str, Any],
+        processed: ProcessedBatch,
         outputs: torch.Tensor | Sequence[torch.Tensor],
     ) -> dict[str, torch.Tensor]:
         """Compute training losses and metrics for one batch.
 
         Args:
-            batch_inputs_dict: Full batch dictionary.
+            processed: Processed batch after runtime preprocessing.
             outputs: Model outputs returned by :meth:`forward`.
 
         Returns:
             Dictionary of loss terms and logged metrics.
         """
-        return self.head.loss(outputs, batch_inputs_dict["gt_calibration_status"])
+        return self.head.loss(outputs, processed.resolve("gt_calibration_status"))
 
-    def build_export_spec(self, batch_inputs_dict: Mapping[str, Any]) -> ExportSpec:
+    def build_export_spec(self, processed: ProcessedBatch) -> ExportSpec:
         """Build a calibration-status-specific export specification.
 
         The generic BaseModel prediction wrapper uses a variadic ``forward(*args)``
@@ -116,7 +125,7 @@ class CalibrationStatusClassifier(BaseModel):
         issue while preserving the original probability-only export contract.
 
         Args:
-            batch_inputs_dict: Example preprocessed batch used for export.
+            processed: Example processed batch used for export.
 
         Returns:
             Export specification for deployment.
@@ -127,7 +136,7 @@ class CalibrationStatusClassifier(BaseModel):
                 neck=self.neck,
                 head=self.head,
             ),
-            args=(batch_inputs_dict["fused_img"],),
+            args=(processed.resolve("fused_img"),),
             input_param_names=["fused_img"],
         )
 

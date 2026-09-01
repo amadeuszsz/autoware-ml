@@ -28,6 +28,7 @@ import torch
 import torch.nn as nn
 
 from autoware_ml.models.segmentation3d.encoders.ptv3 import PointTransformerV3Encoder
+from autoware_ml.preprocessing.base import ProcessedBatch
 from autoware_ml.models.segmentation3d.encoders.voxel import MeanVoxelFeatureEncoder
 from autoware_ml.models.segmentation3d.heads.ptv3 import (
     PTv3SegDecoderHead,
@@ -122,7 +123,6 @@ class PTv3SegmentationModel(PTv3BaseModel):
         seg3d_head: PTv3SegDecoderHead,
         grid_size: float,
         point_cloud_range: Sequence[float],
-        time_lag_dim: int | None,
         **kwargs: Any,
     ) -> None:
         """Initialize the PTv3 segmentation model.
@@ -135,8 +135,6 @@ class PTv3SegmentationModel(PTv3BaseModel):
                 serialization depth.
             point_cloud_range: Point-cloud range used to derive sparse shape
                 and serialization depth.
-            time_lag_dim: Column of the input points holding the per-point
-                time lag, or ``None`` when the pipeline carries no time lag.
             **kwargs: Keyword arguments forwarded to :class:`BaseModel`.
         """
         super().__init__(
@@ -146,7 +144,6 @@ class PTv3SegmentationModel(PTv3BaseModel):
             **kwargs,
         )
         self.seg3d_head = seg3d_head
-        self.time_lag_dim = time_lag_dim
 
     def build_optimizer_groups(self) -> Mapping[str, Sequence[torch.nn.Parameter]]:
         """Group PTv3 parameters structurally for optimizer configuration."""
@@ -171,7 +168,7 @@ class PTv3SegmentationModel(PTv3BaseModel):
 
     def compute_metrics(
         self,
-        batch_inputs_dict: Mapping[str, Any],
+        processed: ProcessedBatch,
         outputs: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
         """Compute segmentation losses against point-level targets.
@@ -181,45 +178,59 @@ class PTv3SegmentationModel(PTv3BaseModel):
         configured metrics through :meth:`build_eval_output`, not here.
 
         Args:
-            batch_inputs_dict: Full batch dictionary. Must contain
-                ``point_voxel_indices``, ``num_dropped_voxels`` and the
-                point-level ``segment`` targets.
+            processed: Processed batch with the voxelizer outputs and the point-level
+                segment targets.
             outputs: Voxel-level segmentation logits returned by :meth:`forward`.
 
         Returns:
             Dictionary with the segmentation losses.
         """
-        return segmentation_point_loss(self.seg3d_head, outputs, batch_inputs_dict)
+        return segmentation_point_loss(self.seg3d_head, outputs, processed)
 
     def build_eval_output(
-        self, batch: Mapping[str, Any], outputs: torch.Tensor
+        self, processed: ProcessedBatch, outputs: torch.Tensor
     ) -> dict[str, torch.Tensor]:
-        """Scatter voxel predictions to the current-frame points for the metrics."""
-        return segmentation_eval_output(outputs, batch, self.time_lag_dim)
+        """Scatter voxel predictions to the current-frame points for the metrics.
+
+        Args:
+            processed: Processed batch of the evaluation step.
+            outputs: Voxel-level segmentation logits returned by :meth:`forward`.
+
+        Returns:
+            The seg_frames eval output the segmentation suites consume.
+        """
+        return segmentation_eval_output(outputs, processed)
 
     def predict_outputs(
         self,
-        batch_inputs_dict: Mapping[str, Any],
+        processed: ProcessedBatch,
         outputs: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        """Format PTv3 segmentation predictions for the current-frame points."""
-        return segmentation_predict_outputs(outputs, batch_inputs_dict, self.time_lag_dim)
+        """Format PTv3 segmentation predictions for the current-frame points.
+
+        Args:
+            processed: Processed batch of the prediction step.
+            outputs: Voxel-level segmentation logits returned by :meth:`forward`.
+
+        Returns:
+            Dictionary with the predicted labels and probabilities.
+        """
+        return segmentation_predict_outputs(outputs, processed)
 
     def get_export_output_names(self) -> list[str]:
         """Return ordered PTv3 segmentation export output names."""
         return ["pred_labels", "pred_probs"]
 
-    def build_export_spec(self, batch: Mapping[str, torch.Tensor]) -> ExportSpec:
+    def build_export_spec(self, processed: ProcessedBatch) -> ExportSpec:
         """Build the ONNX export specification.
 
         Args:
-            batch: Preprocessed prediction batch containing ``voxels``,
-                ``num_points`` and ``voxel_coords``.
+            processed: Example processed batch with the voxelizer outputs.
 
         Returns:
             Deployment export specification for PTv3.
         """
-        inputs = prepare_ptv3_export_inputs(self, batch)
+        inputs = prepare_ptv3_export_inputs(self, processed)
         input_args, input_param_names = inputs.encoder_args(SERIALIZED_POOLING_FIELDS)
         export_module = _PTv3SegmentationExportModule(
             self._prepare_encoder_export(),
@@ -240,9 +251,16 @@ class PTv3SegmentationModel(PTv3BaseModel):
             supported_stages=self.EXPORT_SUPPORTED_STAGES,
         )
 
-    def build_export_specs(self, batch: Mapping[str, torch.Tensor]) -> dict[str, ExportSpec]:
-        """Build split PTv3 segmentation ONNX export specs for encoder and head."""
-        context = build_ptv3_export_context(self, batch)
+    def build_export_specs(self, processed: ProcessedBatch) -> dict[str, ExportSpec]:
+        """Build split PTv3 segmentation ONNX export specs for encoder and head.
+
+        Args:
+            processed: Example processed batch with the voxelizer outputs.
+
+        Returns:
+            Export specs of the encoder and the segmentation head.
+        """
+        context = build_ptv3_export_context(self, processed)
         return {
             "ptv3_encoder": build_encoder_export_spec(context),
             "ptv3_seg3d_head": build_seg_head_export_spec(

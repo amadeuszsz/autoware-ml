@@ -202,9 +202,8 @@ The split export produces one graph per `deploy.onnx.modules` entry:
 | `autoware_ml/utils/point_cloud/`                      | Shared point-cloud utilities and serialization |
 | `autoware_ml/ops/segment/segment_csr.py`              | Segment reduction export operator              |
 | `autoware_ml/losses/segmentation3d/`                  | Segmentation losses used by PTv3               |
-| `autoware_ml/datamodule/nuscenes/segmentation3d.py`   | NuScenes datamodule                            |
-| `autoware_ml/datamodule/t4dataset/segmentation3d.py`  | T4Dataset datamodule                           |
-| `autoware_ml/datamodule/t4dataset/detection3d.py`     | T4Dataset 3D detection datamodule              |
+| `autoware_ml/datamodule/nuscenes/dataset.py`          | NuScenes dataset                               |
+| `autoware_ml/datamodule/t4dataset/dataset.py`         | T4Dataset dataset                              |
 | `autoware_ml/transforms/point_cloud/`                 | Shared point-cloud transforms used by PTv3     |
 | `autoware_ml/configs/tasks/segmentation3d/ptv3/`      | Task configurations                            |
 | `autoware_ml/configs/tasks/detection3d/ptv3/`         | Detection task configurations                  |

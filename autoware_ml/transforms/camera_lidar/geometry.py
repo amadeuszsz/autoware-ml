@@ -12,30 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Camera-lidar (fusion) geometric augmentations.
+"""Camera and lidar fusion geometric augmentations.
 
-Identical scene math to the lidar-only variants in
-``transforms.point_cloud.geometry`` (shared via ``transforms.geometry3d``) plus
-the camera-matrix update so projection stays consistent after the transform.
-They require both a point representation (``coord`` / ``points``) and
-``lidar2cam``; a missing camera key is a loud error, never a silent skip.
+Identical scene math to the lidar only variants in transforms.point_cloud.geometry, shared via
+transforms.geometry3d, plus the camera matrix update so the projection stays consistent after
+the transform. The transforms require both a loaded point cloud and a loaded image set.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import numpy as np
 
+from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.transforms import geometry3d as g3d
 from autoware_ml.transforms.base import BaseTransform
 
 
 class RandomFlip3D(BaseTransform):
-    """Random BEV flip for fusion models (points, boxes, normals, camera matrices)."""
+    """Random BEV flip of the point cloud, the boxes, and the camera matrices."""
 
-    _required_keys: list[str] = ["lidar2cam"]
+    _required_fields = ["points", "images"]
 
     def __init__(
         self,
@@ -46,36 +44,37 @@ class RandomFlip3D(BaseTransform):
         """Initialize the RandomFlip3D transform.
 
         Args:
-            flip_ratio_bev_horizontal: Probability of flipping the lateral (y) axis.
-            flip_ratio_bev_vertical: Probability of flipping the longitudinal (x) axis.
+            flip_ratio_bev_horizontal: Probability of flipping the lateral y axis.
+            flip_ratio_bev_vertical: Probability of flipping the longitudinal x axis.
         """
         self.flip_ratio_bev_horizontal = flip_ratio_bev_horizontal
         self.flip_ratio_bev_vertical = flip_ratio_bev_vertical
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Apply BEV flips to points, normals, boxes, and camera matrices."""
-        g3d.require_point_cloud(input_dict)
+    def transform(self, sample: Sample) -> Sample:
+        """Apply BEV flips to the point cloud, the boxes, and the camera matrices.
+
+        Args:
+            sample: Sample with a loaded point cloud and a loaded image set.
+
+        Returns:
+            Sample with the flipped scene and consistent projection matrices.
+        """
         flip_x, flip_y = g3d.sample_bev_flips(
             self.flip_ratio_bev_horizontal, self.flip_ratio_bev_vertical
         )
         if flip_y:
-            g3d.flip_points(input_dict, axis=1)
-            g3d.flip_normal(input_dict, axis=1)
-            g3d.flip_boxes(input_dict, axis=1)
+            sample = g3d.flip_sample(sample, axis=1)
         if flip_x:
-            g3d.flip_points(input_dict, axis=0)
-            g3d.flip_normal(input_dict, axis=0)
-            g3d.flip_boxes(input_dict, axis=0)
+            sample = g3d.flip_sample(sample, axis=0)
         flip = g3d.flip_matrix(flip_x, flip_y)
-        g3d.update_camera_matrices(input_dict, np.linalg.inv(flip))
-        input_dict["bev_flip_matrix"] = flip
-        return input_dict
+        images = g3d.update_image_set_matrices(sample.images, np.linalg.inv(flip))
+        return sample.model_copy(update={"images": images})
 
 
 class GlobalRotScaleTrans(BaseTransform):
-    """Global rotation/scale/translation for fusion models (+ camera matrices)."""
+    """Global rotation, scaling, and translation of the scene and the camera matrices."""
 
-    _required_keys: list[str] = ["lidar2cam"]
+    _required_fields = ["points", "images"]
 
     def __init__(
         self,
@@ -89,7 +88,7 @@ class GlobalRotScaleTrans(BaseTransform):
         Args:
             rot_range: Min and max rotation angles in radians around z.
             scale_ratio_range: Min and max scale factors.
-            translation_std: Optional per-axis Gaussian translation std ``[x, y, z]``.
+            translation_std: Optional per axis Gaussian translation std as [x, y, z].
         """
         self.rot_range = rot_range
         self.scale_ratio_range = scale_ratio_range
@@ -97,16 +96,19 @@ class GlobalRotScaleTrans(BaseTransform):
             np.asarray(translation_std, dtype=np.float32) if translation_std is not None else None
         )
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Rotate, scale, translate points, normals, boxes, and camera matrices."""
-        g3d.require_point_cloud(input_dict)
-        rotation, rotation_angle, scale, translation = g3d.sample_rot_scale_trans(
+    def transform(self, sample: Sample) -> Sample:
+        """Rotate, scale, and translate the scene and update the camera matrices.
+
+        Args:
+            sample: Sample with a loaded point cloud and a loaded image set.
+
+        Returns:
+            Sample with the transformed scene and consistent projection matrices.
+        """
+        rotation, _, scale, translation = g3d.sample_rot_scale_trans(
             self.rot_range, self.scale_ratio_range, self.translation_std
         )
-        g3d.transform_points(input_dict, rotation, scale, translation)
-        g3d.transform_normal(input_dict, rotation)
-        g3d.transform_boxes(input_dict, rotation, rotation_angle, scale, translation)
+        sample = g3d.transform_sample_points(sample, rotation, scale, translation)
         augmentation = g3d.rot_scale_trans_matrix(rotation, scale, translation)
-        g3d.update_camera_matrices(input_dict, np.linalg.inv(augmentation))
-        input_dict["global_aug_matrix"] = augmentation
-        return input_dict
+        images = g3d.update_image_set_matrices(sample.images, np.linalg.inv(augmentation))
+        return sample.model_copy(update={"images": images})

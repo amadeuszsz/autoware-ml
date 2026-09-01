@@ -1,57 +1,64 @@
+# Copyright 2026 TIER IV, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Feature construction transforms shared across tasks."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import numpy as np
-import torch
 
+from autoware_ml.datamodule.samples.point_cloud import PointCloud
+from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.transforms.base import BaseTransform
+from autoware_ml.transforms.point_cloud.loading import coerce_feature_names
+from autoware_ml.types.geometry import PointFeatureName
 
 
 class BuildPointFeatures(BaseTransform):
-    """Build one point feature matrix from existing per-point arrays."""
+    """Reduce the point cloud to the configured feature columns in the configured order.
 
-    def __init__(
-        self,
-        *,
-        keys: Sequence[str],
-        output_key: str = "feat",
-    ) -> None:
+    The transform packs the selected feature columns of the point cloud so the model consumes
+    exactly the declared layout. Every selected feature must exist, the row order stays
+    untouched, and the current frame block and the lidar source spans are preserved.
+    """
+
+    _required_fields = ["points"]
+
+    def __init__(self, *, feature_names: Sequence[str | PointFeatureName]) -> None:
         """Initialize the BuildPointFeatures transform.
 
         Args:
-            keys: Input keys concatenated along the feature axis.
-            output_key: Destination key for the built point feature matrix.
+            feature_names: Feature columns of the output point cloud in the requested order,
+                starting with x, y, and z.
         """
-        self.keys = list(keys)
-        self.output_key = output_key
-        self._required_keys = self.keys
+        self.feature_names = coerce_feature_names(feature_names)
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Concatenate configured per-point fields into ``output_key``."""
-        values = [input_dict[key] for key in self.keys]
-        first = values[0]
-        if isinstance(first, np.ndarray):
-            if not all(isinstance(value, np.ndarray) for value in values):
-                raise TypeError(
-                    f"{self.__class__.__name__} requires all feature fields to be numpy arrays."
-                )
-            input_dict[self.output_key] = np.concatenate(
-                [value.astype(np.float32, copy=False) for value in values],
-                axis=1,
-            )
-            return input_dict
-        if isinstance(first, torch.Tensor):
-            if not all(isinstance(value, torch.Tensor) for value in values):
-                raise TypeError(
-                    f"{self.__class__.__name__} requires all feature fields to be tensors."
-                )
-            input_dict[self.output_key] = torch.cat([value.float() for value in values], dim=1)
-            return input_dict
-        raise TypeError(
-            f"{self.__class__.__name__} expects numpy arrays or torch tensors, "
-            f"got {type(first)!r} for key '{self.keys[0]}'."
+    def transform(self, sample: Sample) -> Sample:
+        """Pack the configured feature columns into a new point cloud.
+
+        Args:
+            sample: Sample with a loaded point cloud.
+
+        Returns:
+            Sample with the packed point cloud.
+        """
+        points = sample.points
+        point_cloud = PointCloud(
+            features=np.ascontiguousarray(points.pack(self.feature_names), dtype=np.float32),
+            feature_names=self.feature_names,
+            num_current_points=points.num_current_points,
         )
+        return sample.model_copy(update={"points": point_cloud})

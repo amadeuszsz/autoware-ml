@@ -3,6 +3,7 @@ defaults:
   - /tasks/segmentation3d/frnet/base
   - /datasets/t4dataset/segmentation3d
   - /datasets/t4dataset/lidar
+  - /records@records: t4dataset/t4dataset_j6gen2_semaseg
   - _self_
 
 batch_size: 4
@@ -17,19 +18,15 @@ range_width: 4096
 frustum_height: 128
 frustum_width: 1024
 
-lidar_sources:
-  - LIDAR_FRONT_UPPER
-  - LIDAR_LEFT_UPPER
-  - LIDAR_RIGHT_UPPER
-  - LIDAR_REAR_UPPER
-
 datamodule:
-  _target_: autoware_ml.datamodule.t4dataset.segmentation3d.T4Segmentation3DDataModule
-  data_root: ${dataset.data_root}
-  train_ann_file: ${datamodule.data_root}/info/lidarseg/t4dataset_j6gen2_lidarseg_infos_train.pkl
-  val_ann_file: ${datamodule.data_root}/info/lidarseg/t4dataset_j6gen2_lidarseg_infos_val.pkl
-  test_ann_file: ${datamodule.data_root}/info/lidarseg/t4dataset_j6gen2_lidarseg_infos_test.pkl
-  lidar_sources: ${lidar_sources}
+  dataset:
+    _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
+    _partial_: true
+  sources:
+    - records: ${records}
+      det3d: false
+      seg3d: true
+      repeat: 1
   train_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
@@ -43,10 +40,10 @@ datamodule:
   train_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-        load_dim: 5
-        use_dim: [0, 1, 2, 3]
-      - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSegAnnotations3D
+      - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+        sweeps_num: 1
+        use_features: [x, y, z, intensity]
+      - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
         class_mapping: ${dataset.segmentation3d.class_mapping}
         ignore_index: ${dataset.segmentation3d.ignore_index}
       - _target_: autoware_ml.transforms.point_cloud.geometry.RandomFlip3D
@@ -65,10 +62,10 @@ datamodule:
         pre_transform:
           _target_: autoware_ml.transforms.base.TransformsCompose
           pipeline:
-            - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-              load_dim: 5
-              use_dim: [0, 1, 2, 3]
-            - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSegAnnotations3D
+            - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+              sweeps_num: 1
+              use_features: [x, y, z, intensity]
+            - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
               class_mapping: ${dataset.segmentation3d.class_mapping}
               ignore_index: ${dataset.segmentation3d.ignore_index}
             - _target_: autoware_ml.transforms.point_cloud.geometry.RandomFlip3D
@@ -83,10 +80,10 @@ datamodule:
         pre_transform:
           _target_: autoware_ml.transforms.base.TransformsCompose
           pipeline:
-            - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-              load_dim: 5
-              use_dim: [0, 1, 2, 3]
-            - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSegAnnotations3D
+            - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+              sweeps_num: 1
+              use_features: [x, y, z, intensity]
+            - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
               class_mapping: ${dataset.segmentation3d.class_mapping}
               ignore_index: ${dataset.segmentation3d.ignore_index}
             - _target_: autoware_ml.transforms.point_cloud.geometry.RandomFlip3D
@@ -105,10 +102,10 @@ datamodule:
   val_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-        load_dim: 5
-        use_dim: [0, 1, 2, 3]
-      - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSegAnnotations3D
+      - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+        sweeps_num: 1
+        use_features: [x, y, z, intensity]
+      - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
         class_mapping: ${dataset.segmentation3d.class_mapping}
         ignore_index: ${dataset.segmentation3d.ignore_index}
       - _target_: autoware_ml.transforms.segmentation3d.range_view.RangeInterpolation
@@ -121,9 +118,9 @@ datamodule:
   predict_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.point_cloud.loading.LoadPointsFromFile
-        load_dim: 5
-        use_dim: [0, 1, 2, 3]
+      - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+        sweeps_num: 1
+        use_features: [x, y, z, intensity]
       - _target_: autoware_ml.transforms.segmentation3d.range_view.RangeInterpolation
         height: ${range_height}
         width: ${range_width}

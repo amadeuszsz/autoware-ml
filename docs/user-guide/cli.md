@@ -24,7 +24,6 @@ Bash completion is installed automatically by the Docker image build and by
 | `session detach` | Disconnect raw tmux clients from a managed session |
 | `session ls`     | List managed background tasks                      |
 | `session stop`   | Stop a managed background task                     |
-| `create-dataset` | Generate dataset info files                        |
 
 ## train
 
@@ -228,40 +227,4 @@ Stop the tracked task and close its managed session.
 
 ```bash
 autoware-ml session stop --name <session_name>
-```
-
-## create-dataset
-
-Generate preprocessed info files for a dataset.
-
-```bash
-autoware-ml create-dataset \
-    --dataset <name> \
-    --task <task> \
-    --root-path <path> \
-    --out-dir <path> \
-    [options...]
-```
-
-**Arguments:**
-
-- `--dataset`: Dataset name
-- `--task`: Task name (can be repeated for multiple tasks)
-- `--root-path`: Dataset root directory
-- `--out-dir`: Output directory for info files
-
-**Options:**
-
-- `--version`: Dataset version
-- `--max-sweeps`: Max LiDAR sweeps to include
-- `--info-prefix`: Prefix for output files
-
-**Example:**
-
-```bash
-autoware-ml create-dataset \
-    --dataset nuscenes \
-    --task my_task \
-    --root-path /path/to/dataset \
-    --out-dir /path/to/output
 ```

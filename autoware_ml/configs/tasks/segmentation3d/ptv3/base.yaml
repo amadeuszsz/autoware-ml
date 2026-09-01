@@ -11,13 +11,6 @@ grid_size: ???
 max_voxels: ???
 point_cloud_range: ???
 
-datamodule:
-  collation_map:
-    points: list
-    segment: concat
-    ego2global: list
-    scene_token: list
-
 data_preprocessing:
   pipeline:
     - _target_: autoware_ml.preprocessing.detection3d.point_pillar.PointPillarPreprocessor
@@ -30,7 +23,6 @@ data_preprocessing:
 
 model:
   _target_: autoware_ml.models.segmentation3d.ptv3.PTv3SegmentationModel
-  time_lag_dim: 4
   metrics: ${dataset.segmentation3d.metrics}
   grid_size: ${grid_size}
   point_cloud_range: ${point_cloud_range}

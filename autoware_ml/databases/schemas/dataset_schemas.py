@@ -22,6 +22,10 @@ from pydantic import BaseModel, ConfigDict
 
 from autoware_ml.databases.schemas.base_schemas import DatasetTableColumn, DataModelInterface
 from autoware_ml.databases.schemas.box3d_schemas import Box3DDataModel, Box3DDatasetSchema
+from autoware_ml.databases.schemas.camera_frames import (
+    CameraFrameDatasetSchema,
+    CameraFrameDataModel,
+)
 from autoware_ml.databases.schemas.lidar_frames import LidarFrameDatasetSchema, LidarFrameDataModel
 from autoware_ml.databases.schemas.category_mapping import (
     CategoryMappingDataModel,
@@ -50,6 +54,16 @@ class DatasetTableSchema:
       LIDAR_FRAMES: Lidar frames column, which is a list of dictionaries to save metadata of a lidar
         frame. It also saves lidar sweeps as each item here.
 
+      DATABASE: Database the scenario belongs to, so a task can train on a subset of the
+        databases a table holds.
+      SPLIT: Split the scenario belongs to, train, val or test. The generator writes it, so
+        no consumer side scenario list is needed and frames of one scenario cannot straddle
+        a split boundary.
+
+      # Camera Schema
+      CAMERA_FRAMES: Camera frames column, which is a list of dictionaries to save metadata of
+        every camera frame captured at this sample.
+
       # Lidar Sources Schema
       LIDAR_SOURCES: Lidar sources column, which is a list of dictionaries to save metadata about
         each lidar sensor.
@@ -67,10 +81,17 @@ class DatasetTableSchema:
     LOCATION = DatasetTableColumn("location", pl.String)
     VEHICLE_TYPE = DatasetTableColumn("vehicle_type", pl.String)
     SCENARIO_NAME = DatasetTableColumn("scenario_name", pl.String)
+    DATABASE = DatasetTableColumn("database", pl.String)
+    SPLIT = DatasetTableColumn("split", pl.String)
 
     # LiDAR Frames Schema
     LIDAR_FRAMES = DatasetTableColumn(
         "lidar_frames", pl.List(pl.Struct(LidarFrameDatasetSchema.to_polars_field_schema()))
+    )
+
+    # Camera Frames Schema
+    CAMERA_FRAMES = DatasetTableColumn(
+        "camera_frames", pl.List(pl.Struct(CameraFrameDatasetSchema.to_polars_field_schema()))
     )
 
     # LiDAR Sources Schema
@@ -122,6 +143,9 @@ class DatasetRecord(BaseModel, DataModelInterface):
       # LiDAR frame data
       lidar_frames: List of lidar frame data models, including multi-sweep lidar frames.
 
+      # Camera frame data
+      camera_frames: List of camera frame data models, one per camera channel.
+
       # Lidar sources data
       lidar_sources: List of lidar source data models.
 
@@ -140,8 +164,11 @@ class DatasetRecord(BaseModel, DataModelInterface):
     location: str | None
     vehicle_type: str | None
     scenario_name: str
+    database: str
+    split: str
 
     lidar_frames: Sequence[LidarFrameDataModel]
+    camera_frames: Sequence[CameraFrameDataModel] | None
     lidar_sources: Sequence[LidarSourceDataModel] | None
     category_mapping: CategoryMappingDataModel | None
     boxes_3d: Sequence[Box3DDataModel] | None
@@ -161,31 +188,33 @@ class DatasetRecord(BaseModel, DataModelInterface):
             DatasetTableSchema.LOCATION.name: self.location,
             DatasetTableSchema.VEHICLE_TYPE.name: self.vehicle_type,
             DatasetTableSchema.SCENARIO_NAME.name: self.scenario_name,
+            DatasetTableSchema.DATABASE.name: self.database,
+            DatasetTableSchema.SPLIT.name: self.split,
         }
         data_model[DatasetTableSchema.LIDAR_FRAMES.name] = [
             lidar_frame.to_dictionary() for lidar_frame in self.lidar_frames
         ]
 
-        if self.lidar_sources:
-            data_model[DatasetTableSchema.LIDAR_SOURCES.name] = [
-                lidar_source.to_dictionary() for lidar_source in self.lidar_sources
-            ]
-        else:
-            data_model[DatasetTableSchema.LIDAR_SOURCES.name] = []
-
-        if self.category_mapping:
-            data_model[DatasetTableSchema.CATEGORY_MAPPING.name] = (
-                self.category_mapping.to_dictionary()
-            )
-        else:
-            data_model[DatasetTableSchema.CATEGORY_MAPPING.name] = {}
-
-        if self.boxes_3d is not None:
-            data_model[DatasetTableSchema.BOXES_3D.name] = [
-                box3d.to_dictionary() for box3d in self.boxes_3d
-            ]
-        else:
-            data_model[DatasetTableSchema.BOXES_3D.name] = []
+        # None marks an absent annotation kind and survives the round trip as a null value,
+        # while an empty list means annotated with zero entries
+        data_model[DatasetTableSchema.CAMERA_FRAMES.name] = (
+            [camera_frame.to_dictionary() for camera_frame in self.camera_frames]
+            if self.camera_frames is not None
+            else None
+        )
+        data_model[DatasetTableSchema.LIDAR_SOURCES.name] = (
+            [lidar_source.to_dictionary() for lidar_source in self.lidar_sources]
+            if self.lidar_sources is not None
+            else None
+        )
+        data_model[DatasetTableSchema.CATEGORY_MAPPING.name] = (
+            self.category_mapping.to_dictionary() if self.category_mapping is not None else None
+        )
+        data_model[DatasetTableSchema.BOXES_3D.name] = (
+            [box3d.to_dictionary() for box3d in self.boxes_3d]
+            if self.boxes_3d is not None
+            else None
+        )
 
         return data_model
 
@@ -206,6 +235,15 @@ class DatasetRecord(BaseModel, DataModelInterface):
             LidarFrameDataModel.load_from_dictionary(lidar_frame) for lidar_frame in lidar_frames
         ]
 
+        camera_frames = data_model[DatasetTableSchema.CAMERA_FRAMES.name]
+        if camera_frames is not None:
+            camera_frames = [
+                CameraFrameDataModel.load_from_dictionary(camera_frame)
+                for camera_frame in camera_frames
+            ]
+        else:
+            camera_frames = None
+
         lidar_sources = data_model[DatasetTableSchema.LIDAR_SOURCES.name]
         if lidar_sources is not None:
             lidar_sources = [
@@ -215,8 +253,12 @@ class DatasetRecord(BaseModel, DataModelInterface):
         else:
             lidar_sources = None
 
+        # Polars materializes a null struct as a dictionary of null fields, treat both forms
+        # as an absent mapping
         category_mapping = data_model[DatasetTableSchema.CATEGORY_MAPPING.name]
-        if category_mapping is not None:
+        if category_mapping is not None and any(
+            value is not None for value in category_mapping.values()
+        ):
             category_mapping = CategoryMappingDataModel.load_from_dictionary(category_mapping)
         else:
             category_mapping = None
@@ -235,7 +277,10 @@ class DatasetRecord(BaseModel, DataModelInterface):
             location=data_model[DatasetTableSchema.LOCATION.name],
             vehicle_type=data_model[DatasetTableSchema.VEHICLE_TYPE.name],
             scenario_name=data_model[DatasetTableSchema.SCENARIO_NAME.name],
+            database=data_model[DatasetTableSchema.DATABASE.name],
+            split=data_model[DatasetTableSchema.SPLIT.name],
             lidar_frames=lidar_frames,
+            camera_frames=camera_frames,
             lidar_sources=lidar_sources,
             category_mapping=category_mapping,
             boxes_3d=boxes_3d,

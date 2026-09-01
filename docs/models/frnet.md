@@ -94,8 +94,8 @@ The standard FRNet training configs follow the AWML experiment contract:
 | `autoware_ml/models/segmentation3d/backbones/frnet.py`      | FRNet backbone                             |
 | `autoware_ml/models/segmentation3d/heads/frnet.py`          | FRNet segmentation heads                   |
 | `autoware_ml/losses/segmentation3d/`                        | Segmentation losses used by FRNet          |
-| `autoware_ml/datamodule/nuscenes/segmentation3d.py`         | NuScenes segmentation datamodule           |
-| `autoware_ml/datamodule/t4dataset/segmentation3d.py`        | T4Dataset segmentation datamodule          |
+| `autoware_ml/datamodule/nuscenes/dataset.py`                | NuScenes dataset                           |
+| `autoware_ml/datamodule/t4dataset/dataset.py`               | T4Dataset dataset                          |
 | `autoware_ml/transforms/segmentation3d/`                    | Segmentation task transforms used by FRNet |
 | `autoware_ml/preprocessing/segmentation3d/frustum_range.py` | Frustum and range preprocessing            |
 | `autoware_ml/configs/tasks/segmentation3d/frnet/`           | Task configurations                        |

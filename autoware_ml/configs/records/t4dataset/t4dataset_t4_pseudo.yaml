@@ -1,0 +1,36 @@
+# Read access to a generated dataset record table. The table is produced outside this
+# repository by t4dataset-generator, carries its own splits and database names, and is
+# shared by every model that trains on these databases. The path is fixed: mount your
+# own writable records directory at /workspace/records, so the data mount can stay read
+# only.
+#
+# The pseudo labelled corpus is a table of its own: its masks are regenerated whenever the
+# teacher changes, and its scenes live under pseudo_large.
+_target_: autoware_ml.databases.record_table.RecordTable
+_convert_: all
+
+path: /workspace/records/t4dataset_pseudo.parquet
+data_root: ${data_root_path}/t4dataset/pseudo_large/
+
+# Databases of the table this corpus trains on.
+databases:
+  - db_j6gen2_v1
+  - db_j6gen2_v10
+  - db_j6gen2_v11
+  - db_j6gen2_v12
+  - db_j6gen2_v2
+  - db_j6gen2_v3
+  - db_j6gen2_v4
+  - db_j6gen2_v5
+  - db_j6gen2_v6
+  - db_j6gen2_v7
+  - db_j6gen2_v8
+  - db_j6gen2_v9
+  - db_jpntaxi_v1
+  - db_jpntaxi_v2
+  - db_jpntaxi_v4
+  - db_jpntaxigen2_v1
+  - db_jpntaxigen2_v2
+  - db_largebus_v1
+  - db_largebus_v2
+  - db_largebus_v3

@@ -14,27 +14,59 @@
 
 """Base datamodule abstractions for Autoware-ML.
 
-This module defines shared configuration containers and abstract datamodule
-interfaces used by training, evaluation, and deployment entrypoints.
+The datamodule reads dataset records from the configured record tables, selects the split
+each table declares, and serves typed samples through the transform pipelines. Batches are
+collated into the typed Batch, the single interface the models consume.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import logging
 from typing import Any
 
 import lightning as L
 import numpy as np
-import torch
+import polars as pl
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
 
-from autoware_ml.datamodule.collation import CollationStrategy
+from autoware_ml.databases.schemas.dataset_schemas import (
+    DatasetRecord,
+)
+from autoware_ml.datamodule.samples.calibration import CalibrationSample
+from autoware_ml.utils.calibration import CalibrationData
 from autoware_ml.datamodule.pipeline_context import PipelineContext
+from autoware_ml.datamodule.samplers import (
+    DistributedWeightedRandomSampler,
+    FrameSamplingConfig,
+    coerce_frame_sampling,
+    compute_frame_sampling_weights,
+)
+from autoware_ml.datamodule.samples.batch import Batch
+from autoware_ml.datamodule.samples.sample import Sample
+from autoware_ml.datamodule.samples.meta import FrameMeta
+from autoware_ml.datamodule.sources import DatasetSource, coerce_sources
 from autoware_ml.transforms.base import TransformsCompose
 
 logger = logging.getLogger(__name__)
+
+_STAGE_SPLITS: Mapping[str, Sequence[str]] = {
+    "fit": ("train", "val"),
+    "validate": ("val",),
+    "test": ("test",),
+    "predict": ("predict",),
+}
+
+_RECORD_SPLITS: Mapping[str, str] = {
+    "train": "train",
+    "val": "val",
+    "test": "test",
+    # The predict split serves the test frames without ground truth requirements
+    "predict": "test",
+}
 
 
 @dataclass
@@ -58,7 +90,7 @@ class DataLoaderConfig:
     drop_last: bool = False
 
     def to_dataloader_kwargs(self) -> dict[str, Any]:
-        """Convert to keyword arguments accepted by ``DataLoader``.
+        """Convert to keyword arguments accepted by DataLoader.
 
         Returns:
             Dictionary of DataLoader constructor keyword arguments.
@@ -73,102 +105,250 @@ class DataLoaderConfig:
         }
 
 
-class Dataset(TorchDataset, ABC):
-    """Define the base dataset interface for Autoware-ML.
+@dataclass(frozen=True)
+class SourceRecords:
+    """Records of one dataset source for one split.
 
-    Subclasses implement :meth:`get_data_info` and may rely on the shared
-    transform handling implemented by this class.
+    Attributes:
+        source: The dataset source the records belong to.
+        records: Dataset records of the split as a polars dataframe.
+        data_root: Root directory the record paths resolve against.
     """
 
-    def __init__(self, dataset_transforms: TransformsCompose | None = None, **kwargs: Any):
-        """Initialize the dataset base class.
-
-        Args:
-            dataset_transforms: Optional transform pipeline applied per sample.
-            **kwargs: Additional arguments forwarded to ``TorchDataset``.
-        """
-        super().__init__(**kwargs)
-        self.dataset_transforms = dataset_transforms
-
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        """Load and transform one dataset sample.
-
-        Args:
-            index: Sample index.
-
-        Returns:
-            Transformed dataset sample.
-        """
-        input_dict = self.get_data_info(index)
-        context = PipelineContext(dataset=self, index=index)
-        return self.apply_transforms(input_dict, self.dataset_transforms, context)
-
-    @abstractmethod
-    def get_data_info(self, index: int) -> dict[str, Any]:
-        """Return raw metadata for a given dataset index.
-
-        Args:
-            index: Index of the sample.
-
-        Returns:
-            Metadata dictionary consumed by the transform pipeline.
-        """
-        raise NotImplementedError("Dataset must implement get_data_info")
-
-    def apply_transforms(
-        self,
-        input_dict: dict[str, Any],
-        dataset_transforms: TransformsCompose | None,
-        context: PipelineContext,
-    ) -> dict[str, Any]:
-        """Apply a specific transform pipeline to a metadata sample.
-
-        Args:
-            input_dict: Metadata sample dictionary.
-            dataset_transforms: Transform pipeline applied to the sample.
-            context: Pipeline context associated with the sample.
-
-        Returns:
-            Transformed dataset sample.
-        """
-        if dataset_transforms is None:
-            return input_dict
-        return dataset_transforms(input_dict, context=context)
+    source: DatasetSource
+    records: pl.DataFrame
+    data_root: str
 
 
-class DataModule(L.LightningDataModule, ABC):
-    """Define the shared Lightning DataModule behavior for Autoware-ML.
+class Dataset(TorchDataset, ABC):
+    """Family agnostic dataset over dataset records.
 
-    Subclasses create split-specific datasets while this base class provides
-    common setup logic, dataloader construction, and batch collation.
-
-    Collation contract:
-        ``collation_map`` is an explicit whitelist of keys that may appear in
-        the collated batch. Every key listed must be present in every sample.
-        Missing keys are skipped with a warning. Each key declares exactly one strategy.
-
-        Strategies:
-            * ``"concat"``: concatenate per-sample tensors along dim 0. The
-              first ``"concat"`` key in the map is the primary point cloud
-              space. Its per-sample lengths produce the cumulative ``offset``
-              tensor that is added to the batch.
-            * ``"stack"``: stack fixed-shape per-sample tensors along a new
-              dim 0. Shape mismatch raises ``ValueError``.
-            * ``"index_concat"``: concatenate integer index tensors along dim
-              0 and shift each sample's values by the exclusive cumulative
-              offset of the primary point cloud space, making indices globally
-              valid across the batch. Requires at least one ``"concat"`` key.
-            * ``"list"``: keep per-sample values as a Python list. Numpy
-              arrays are converted to tensors element-wise.
-
-    Failure modes:
-        Undeclared keys are dropped, declared-but-missing keys are skipped
-        with a warning, and a wrong strategy for a key's content fails loudly.
+    The dataset serves one split assembled from one or more sources. Every index maps to one
+    record row of one source, repeated sources contribute their rows several times. A sample
+    starts as the seeded record plus frame metadata, and the transform pipeline fills the task
+    fields. Subclasses only derive the family specific frame metadata.
     """
 
     def __init__(
         self,
-        collation_map: Mapping[str, CollationStrategy] | None = None,
+        dataset_transforms: TransformsCompose | None = None,
+        calibration_cameras: Sequence[str] | None = None,
+    ) -> None:
+        """Initialize the dataset.
+
+        Args:
+            dataset_transforms: Transform pipeline applied per sample.
+            calibration_cameras: Camera channels served by the calibration status task. When
+                set, every record expands into one sample per listed camera and the samples
+                are seeded with the calibration state of that camera.
+        """
+        self.dataset_transforms = dataset_transforms
+        self.calibration_cameras = (
+            tuple(calibration_cameras) if calibration_cameras is not None else None
+        )
+        self._source_records: tuple[SourceRecords, ...] = ()
+        self._index_map: tuple[tuple[int, int, str | None], ...] = ()
+
+    def assign_source_records(self, source_records: Sequence[SourceRecords]) -> None:
+        """Assign the split records of every source and build the index map.
+
+        Args:
+            source_records: Records of every source of the split.
+        """
+        camera_names: tuple[str | None, ...] = (None,)
+        if self.calibration_cameras is not None:
+            camera_names = self.calibration_cameras
+        index_map = []
+        for source_index, entry in enumerate(source_records):
+            for _ in range(entry.source.repeat):
+                index_map.extend(
+                    (source_index, row_index, camera_name)
+                    for row_index in range(len(entry.records))
+                    for camera_name in camera_names
+                )
+        self._source_records = tuple(source_records)
+        self._index_map = tuple(index_map)
+        if not len(self._index_map):
+            raise ValueError(f"{self.__class__.__name__} received no records.")
+
+    def __len__(self) -> int:
+        """
+        Get the number of samples of the split, including repeated sources.
+
+        Returns:
+          int: Number of samples.
+        """
+
+        return len(self._index_map)
+
+    def load_record(self, index: int) -> tuple[DatasetRecord, SourceRecords]:
+        """Load the dataset record behind one dataset index.
+
+        The supervision toggles of the source are applied here: a source without det3d
+        supervision loses its boxes and a source without seg3d supervision loses its category
+        mapping, so unmatched segmentation labels map to the ignore index downstream.
+
+        Args:
+            index: Dataset index.
+
+        Returns:
+            Tuple of the dataset record and the source records entry it came from.
+        """
+        source_index, row_index, _ = self._index_map[index]
+        entry = self._source_records[source_index]
+        row = entry.records.row(row_index, named=True)
+        record = DatasetRecord.load_from_dictionary(row)
+        update: dict[str, Any] = {}
+        if not entry.source.det3d:
+            update["boxes_3d"] = []
+        if not entry.source.seg3d:
+            update["category_mapping"] = None
+        if update:
+            record = record.model_copy(update=update)
+        return record, entry
+
+    def build_seed_sample(self, index: int) -> Sample:
+        """Build the untransformed seed sample of one dataset index.
+
+        Args:
+            index: Dataset index.
+
+        Returns:
+            Seed sample holding the record and the frame metadata.
+        """
+        record, entry = self.load_record(index)
+        calibration = None
+        camera_name = self._index_map[index][2]
+        if camera_name is not None:
+            calibration = self._build_calibration(record, camera_name)
+        return Sample(
+            record=record,
+            data_root=entry.data_root,
+            meta=self.build_meta(record),
+            calibration=calibration,
+        )
+
+    @staticmethod
+    def _build_calibration(record: DatasetRecord, camera_name: str) -> CalibrationSample:
+        """Build the calibration state of one camera of a record.
+
+        The lidar to camera transformation is composed through both ego poses to account for
+        the ego motion between the lidar and camera capture timestamps.
+
+        Args:
+            record: Dataset record of the sample.
+            camera_name: Camera channel the calibration belongs to.
+
+        Returns:
+            Calibration state of the camera.
+        """
+        if record.camera_frames is None:
+            raise ValueError(
+                f"Record {record.sample_id} carries no camera frames but the calibration task "
+                f"requires camera {camera_name}."
+            )
+        camera_frames = [
+            frame
+            for frame in record.camera_frames
+            if frame.camera_sensor_channel_name == camera_name
+        ]
+        if len(camera_frames) != 1:
+            raise ValueError(
+                f"Record {record.sample_id} must carry exactly one camera frame for channel "
+                f"{camera_name}, got {len(camera_frames)}."
+            )
+        camera_frame = camera_frames[0]
+        lidar_frame = record.lidar_frames[0]
+
+        # Lidar frame -> ego at lidar time -> global -> ego at camera time -> camera frame
+        lidar_to_camera = (
+            np.linalg.inv(camera_frame.camera_sensor_to_ego_pose_matrix)
+            @ np.linalg.inv(camera_frame.camera_frame_ego_pose_to_global_matrix)
+            @ lidar_frame.lidar_frame_ego_pose_to_global_matrix
+            @ lidar_frame.lidar_sensor_to_ego_pose_matrix
+        )
+        calibration_data = CalibrationData(
+            camera_matrix=camera_frame.camera_intrinsic_matrix_fp32,
+            distortion_coefficients=np.asarray(
+                camera_frame.camera_distortion_coefficients, dtype=np.float32
+            ),
+            lidar_to_camera_transformation=lidar_to_camera.astype(np.float32),
+            distortion_model=camera_frame.camera_distortion_model,
+        )
+        return CalibrationSample(data=calibration_data, camera_name=camera_name)
+
+    def __getitem__(self, index: int) -> Sample:
+        """Load and transform one sample.
+
+        Args:
+            index: Dataset index.
+
+        Returns:
+            Transformed sample.
+        """
+        sample = self.build_seed_sample(index)
+        context = PipelineContext(dataset=self, index=index)
+        return self.apply_transforms(sample, self.dataset_transforms, context)
+
+    def apply_transforms(
+        self,
+        sample: Sample,
+        dataset_transforms: TransformsCompose | None,
+        context: PipelineContext,
+    ) -> Sample:
+        """Apply a transform pipeline to a sample.
+
+        Args:
+            sample: Seed sample.
+            dataset_transforms: Transform pipeline applied to the sample.
+            context: Pipeline context associated with the sample.
+
+        Returns:
+            Transformed sample.
+        """
+        if dataset_transforms is None:
+            return sample
+        return dataset_transforms(sample, context=context)
+
+    def iter_records(self) -> Sequence[tuple[DatasetRecord, DatasetSource]]:
+        """Iterate the records of the split in index order, with their sources.
+
+        Returns:
+            Sequence of record and source pairs, one per dataset index.
+        """
+        return [
+            (
+                self.load_record(index)[0],
+                self._source_records[self._index_map[index][0]].source,
+            )
+            for index in range(len(self))
+        ]
+
+    @abstractmethod
+    def build_meta(self, record: DatasetRecord) -> FrameMeta:
+        """Build the family specific frame metadata of one record.
+
+        Args:
+            record: Dataset record of the sample.
+
+        Returns:
+            Frame metadata of the sample.
+        """
+        raise NotImplementedError("Dataset must implement build_meta")
+
+
+class DataModule(L.LightningDataModule):
+    """Lightning DataModule serving typed batches from the configured record tables.
+
+    Setup reads the split each source declares in its record table and assigns the records
+    to the split datasets, and the dataloaders collate typed samples into the typed Batch.
+    Record tables are generated outside this repository, so nothing is built here.
+    """
+
+    def __init__(
+        self,
+        dataset: Any,
+        sources: Sequence[DatasetSource | Mapping[str, Any]],
         train_transforms: TransformsCompose | None = None,
         val_transforms: TransformsCompose | None = None,
         test_transforms: TransformsCompose | None = None,
@@ -177,14 +357,15 @@ class DataModule(L.LightningDataModule, ABC):
         val_dataloader_cfg: DataLoaderConfig | Mapping[str, Any] | None = None,
         test_dataloader_cfg: DataLoaderConfig | Mapping[str, Any] | None = None,
         predict_dataloader_cfg: DataLoaderConfig | Mapping[str, Any] | None = None,
+        train_frame_sampling: FrameSamplingConfig | Mapping[str, Any] | None = None,
     ):
         """Initialize DataModule.
 
         Args:
-            collation_map: Per-key collation strategy applied across all
-                splits. Only keys listed here reach the batch. All other
-                keys are dropped. See the class docstring for the
-                per-strategy contract.
+            dataset: Partial dataset factory of the dataset family. It is called once per
+                split with the split transform pipeline as dataset_transforms.
+            sources: Dataset sources served by this datamodule. All sources must belong to
+                the dataset family of the factory.
             train_transforms: Transform pipeline applied to training samples.
             val_transforms: Transform pipeline applied to validation samples.
             test_transforms: Transform pipeline applied to test samples.
@@ -193,44 +374,44 @@ class DataModule(L.LightningDataModule, ABC):
             val_dataloader_cfg: Configuration for the validation dataloader.
             test_dataloader_cfg: Configuration for the test dataloader.
             predict_dataloader_cfg: Configuration for the predict dataloader.
+            train_frame_sampling: Repeat factor sampling settings for the training split, or
+                None for uniform sampling.
         """
         super().__init__()
 
-        self.collation_map: dict[str, CollationStrategy] = dict(collation_map or {})
-        if "offset" in self.collation_map:
-            raise ValueError("'offset' is a reserved collation key generated by concat inputs.")
-        # TransformsCompose for each dataset split
-        self.train_transforms: TransformsCompose = train_transforms
-        self.val_transforms: TransformsCompose = val_transforms
-        self.test_transforms: TransformsCompose = test_transforms
-        self.predict_transforms: TransformsCompose = predict_transforms
-        # Configuration for each dataset split
+        self.dataset_factory = dataset
+        self.sources = coerce_sources(sources)
+        self.train_transforms = train_transforms
+        self.val_transforms = val_transforms
+        self.test_transforms = test_transforms
+        self.predict_transforms = predict_transforms
         self.train_dataloader_cfg = self._coerce_dataloader_cfg(train_dataloader_cfg)
         self.val_dataloader_cfg = self._coerce_dataloader_cfg(val_dataloader_cfg)
         self.test_dataloader_cfg = self._coerce_dataloader_cfg(test_dataloader_cfg)
         self.predict_dataloader_cfg = self._coerce_dataloader_cfg(predict_dataloader_cfg)
+        self.train_frame_sampling = coerce_frame_sampling(train_frame_sampling)
 
-        # Dataset splits (to be created in setup)
         self.train_dataset: Dataset | None = None
         self.val_dataset: Dataset | None = None
         self.test_dataset: Dataset | None = None
         self.predict_dataset: Dataset | None = None
+        self._split_source_records: dict[str, list[SourceRecords]] = {}
 
     @staticmethod
     def _coerce_dataloader_cfg(
         cfg: DataLoaderConfig | Mapping[str, Any] | None,
     ) -> DataLoaderConfig:
-        """Normalize dataloader config values to ``DataLoaderConfig``.
+        """Normalize dataloader config values to DataLoaderConfig.
 
-        Hydra composition can pass split dataloader settings as a plain
-        ``dict`` or ``DictConfig``. Normalize those mapping inputs at the
-        datamodule boundary so downstream code can rely on the dataclass API.
+        Hydra composition can pass split dataloader settings as a plain dict or DictConfig.
+        Normalize those mapping inputs at the datamodule boundary so downstream code can rely
+        on the dataclass API.
 
         Args:
             cfg: Optional dataloader config object or mapping.
 
         Returns:
-            Normalized ``DataLoaderConfig`` instance.
+            Normalized DataLoaderConfig instance.
 
         Raises:
             TypeError: If the provided value cannot be converted.
@@ -246,246 +427,114 @@ class DataModule(L.LightningDataModule, ABC):
             f"got {type(cfg)!r}."
         )
 
-    @abstractmethod
-    def _create_dataset(
-        self, split: str, dataset_transforms: TransformsCompose | None = None
-    ) -> Dataset:
-        """Create dataset for a specific split.
-
-        Subclasses must implement this method to create dataset instances
-        for different splits (train, val, test, predict).
+    def _split_records(self, split: str) -> list[SourceRecords]:
+        """Collect the records of every source for one split.
 
         Args:
-            split: Dataset split name ("train", "val", "test", "predict").
-            dataset_transforms: Transform pipeline applied per sample inside
-                the dataset.
+            split: Dataset split name.
 
         Returns:
-            Dataset instance for the split.
+            Records of every source of the split.
         """
-        raise NotImplementedError("Dataset must implement _create_dataset")
+        if split in self._split_source_records:
+            return self._split_source_records[split]
+
+        record_split = _RECORD_SPLITS[split]
+        source_records = [
+            SourceRecords(
+                source=source,
+                records=source.records.load(record_split),
+                data_root=source.records.data_root,
+            )
+            for source in self.sources
+        ]
+        self._split_source_records[split] = source_records
+        return source_records
 
     def setup(self, stage: str | None = None) -> None:
-        """Setup datasets for each stage.
-
-        This unified implementation handles all stages and eliminates
-        code duplication. It maps stages to dataset splits
-        and creates datasets using _create_dataset().
+        """Create the datasets of every split of the stage.
 
         Args:
-            stage: Current stage ('fit', 'validate', 'test', 'predict') or
-                ``None`` to prepare all splits.
+            stage: Current stage, fit, validate, test, or predict, or None to prepare all
+                splits.
         """
-        # Define stage to splits mapping
-        stage_splits = {
-            "fit": ["train", "val"],
-            "validate": ["val"],
-            "test": ["test"],
-            "predict": ["predict"],
-        }
-
-        # Get splits for this stage
-        splits = ["train", "val", "test", "predict"] if stage is None else stage_splits[stage]
-
-        # Create datasets for required splits
+        splits = ("train", "val", "test", "predict") if stage is None else _STAGE_SPLITS[stage]
         for split in splits:
             if getattr(self, f"{split}_dataset") is not None:
                 continue
-            transforms = getattr(self, f"{split}_transforms")
-            dataset = self._create_dataset(split, transforms)
+            dataset = self.dataset_factory(dataset_transforms=getattr(self, f"{split}_transforms"))
+            if not isinstance(dataset, Dataset):
+                raise TypeError(
+                    f"The dataset factory must build a Dataset, got {type(dataset).__name__}."
+                )
+            dataset.assign_source_records(self._split_records(split))
             setattr(self, f"{split}_dataset", dataset)
+
+    @staticmethod
+    def collate_fn(samples: list[Sample]) -> Batch:
+        """Collate typed samples into the typed batch.
+
+        Args:
+            samples: Samples produced by the transform pipelines.
+
+        Returns:
+            Collated batch.
+        """
+        return Batch.collate(samples)
 
     def _create_dataloader(self, split: str) -> DataLoader:
         """Create a dataloader for the given split.
 
         Args:
-            split: Dataset split name (``train``, ``val``, ``test``, ``predict``).
+            split: Dataset split name.
 
         Returns:
             Configured DataLoader for the split.
         """
         dataset = getattr(self, f"{split}_dataset")
         cfg: DataLoaderConfig = getattr(self, f"{split}_dataloader_cfg")
-        return DataLoader(dataset=dataset, collate_fn=self.collate_fn, **cfg.to_dataloader_kwargs())
+        kwargs = cfg.to_dataloader_kwargs()
+        if split == "train" and self.train_frame_sampling is not None:
+            weights = compute_frame_sampling_weights(
+                dataset.iter_records(), self.train_frame_sampling
+            )
+            kwargs["shuffle"] = False
+            return DataLoader(
+                dataset=dataset,
+                collate_fn=self.collate_fn,
+                sampler=DistributedWeightedRandomSampler(dataset, weights),
+                **kwargs,
+            )
+        return DataLoader(dataset=dataset, collate_fn=self.collate_fn, **kwargs)
 
     def train_dataloader(self) -> DataLoader:
-        """Create training dataloader."""
+        """Create the training dataloader.
+
+        Returns:
+            Training dataloader.
+        """
         return self._create_dataloader("train")
 
     def val_dataloader(self) -> DataLoader:
-        """Create validation dataloader."""
+        """Create the validation dataloader.
+
+        Returns:
+            Validation dataloader.
+        """
         return self._create_dataloader("val")
 
     def test_dataloader(self) -> DataLoader:
-        """Create test dataloader."""
+        """Create the test dataloader.
+
+        Returns:
+            Test dataloader.
+        """
         return self._create_dataloader("test")
 
     def predict_dataloader(self) -> DataLoader:
-        """Create prediction dataloader."""
+        """Create the prediction dataloader.
+
+        Returns:
+            Prediction dataloader.
+        """
         return self._create_dataloader("predict")
-
-    @staticmethod
-    def _coerce_value(value: Any) -> Any:
-        """Convert a per-sample value to a tensor when possible.
-
-        Numpy arrays and Python numeric scalars are converted to tensors so
-        downstream strategies can treat all numeric inputs uniformly.
-        Existing tensors pass through unchanged. Any other value passes
-        through unchanged, which keeps ``"list"`` strategy compatible with
-        arbitrary Python objects.
-
-        Args:
-            value: A per-sample value drawn from the batch.
-
-        Returns:
-            A ``torch.Tensor`` when ``value`` is a numpy array or a Python
-            numeric scalar, the original tensor when already a ``Tensor``,
-            otherwise the original value.
-        """
-        if isinstance(value, torch.Tensor):
-            return value
-        if isinstance(value, np.ndarray):
-            array = value if value.flags.c_contiguous else np.ascontiguousarray(value)
-            return torch.from_numpy(array)
-        # `bool` is a subclass of `int` and is handled by the same branch.
-        if isinstance(value, (int, float)):
-            return torch.tensor(value)
-        return value
-
-    @staticmethod
-    def _apply_stack(key: str, values: list[torch.Tensor]) -> torch.Tensor:
-        """Stack fixed-shape per-sample tensors along a new batch dim.
-
-        Args:
-            key: Batch key name, used in the error message for diagnostics.
-            values: Per-sample tensors. Every tensor must share the same
-                shape as ``values[0]``.
-
-        Returns:
-            A tensor of shape ``(batch_size, *values[0].shape)``.
-
-        Raises:
-            ValueError: When any sample has a shape different from the first.
-        """
-        expected_shape = values[0].shape
-        for sample_idx, value in enumerate(values):
-            if value.shape != expected_shape:
-                raise ValueError(
-                    f"Key '{key}' configured as 'stack' but sample {sample_idx} has shape "
-                    f"{list(value.shape)}, expected {list(expected_shape)}."
-                )
-        return torch.stack(values, dim=0)
-
-    @staticmethod
-    def _apply_concat(values: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
-        """Concatenate variable-length per-sample tensors along dim 0.
-
-        Args:
-            values: Per-sample tensors with matching trailing shape.
-
-        Returns:
-            A tuple of:
-                * concatenated tensor along dim 0,
-                * per-sample lengths as an ``int64`` tensor of shape
-                  ``(batch_size,)``.
-        """
-        lengths = torch.tensor([v.shape[0] for v in values], dtype=torch.long)
-        return torch.cat(values, dim=0), lengths
-
-    @staticmethod
-    def _apply_index_concat(
-        values: list[torch.Tensor], exclusive_offset: torch.Tensor
-    ) -> torch.Tensor:
-        """Concatenate index tensors and shift each sample by the primary offset.
-
-        Each sample's index values reference positions in the primary point
-        cloud space. After concatenation, per-sample chunks are shifted by
-        the corresponding exclusive cumulative count of the primary space so
-        the resulting indices remain valid across the whole batch.
-
-        Args:
-            values: Per-sample integer index tensors.
-            exclusive_offset: Exclusive cumulative offset of the primary
-                point cloud space. Shape ``(batch_size,)``.
-
-        Returns:
-            A 1D integer tensor of globally valid indices.
-        """
-        lengths = torch.tensor([v.shape[0] for v in values], dtype=torch.long)
-        shift = torch.repeat_interleave(exclusive_offset.to(values[0].dtype), lengths)
-        return torch.cat(values, dim=0) + shift
-
-    def collate_fn(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
-        """Collate a batch according to ``self.collation_map``.
-
-        The function dispatches each declared key to its strategy handler,
-        derives a cumulative ``offset`` tensor from the first ``"concat"``
-        key, and applies the offset shift to any ``"index_concat"`` keys.
-        See the class docstring for the full
-        per-strategy contract.
-
-        Args:
-            batch: Non-empty list of per-sample dictionaries.
-
-        Returns:
-            Dictionary of collated values keyed by the names declared in
-            ``self.collation_map``. When any ``"concat"`` key is present, an
-            additional ``"offset"`` key is added with the inclusive
-            cumulative count of the primary point cloud space.
-
-        Raises:
-            ValueError: Empty batch, a ``"stack"`` key with mismatched
-                shapes, ``"index_concat"`` declared without any ``"concat"``
-                key, or an unknown strategy value.
-        """
-        if not batch:
-            raise ValueError("Batch is empty.")
-
-        result: dict[str, Any] = {}
-        primary_lengths: torch.Tensor | None = None
-        deferred_index_concat: list[tuple[str, list[torch.Tensor]]] = []
-
-        for key, strategy in self.collation_map.items():
-            missing = [i for i, sample in enumerate(batch) if key not in sample]
-            if missing:
-                logger.warning(
-                    "Key '%s' declared in collation_map but missing from samples %s. "
-                    "Skipping this key during collation. If this comes from deployment/predict, "
-                    "it is expected for training-only annotation keys.",
-                    key,
-                    missing,
-                )
-                continue
-
-            values = [self._coerce_value(sample[key]) for sample in batch]
-
-            match strategy:
-                case CollationStrategy.STACK:
-                    result[key] = self._apply_stack(key, values)
-                case CollationStrategy.CONCAT:
-                    tensor, lengths = self._apply_concat(values)
-                    result[key] = tensor
-                    if primary_lengths is None:
-                        primary_lengths = lengths
-                        result["offset"] = torch.cumsum(lengths, dim=0)
-                case CollationStrategy.INDEX_CONCAT:
-                    deferred_index_concat.append((key, values))
-                case CollationStrategy.LIST:
-                    result[key] = list(values)
-                case _:
-                    raise ValueError(f"Unknown CollationStrategy {strategy!r} for key '{key}'.")
-
-        if deferred_index_concat:
-            if primary_lengths is None:
-                raise ValueError(
-                    "'index_concat' requires at least one 'concat' key to define "
-                    "the primary point cloud offset. Got: "
-                    f"{[k for k, _ in deferred_index_concat]}."
-                )
-            exclusive_offset = torch.cat(
-                [torch.zeros(1, dtype=torch.long), torch.cumsum(primary_lengths, dim=0)[:-1]]
-            )
-            for key, values in deferred_index_concat:
-                result[key] = self._apply_index_concat(values, exclusive_offset)
-
-        return result

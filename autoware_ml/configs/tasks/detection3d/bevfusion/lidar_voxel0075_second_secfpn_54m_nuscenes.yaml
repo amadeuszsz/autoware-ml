@@ -3,6 +3,7 @@ defaults:
   - /tasks/detection3d/bevfusion/base
   - /datasets/nuscenes/detection3d
   - /datasets/nuscenes/lidar
+  - /records@records: nuscenes/nuscenes_trainval
   - _self_
 
 batch_size: 16
@@ -16,12 +17,14 @@ out_size_factor: 8
 max_time_lag: 0.5
 
 datamodule:
-  _target_: autoware_ml.datamodule.nuscenes.detection3d.NuscenesDetection3DDataModule
-  data_root: ${dataset.data_root}
-  train_ann_file: nuscenes_infos_train.pkl
-  val_ann_file: nuscenes_infos_val.pkl
-  test_ann_file: nuscenes_infos_val.pkl
-  class_names: ${dataset.detection3d.class_names}
+  dataset:
+    _target_: autoware_ml.datamodule.nuscenes.dataset.NuscenesDataset
+    _partial_: true
+  sources:
+    - records: ${records}
+      det3d: true
+      seg3d: false
+      repeat: 1
   train_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
@@ -35,13 +38,12 @@ datamodule:
   train_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.loading.LoadAnnotations3D
+      - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
+        class_names: ${dataset.detection3d.class_names}
         name_mapping: ${dataset.detection3d.name_mapping}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 10
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
+        use_features: [x, y, z, intensity, timestamp_difference]
         pad_empty_sweeps: true
         remove_close: true
         sweep_selection: random
@@ -60,18 +62,16 @@ datamodule:
       - _target_: autoware_ml.transforms.boxes3d.filters.ObjectRangeMinPointsFilter
         range_radius: [0.0, 60.0]
         min_num_points: 1
-        time_lag_dim: 4
       - _target_: autoware_ml.transforms.point_cloud.sampling.PointShuffle
   val_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.loading.LoadAnnotations3D
+      - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
+        class_names: ${dataset.detection3d.class_names}
         name_mapping: ${dataset.detection3d.name_mapping}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 10
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
+        use_features: [x, y, z, intensity, timestamp_difference]
         pad_empty_sweeps: true
         remove_close: true
         sweep_selection: nearest
@@ -84,9 +84,7 @@ datamodule:
     pipeline:
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 10
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
+        use_features: [x, y, z, intensity, timestamp_difference]
         pad_empty_sweeps: true
         remove_close: true
         sweep_selection: nearest
