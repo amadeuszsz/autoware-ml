@@ -35,6 +35,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
 
 from autoware_ml.databases.base_database import BaseDatabase
+from autoware_ml.databases.schemas.category_mapping import CategoryMappingDataModel
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord, DatasetTableSchema
 from autoware_ml.datamodule.pipeline_context import PipelineContext
 from autoware_ml.datamodule.samplers import (
@@ -211,7 +212,9 @@ class Dataset(TorchDataset, ABC):
         if not entry.source.det3d:
             update["boxes_3d"] = []
         if not entry.source.seg3d:
-            update["category_mapping"] = None
+            update["category_mapping"] = CategoryMappingDataModel(
+                category_names=[], category_indices=[]
+            )
         if update:
             record = record.model_copy(update=update)
         return record, entry
@@ -401,6 +404,7 @@ class DataModule(L.LightningDataModule):
             "val": coerce_sources(val_sources),
             "test": coerce_sources(test_sources),
         }
+        self._validate_shared_taxonomy()
         self.train_transforms = train_transforms
         self.val_transforms = val_transforms
         self.test_transforms = test_transforms
@@ -458,6 +462,26 @@ class DataModule(L.LightningDataModule):
             for source in sources:
                 databases.setdefault(source.database.database_hash, source.database)
         return list(databases.values())
+
+    def _validate_shared_taxonomy(self) -> None:
+        """Reject databases baked with different taxonomies.
+
+        The model trains one label space, so every database of every split must carry the
+        same taxonomy. A rehearsal corpus baked at another level would feed foreign class
+        indices into the heads.
+
+        Raises:
+            ValueError: If two databases differ in their taxonomy.
+        """
+        databases = self.databases()
+        reference = databases[0]
+        for database in databases[1:]:
+            if database.taxonomy != reference.taxonomy:
+                raise ValueError(
+                    f"Database {database.version} carries a different taxonomy than database "
+                    f"{reference.version}. Every database of a datamodule must be baked with the "
+                    "same taxonomy."
+                )
 
     def prepare_data(self) -> None:
         """Generate the record table of every database that has none yet.

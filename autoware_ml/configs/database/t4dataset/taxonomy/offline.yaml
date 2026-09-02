@@ -1,0 +1,163 @@
+# Offline taxonomy of T4dataset: the fine labels of the vocabularies trained as classes of
+# their own by the teacher models used for pseudo labeling and distillation, never deployed.
+# The coarsening is the identity, so every table baked with it keeps a trailer as a box of its
+# own and the databases bind it together with the pipelines that do not merge trailers.
+_target_: autoware_ml.databases.taxonomy.DatabaseTaxonomy
+_convert_: all
+
+defaults:
+  - /database/t4dataset/taxonomy/vocabulary@detection3d.vocabulary: detection3d
+  - /database/t4dataset/taxonomy/vocabulary@segmentation3d.vocabulary: segmentation3d
+  - _self_
+
+detection3d:
+  _target_: autoware_ml.databases.taxonomy.LabelTaxonomy
+  ignore_index: -1
+  class_names:
+    - car
+    - truck
+    - trailer
+    - bus
+    - train
+    - construction_vehicle
+    - emergency_vehicle
+    - forklift
+    - other_vehicle
+    - motorcycle
+    - bicycle
+    - pedestrian
+    - personal_mobility
+    - animal
+    - barrier
+    - construction_sign
+    - traffic_cone
+    - debris
+    - pushable_pullable
+    - bicycle_rack
+    - open_door
+    - vehicle_protruding_object
+  coarsening:
+    car: car
+    truck: truck
+    trailer: trailer
+    bus: bus
+    train: train
+    construction_vehicle: construction_vehicle
+    emergency_vehicle: emergency_vehicle
+    forklift: forklift
+    other_vehicle: other_vehicle
+    motorcycle: motorcycle
+    bicycle: bicycle
+    pedestrian: pedestrian
+    personal_mobility: personal_mobility
+    animal: animal
+    barrier: barrier
+    construction_sign: construction_sign
+    traffic_cone: traffic_cone
+    debris: debris
+    pushable_pullable: pushable_pullable
+    bicycle_rack: bicycle_rack
+    open_door: open_door
+    vehicle_protruding_object: vehicle_protruding_object
+
+segmentation3d:
+  _target_: autoware_ml.databases.taxonomy.LabelTaxonomy
+  ignore_index: -1
+  # The detection classes come first, in the same order, so a detection class and its
+  # segmentation class share one index. The annotation markers are trained as they are.
+  class_names:
+    - car
+    - truck
+    - trailer
+    - bus
+    - train
+    - construction_vehicle
+    - emergency_vehicle
+    - forklift
+    - other_vehicle
+    - motorcycle
+    - bicycle
+    - pedestrian
+    - personal_mobility
+    - animal
+    - barrier
+    - construction_sign
+    - traffic_cone
+    - debris
+    - pushable_pullable
+    - bicycle_rack
+    - open_door
+    - vehicle_protruding_object
+    - fire_truck
+    - ambulance
+    - police_car
+    - kart
+    - stroller
+    - solid_stuff
+    - other_stuff
+    - drivable_surface
+    - drainage
+    - sidewalk
+    - other_flat_surface
+    - high_curb
+    - low_curb
+    - vegetation
+    - building
+    - pole
+    - bollard
+    - traffic_light
+    - traffic_sign
+    - flag
+    - noise
+    - ghost_point
+    - background
+    - ego_vehicle
+    - out_of_sync
+  coarsening:
+    car: car
+    truck: truck
+    trailer: trailer
+    bus: bus
+    train: train
+    construction_vehicle: construction_vehicle
+    emergency_vehicle: emergency_vehicle
+    forklift: forklift
+    other_vehicle: other_vehicle
+    motorcycle: motorcycle
+    bicycle: bicycle
+    pedestrian: pedestrian
+    personal_mobility: personal_mobility
+    animal: animal
+    barrier: barrier
+    construction_sign: construction_sign
+    traffic_cone: traffic_cone
+    debris: debris
+    pushable_pullable: pushable_pullable
+    bicycle_rack: bicycle_rack
+    open_door: open_door
+    vehicle_protruding_object: vehicle_protruding_object
+    fire_truck: fire_truck
+    ambulance: ambulance
+    police_car: police_car
+    kart: kart
+    stroller: stroller
+    solid_stuff: solid_stuff
+    other_stuff: other_stuff
+    drivable_surface: drivable_surface
+    drainage: drainage
+    sidewalk: sidewalk
+    other_flat_surface: other_flat_surface
+    high_curb: high_curb
+    low_curb: low_curb
+    vegetation: vegetation
+    building: building
+    pole: pole
+    bollard: bollard
+    traffic_light: traffic_light
+    traffic_sign: traffic_sign
+    flag: flag
+    noise: noise
+    ghost_point: ghost_point
+    background: background
+    ego_vehicle: ego_vehicle
+    out_of_sync: out_of_sync

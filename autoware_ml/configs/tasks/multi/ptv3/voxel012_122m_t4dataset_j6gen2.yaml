@@ -17,8 +17,6 @@ head_voxel_size: [0.96, 0.96, 8.0]
 
 num_proposals: 500
 
-segmentation_class_mapping: ${dataset.segmentation3d.class_mapping}
-
 batch_size: 8
 num_workers: 8
 
@@ -39,7 +37,7 @@ datamodule:
     low_pedestrian_height_threshold: 1.5
     low_pedestrian_bev_range: [-50.0, -50.0, 50.0, 50.0]
     class_names: ${dataset.detection3d.class_names}
-    ignore_label_index: ${database.ignore_label_index}
+    ignore_label_index: ${dataset.detection3d.ignore_index}
     filter_attributes: ${dataset.detection3d.filter_attributes}
   train_dataloader_cfg:
     batch_size: ${batch_size}
@@ -55,7 +53,8 @@ datamodule:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
       - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
-        ignore_label_index: ${database.ignore_label_index}
+        class_names: ${dataset.detection3d.class_names}
+        ignore_label_index: ${dataset.detection3d.ignore_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 2
@@ -64,8 +63,7 @@ datamodule:
         sweep_selection: random
         time_lag_range: [0.05, 0.25]
       - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
-        class_mapping: ${segmentation_class_mapping}
-        ignore_index: ${dataset.segmentation3d.ignore_index}
+        taxonomy: ${database.taxonomy.segmentation3d}
       - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
         require_time_lag: true
       - _target_: autoware_ml.transforms.segmentation3d.formatting.PreparePointSegInput
@@ -107,7 +105,8 @@ datamodule:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
       - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
-        ignore_label_index: ${database.ignore_label_index}
+        class_names: ${dataset.detection3d.class_names}
+        ignore_label_index: ${dataset.detection3d.ignore_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 2
@@ -116,8 +115,7 @@ datamodule:
         sweep_selection: nearest
         time_lag_range: [0.05, 0.25]
       - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
-        class_mapping: ${segmentation_class_mapping}
-        ignore_index: ${dataset.segmentation3d.ignore_index}
+        taxonomy: ${database.taxonomy.segmentation3d}
       - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
         require_time_lag: true
       - _target_: autoware_ml.transforms.segmentation3d.formatting.PreparePointSegInput

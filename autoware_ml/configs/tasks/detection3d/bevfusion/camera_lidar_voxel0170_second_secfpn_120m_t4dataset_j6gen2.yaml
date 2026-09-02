@@ -44,7 +44,8 @@ datamodule:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
       - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
-        ignore_label_index: ${database.ignore_label_index}
+        class_names: ${dataset.detection3d.class_names}
+        ignore_label_index: ${dataset.detection3d.ignore_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.camera.loading.LoadMultiViewImagesFromFiles
         camera_order: ${dataset.camera.camera_order}
@@ -83,7 +84,8 @@ datamodule:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
       - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
-        ignore_label_index: ${database.ignore_label_index}
+        class_names: ${dataset.detection3d.class_names}
+        ignore_label_index: ${dataset.detection3d.ignore_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.camera.loading.LoadMultiViewImagesFromFiles
         camera_order: ${dataset.camera.camera_order}

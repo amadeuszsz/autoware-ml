@@ -9,62 +9,26 @@ from omegaconf import OmegaConf
 
 from autoware_ml.configs.resolvers import (
     merge_lists,
-    raw_name_to_train_index,
+    list_length,
     register_config_resolvers,
 )
 
-_NAME_MAPPING = {
-    "car": "car",
-    "vehicle.car": "car",
-    "trailer": "truck",
-    "sidewalk": "non_drivable_flat",
-    "ghost_point": "noise",
-    "background": None,
-    "some_future_category": "not_a_trained_class",
-}
-_CLASS_NAMES = ["car", "truck", "non_drivable_flat", "noise"]
+
+def test_list_length_counts_the_elements() -> None:
+    assert list_length(["car", "truck"]) == 2
+    assert list_length(OmegaConf.create([1, 2, 3])) == 3
+    assert list_length([]) == 0
 
 
-def test_raw_name_to_train_index_maps_final_names() -> None:
-    mapping = raw_name_to_train_index(_NAME_MAPPING, _CLASS_NAMES, ignore_index=-1)
-    # Every raw name resolves to its final class index. Several raws may share one.
-    assert mapping["car"] == 0
-    assert mapping["vehicle.car"] == 0
-    assert mapping["trailer"] == 1
-    assert mapping["sidewalk"] == 2
-    assert mapping["ghost_point"] == 3
-
-
-def test_raw_name_to_train_index_sends_null_and_unknown_finals_to_ignore() -> None:
-    mapping = raw_name_to_train_index(_NAME_MAPPING, _CLASS_NAMES, ignore_index=-1)
-    # null final -> ignore, a final absent from class_names -> ignore (so a shared
-    # name_mapping can list categories a given model does not train).
-    assert mapping["background"] == -1
-    assert mapping["some_future_category"] == -1
-
-
-def test_seg_class_mapping_resolver_in_interpolation() -> None:
+def test_list_length_resolver_derives_a_count_from_a_list() -> None:
     register_config_resolvers()
     cfg = OmegaConf.create(
         {
-            "ignore_index": -1,
-            "name_mapping": dict(_NAME_MAPPING),
-            "class_names": list(_CLASS_NAMES),
-            "class_mapping": (
-                "${seg_class_mapping:${name_mapping}, ${class_names}, ${ignore_index}}"
-            ),
+            "class_names": ["car", "truck", "bus"],
+            "num_classes": "${list_length:${class_names}}",
         }
     )
-    resolved = OmegaConf.to_container(cfg, resolve=True)["class_mapping"]
-    assert resolved == {
-        "car": 0,
-        "vehicle.car": 0,
-        "trailer": 1,
-        "sidewalk": 2,
-        "ghost_point": 3,
-        "background": -1,
-        "some_future_category": -1,
-    }
+    assert OmegaConf.to_container(cfg, resolve=True)["num_classes"] == 3
 
 
 def test_merge_lists_concatenates_in_order() -> None:

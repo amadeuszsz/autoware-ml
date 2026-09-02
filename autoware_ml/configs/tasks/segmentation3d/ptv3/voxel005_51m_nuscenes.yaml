@@ -46,9 +46,7 @@ datamodule:
         sweep_selection: random
         time_lag_range: [0.075, 0.225]
       - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
-        label_mapping: ${dataset.segmentation3d.seg_label_mapping}
-        max_label: ${dataset.segmentation3d.max_label}
-        ignore_index: ${dataset.segmentation3d.ignore_index}
+        taxonomy: ${database.taxonomy.segmentation3d}
       - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
         require_time_lag: true
       - _target_: autoware_ml.transforms.segmentation3d.formatting.PreparePointSegInput
@@ -88,9 +86,7 @@ datamodule:
         sweep_selection: nearest
         time_lag_range: [0.075, 0.225]
       - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
-        label_mapping: ${dataset.segmentation3d.seg_label_mapping}
-        max_label: ${dataset.segmentation3d.max_label}
-        ignore_index: ${dataset.segmentation3d.ignore_index}
+        taxonomy: ${database.taxonomy.segmentation3d}
       - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
         require_time_lag: true
       - _target_: autoware_ml.transforms.segmentation3d.formatting.PreparePointSegInput

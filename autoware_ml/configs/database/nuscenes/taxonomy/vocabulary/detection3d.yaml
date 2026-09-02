@@ -1,0 +1,20 @@
+# Detection vocabulary of nuScenes: the devkit box categories mapped onto the trained class
+# names. A category absent from this list, such as vehicle.trailer, keeps its name and is
+# outside every level.
+_target_: autoware_ml.databases.taxonomy.LabelVocabulary
+_convert_: all
+
+name_mapping:
+  vehicle.car: car
+  vehicle.truck: truck
+  vehicle.construction: truck
+  vehicle.bus.bendy: bus
+  vehicle.bus.rigid: bus
+  vehicle.bicycle: bicycle
+  vehicle.motorcycle: bicycle
+  human.pedestrian.adult: pedestrian
+  human.pedestrian.child: pedestrian
+  human.pedestrian.construction_worker: pedestrian
+  human.pedestrian.police_officer: pedestrian
+  movable_object.trafficcone: traffic_cone
+  movable_object.barrier: barrier

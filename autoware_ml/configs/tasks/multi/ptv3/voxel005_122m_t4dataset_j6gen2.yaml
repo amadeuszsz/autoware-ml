@@ -21,22 +21,21 @@
 # scale RandomJitter to the finer grid, mirroring the 0.05-grid values of
 # the nuScenes config.
 #
-# Shared pipeline taxonomy: 22 detection classes + 47 segmentation classes
-# whose first 22 indices are exactly the detection list, shared verbatim by
-# every stage of the teacher pipeline (seg3d -> base pseudo -> j6gen2 base
-# pseudo -> this joint stage) so seg and det heads stay checkpoint-
-# compatible throughout. The joint corpus supplies all 47 seg classes and
-# all 22 det classes natively, so the mappings below are pure identity;
-# each other stage scopes its own mapping to its own corpus vocabulary and
-# leaves data-less classes as placeholders. Trailer is its own class, so the
-# database resolves the boxes with the pipelines that keep it (no geometric
-# truck+trailer fold), which also gives this taxonomy its own record table.
-# The NMS groups / heatmap pooling classes restate the canonical behaviour
-# over the raw constituents of each folded class.
+# Offline taxonomy: the database is bound to the offline level, 22 detection
+# classes and 47 segmentation classes whose first 22 indices are exactly the
+# detection list, shared by every stage of the teacher pipeline (seg3d -> base
+# pseudo -> j6gen2 base pseudo -> this joint stage) so seg and det heads stay
+# checkpoint-compatible throughout. Trailer is its own class, so the database
+# bakes the boxes with the pipelines that keep it (no geometric truck+trailer
+# fold), which also gives this level its own record table. The class keyed
+# evaluation tables below restate the canonical behaviour over the fine
+# constituents of each folded class, as do the NMS groups and the heatmap
+# pooling classes.
 
 defaults:
   - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
   - override /database/t4dataset/box3d_pipelines@database.box3d_pipelines: trailer_class_box3d_pipelines
+  - override /database/t4dataset/taxonomy@database.taxonomy: offline
   - _self_
 
 grid_size: 0.05
@@ -47,58 +46,6 @@ batch_size: 1
 
 t4dataset:
   detection3d:
-    # Raw joint-corpus detection vocabulary (order = label index).
-    class_names:
-      - car
-      - truck
-      - trailer
-      - bus
-      - train
-      - construction_vehicle
-      - emergency_vehicle
-      - forklift
-      - other_vehicle
-      - motorcycle
-      - bicycle
-      - pedestrian
-      - personal_mobility
-      - animal
-      - barrier
-      - construction_sign
-      - traffic_cone
-      - debris
-      - pushable_pullable
-      - bicycle_rack
-      - open_door
-      - vehicle_protruding_object
-    num_classes: 22
-    # The joint corpus speaks the shared detection vocabulary natively:
-    # identity over the 22 classes. Every entry also overrides the
-    # canonical alias merged in from the dataset config (Hydra merges
-    # mapping nodes), so no inherited fold rewrites a shared class.
-    name_mapping:
-      car: car
-      truck: truck
-      trailer: trailer
-      bus: bus
-      train: train
-      construction_vehicle: construction_vehicle
-      emergency_vehicle: emergency_vehicle
-      forklift: forklift
-      other_vehicle: other_vehicle
-      motorcycle: motorcycle
-      bicycle: bicycle
-      pedestrian: pedestrian
-      personal_mobility: personal_mobility
-      animal: animal
-      barrier: barrier
-      construction_sign: construction_sign
-      traffic_cone: traffic_cone
-      debris: debris
-      pushable_pullable: pushable_pullable
-      bicycle_rack: bicycle_rack
-      open_door: open_door
-      vehicle_protruding_object: vehicle_protruding_object
     # Detection behaviour taxonomy over the raw vocabulary; every class
     # exactly once (mirrors the canonical groups over the raw constituents).
     class_groups:
@@ -166,122 +113,6 @@ t4dataset:
       open_door: 121.0
       vehicle_protruding_object: 121.0
   segmentation3d:
-    # Shared pipeline segmentation vocabulary (order = training index).
-    # Indices 0-21 are exactly the detection class list, in the same order,
-    # so the two label spaces overlap on their common prefix across every
-    # stage of the teacher pipeline (seg3d -> base pseudo -> j6gen2 base
-    # pseudo -> j6gen2 joint). Indices 22-46 are the segmentation-only classes.
-    class_names:
-      # detection prefix (identical to detection3d.class_names)
-      - car
-      - truck
-      - trailer
-      - bus
-      - train
-      - construction_vehicle
-      - emergency_vehicle
-      - forklift
-      - other_vehicle
-      - motorcycle
-      - bicycle
-      - pedestrian
-      - personal_mobility
-      - animal
-      - barrier
-      - construction_sign
-      - traffic_cone
-      - debris
-      - pushable_pullable
-      - bicycle_rack
-      - open_door
-      - vehicle_protruding_object
-      # segmentation-only: vehicles
-      - fire_truck
-      - ambulance
-      - police_car
-      - kart
-      # segmentation-only: vulnerable road users
-      - stroller
-      # segmentation-only: clutter
-      - solid_stuff
-      - other_stuff
-      # segmentation-only: surfaces
-      - drivable_surface
-      - drainage
-      - sidewalk
-      - other_flat_surface
-      - high_curb
-      - low_curb
-      # segmentation-only: vegetation
-      - vegetation
-      # segmentation-only: structure
-      - building
-      - pole
-      - bollard
-      - traffic_light
-      - traffic_sign
-      - flag
-      # segmentation-only: spurious returns
-      - noise
-      - ghost_point
-      # segmentation-only: annotation markers, trained as-is
-      - background
-      - ego_vehicle
-      - out_of_sync
-    num_classes: 47
-    # The joint corpus speaks the shared segmentation vocabulary natively:
-    # identity over the 47 classes. Every entry also overrides the
-    # canonical alias merged in from the dataset config (Hydra merges
-    # mapping nodes), so no inherited fold rewrites a shared class.
-    name_mapping:
-      # identity over the shared classes
-      car: car
-      truck: truck
-      trailer: trailer
-      bus: bus
-      train: train
-      construction_vehicle: construction_vehicle
-      emergency_vehicle: emergency_vehicle
-      forklift: forklift
-      other_vehicle: other_vehicle
-      motorcycle: motorcycle
-      bicycle: bicycle
-      pedestrian: pedestrian
-      personal_mobility: personal_mobility
-      animal: animal
-      barrier: barrier
-      construction_sign: construction_sign
-      traffic_cone: traffic_cone
-      debris: debris
-      pushable_pullable: pushable_pullable
-      bicycle_rack: bicycle_rack
-      open_door: open_door
-      vehicle_protruding_object: vehicle_protruding_object
-      fire_truck: fire_truck
-      ambulance: ambulance
-      police_car: police_car
-      kart: kart
-      stroller: stroller
-      solid_stuff: solid_stuff
-      other_stuff: other_stuff
-      drivable_surface: drivable_surface
-      drainage: drainage
-      sidewalk: sidewalk
-      other_flat_surface: other_flat_surface
-      high_curb: high_curb
-      low_curb: low_curb
-      vegetation: vegetation
-      building: building
-      pole: pole
-      bollard: bollard
-      traffic_light: traffic_light
-      traffic_sign: traffic_sign
-      flag: flag
-      noise: noise
-      ghost_point: ghost_point
-      background: background
-      ego_vehicle: ego_vehicle
-      out_of_sync: out_of_sync
     # Behaviour taxonomy over the raw vocabulary; every class exactly once.
     class_groups:
       grouped_vehicle:
@@ -410,7 +241,8 @@ datamodule:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
       - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
-        ignore_label_index: ${database.ignore_label_index}
+        class_names: ${dataset.detection3d.class_names}
+        ignore_label_index: ${dataset.detection3d.ignore_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 2
@@ -419,8 +251,7 @@ datamodule:
         sweep_selection: random
         time_lag_range: [0.05, 0.25]
       - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
-        class_mapping: ${segmentation_class_mapping}
-        ignore_index: ${dataset.segmentation3d.ignore_index}
+        taxonomy: ${database.taxonomy.segmentation3d}
       - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
         require_time_lag: true
       - _target_: autoware_ml.transforms.segmentation3d.formatting.PreparePointSegInput

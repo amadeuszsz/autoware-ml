@@ -3,46 +3,20 @@
 # Stage 2 of the voxel005 teacher pipeline (seg3d -> THIS -> j6gen2 base
 # pseudo -> j6gen2 joint): pretrain on the 120k mixed-ODD base set (det3d GT +
 # pseudo seg3d) with the j6gen2 seg3d GT frames rehearsed in (det loss masked).
-# Inherits the architecture, geometry, precision, and the shared pipeline
-# taxonomy from the j6gen2 joint voxel005 config; the mapping block below
-# scopes to the pseudo-corpus vocabulary (rehearsal frames are covered by the
-# seg3d-stage names, which the canonical dataset aliases absorb). Schedule and
-# encoder-group learning rates mirror the voxel012 base pseudo stage
-# (initialized from the stage-1 seg3d voxel005 checkpoint; the from-scratch det
-# branch caps at max_lr_factor 5, the inherited 10 diverged).
+# Inherits the architecture, geometry, precision, and the offline taxonomy from
+# the j6gen2 joint voxel005 config; the rehearsal database is bound to the same
+# level and pipelines, since every database of a datamodule must share one
+# taxonomy. Schedule and encoder-group learning rates mirror the voxel012 base
+# pseudo stage (initialized from the stage-1 seg3d voxel005 checkpoint; the
+# from-scratch det branch caps at max_lr_factor 5, the inherited 10 diverged).
 
 defaults:
   - /tasks/multi/ptv3/voxel005_122m_t4dataset_j6gen2
   - /database@rehearsal_database: t4dataset/t4dataset_j6gen2_semaseg
+  - override /database/t4dataset/taxonomy@rehearsal_database.taxonomy: offline
+  - override /database/t4dataset/box3d_pipelines@rehearsal_database.box3d_pipelines: trailer_class_box3d_pipelines
   - override /database@database: t4dataset/t4dataset_base_pseudo
   - _self_
-
-t4dataset:
-  detection3d:
-    # Pseudo-corpus detection vocabulary is the canonical 13-class set;
-    # twelve are shared classes already covered by the inherited identity
-    # mapping, only vehicle_extension needs a fold.
-    name_mapping:
-      vehicle_extension: vehicle_protruding_object
-  segmentation3d:
-    # Pseudo-generator vocabulary: shared names (building, vegetation,
-    # noise, ghost_point, ego_vehicle, detection classes) ride the
-    # inherited identity mapping; each coarse category folds into one
-    # member of its behaviour group so grouped metrics absorb the fold;
-    # 'ignored' keeps the inherited ignore marker.
-    name_mapping:
-      driveable_flat: drivable_surface
-      non_driveable_flat: other_flat_surface
-      vertical_thin: pole
-      static_clutter: other_stuff
-      vehicle_extension: vehicle_protruding_object
-      # rehearsal-corpus folds (lidarseg vocabulary, same as the seg3d
-      # stage; the canonical semi_trailer alias would fold to truck and
-      # diverge from stage 1)
-      manmade: building
-      semi_trailer: trailer
-      tractor_unit: truck
-      unpainted: null
 
 datamodule:
   # Training mixes the pseudo corpus with the rehearsed seg3d GT frames.

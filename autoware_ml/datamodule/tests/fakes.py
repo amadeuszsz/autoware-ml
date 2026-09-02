@@ -35,7 +35,7 @@ from autoware_ml.databases.schemas.box3d_schemas import Box3DDataModel
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord, DatasetTableSchema
 from autoware_ml.databases.t4dataset.t4scenarios import T4Scenarios
 from autoware_ml.datamodule.sources import DatasetSource
-from autoware_ml.testing.factories import make_record
+from autoware_ml.testing.factories import make_database_taxonomy, make_record
 
 FAKE_DATASET_NAME = "db-0"
 SCENARIO_VERSION = "0"
@@ -62,7 +62,8 @@ class FakeDatabase(BaseDatabase):
           root_path: Root directory the record paths resolve against.
           cache_path: Directory the record table is written to.
           version: Version of the database.
-          class_names: Class names of the database taxonomy.
+          class_names: Classes of both levels of the database taxonomy, the identity over the
+            names.
         """
 
         self._records = list(records)
@@ -74,9 +75,7 @@ class FakeDatabase(BaseDatabase):
             cache_path=str(cache_path),
             cache_file_prefix_name="database",
             num_workers=1,
-            class_names=list(class_names),
-            label_remapper={name: name for name in class_names},
-            ignore_label_index=-1,
+            taxonomy=make_database_taxonomy(class_names),
             box3d_pipelines=[],
         )
 

@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 from jaxtyping import Float64
@@ -26,6 +26,7 @@ from autoware_ml.databases.schemas.camera_frames import CameraFrameDataModel
 from autoware_ml.databases.schemas.category_mapping import CategoryMappingDataModel
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord
 from autoware_ml.databases.schemas.lidar_frames import LidarFrameDataModel
+from autoware_ml.databases.taxonomy import DatabaseTaxonomy, LabelTaxonomy, LabelVocabulary
 from autoware_ml.datamodule.samples.boxes3d import Boxes3D
 from autoware_ml.datamodule.samples.meta import FrameMeta
 from autoware_ml.datamodule.samples.point_cloud import PointCloud
@@ -341,4 +342,57 @@ def make_sample(
         points=points,
         boxes=boxes,
         segment=segment,
+    )
+
+
+def make_label_taxonomy(
+    class_names: Sequence[str] = ("car",),
+    *,
+    name_mapping: Mapping[str, str] | None = None,
+    coarsening: Mapping[str, str | None] | None = None,
+    ignore_index: int = -1,
+) -> LabelTaxonomy:
+    """
+    Build a label taxonomy, the identity over the class names unless a vocabulary or a
+    coarsening is given.
+
+    Args:
+      class_names: Classes of the level, in index order.
+      name_mapping: Raw label name to fine label name, the identity over the class names by
+        default.
+      coarsening: Fine label name to class name, the identity over the fine names by default.
+      ignore_index: Label index of a label outside the level.
+
+    Returns:
+      LabelTaxonomy: The taxonomy.
+    """
+
+    vocabulary = LabelVocabulary(
+        name_mapping if name_mapping is not None else {name: name for name in class_names}
+    )
+    if coarsening is None:
+        coarsening = {name: name for name in vocabulary.fine_names}
+    return LabelTaxonomy(
+        vocabulary=vocabulary,
+        class_names=list(class_names),
+        coarsening=coarsening,
+        ignore_index=ignore_index,
+    )
+
+
+def make_database_taxonomy(class_names: Sequence[str] = ("car",)) -> DatabaseTaxonomy:
+    """
+    Build a database taxonomy whose detection and segmentation levels are the identity over
+    the class names.
+
+    Args:
+      class_names: Classes of both levels, in index order.
+
+    Returns:
+      DatabaseTaxonomy: The database taxonomy.
+    """
+
+    return DatabaseTaxonomy(
+        detection3d=make_label_taxonomy(class_names),
+        segmentation3d=make_label_taxonomy(class_names),
     )

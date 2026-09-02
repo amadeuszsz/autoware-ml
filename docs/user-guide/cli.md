@@ -51,6 +51,16 @@ autoware-ml generate-dataset --config-name default_t4dataset_generator \
     database.num_workers=32
 ```
 
+A database binds the online taxonomy. A task that trains another level overrides the taxonomy
+group and the box pipelines of its database, and the same overrides build the table it reads:
+
+```bash
+autoware-ml generate-dataset --config-name default_t4dataset_generator \
+    database=t4dataset/t4dataset_j6gen2_segdet3d \
+    database/t4dataset/taxonomy@database.taxonomy=offline \
+    database/t4dataset/box3d_pipelines@database.box3d_pipelines=trailer_class_box3d_pipelines
+```
+
 ## train
 
 Train a model using the specified Hydra configuration.

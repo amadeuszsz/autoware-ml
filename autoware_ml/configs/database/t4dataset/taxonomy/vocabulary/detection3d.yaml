@@ -1,0 +1,75 @@
+# Detection vocabulary of T4dataset: every raw box category the corpora carry, mapped onto the
+# fine label names the levels coarsen. A raw category absent from this list keeps its own name
+# and is outside every level. Box records store the fine name whatever level they were baked
+# for.
+_target_: autoware_ml.databases.taxonomy.LabelVocabulary
+_convert_: all
+
+name_mapping:
+  # cars
+  car: car
+  vehicle.car: car
+  kart: other_vehicle
+  other_vehicle: other_vehicle
+  police_car: emergency_vehicle
+  vehicle.police: emergency_vehicle
+  ambulance: emergency_vehicle
+  vehicle.ambulance: emergency_vehicle
+  "vehicle.emergency (ambulance & police)": emergency_vehicle
+  emergency_vehicle: emergency_vehicle
+  forklift: forklift
+  # trucks
+  truck: truck
+  vehicle.truck: truck
+  tractor_unit: truck
+  fire_truck: truck
+  vehicle.fire: truck
+  construction_vehicle: construction_vehicle
+  vehicle.construction: construction_vehicle
+  trailer: trailer
+  vehicle.trailer: trailer
+  semi_trailer: trailer
+  # buses and trains
+  bus: bus
+  vehicle.bus: bus
+  "vehicle.bus (bendy & rigid)": bus
+  train: train
+  vehicle.train: train
+  # two wheelers
+  motorcycle: motorcycle
+  vehicle.motorcycle: motorcycle
+  bicycle: bicycle
+  vehicle.bicycle: bicycle
+  # vulnerable road users
+  pedestrian: pedestrian
+  pedestrian.adult: pedestrian
+  pedestrian.child: pedestrian
+  other_pedestrian: pedestrian
+  police_officer: pedestrian
+  pedestrian.police_officer: pedestrian
+  construction_worker: pedestrian
+  pedestrian.construction_worker: pedestrian
+  stroller: pedestrian
+  pedestrian.stroller: pedestrian
+  personal_mobility: personal_mobility
+  pedestrian.personal_mobility: personal_mobility
+  wheelchair: personal_mobility
+  pedestrian.wheelchair: personal_mobility
+  animal: animal
+  # static objects
+  barrier: barrier
+  movable_object.barrier: barrier
+  construction_sign: construction_sign
+  traffic_cone: traffic_cone
+  trafficcone: traffic_cone
+  movable_object.traffic_cone: traffic_cone
+  movable_object.trafficcone: traffic_cone
+  debris: debris
+  movable_object.debris: debris
+  pushable_pullable: pushable_pullable
+  movable_object.pushable_pullable: pushable_pullable
+  bicycle_rack: bicycle_rack
+  # parts protruding from a vehicle
+  open_door: open_door
+  vehicle_protruding_object: vehicle_protruding_object
+  vehicle_extension: vehicle_protruding_object

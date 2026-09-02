@@ -142,11 +142,11 @@ class TestComputeFrameSamplingWeights:
 
         assert weights == [1.0, 1.0]
 
-    def test_a_class_outside_the_configured_names_is_rejected(self) -> None:
+    def test_an_index_outside_the_configured_names_is_rejected(self) -> None:
         stranger = make_box3d_data_model(label_name="animal", label_index=7)
         records = _records([[_car_box(), stranger]])
 
-        with pytest.raises(ValueError, match="not one of the configured class names"):
+        with pytest.raises(ValueError, match="neither an index"):
             compute_frame_sampling_weights(records, _config())
 
     def test_physically_invalid_boxes_contribute_no_category_evidence(self) -> None:

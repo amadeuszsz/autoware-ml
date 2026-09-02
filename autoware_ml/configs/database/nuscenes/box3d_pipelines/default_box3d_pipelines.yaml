@@ -1,12 +1,6 @@
-# Box pipelines applied to every sample when the record table is generated. The labels
-# they resolve are what training reads, so a change here regenerates the table.
-- _target_: autoware_ml.databases.box3d_pipelines.box3d_label_remapper.Box3DLabelRemapper
-  _convert_: all
-
-  label_remapper: ${database.label_remapper}
-  class_names: ${database.class_names}
-  ignore_label_index: ${database.ignore_label_index}
-
+# Box pipelines applied to every sample when the record table is generated. They run on the
+# fine label names of the vocabulary, after the raw names are resolved and before the class
+# indices of the taxonomy are assigned, so a change here regenerates the table.
 - _target_: autoware_ml.databases.box3d_pipelines.box3d_velocity_clip.Box3DVelocityNormClip
   _convert_: all
 

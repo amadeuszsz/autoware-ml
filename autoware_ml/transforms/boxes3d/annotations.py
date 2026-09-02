@@ -138,14 +138,16 @@ def normalize_filter_attributes(
 def resolve_box_class(
     box: Box3DDataModel,
     *,
+    class_names: Sequence[str],
     ignore_label_index: int,
     filter_attributes: Collection[tuple[str, str]] | None = None,
 ) -> str | None:
     """Return the trained class of a stored box annotation, or None when it is not a target.
 
-    The database pipelines resolve the raw dataset label into the stored label name and
-    index when the records are generated, so the record is the single source of the class.
-    A box outside the trained classes carries the ignore index. A box whose class and
+    The database bakes the fine label name and the class index of its taxonomy into every box
+    when the records are generated, so the record is the single source of the class. The
+    class name is the trained class at the stored index, the fine name stays available on the
+    box. A box outside the trained classes carries the ignore index. A box whose class and
     attributes match an exclusion rule is rejected as well.
 
     Low-point boxes are not filtered here, that is the job of the point-count filters
@@ -154,6 +156,7 @@ def resolve_box_class(
 
     Args:
         box: Stored box annotation.
+        class_names: Trained class names, in index order.
         ignore_label_index: Label index of a box whose class is not trained.
         filter_attributes: Normalized class and attribute exclusions.
 
@@ -162,14 +165,16 @@ def resolve_box_class(
     """
     if box.box3d_label_index == ignore_label_index:
         return None
-    if box.box3d_label_index < 0:
+    if not 0 <= box.box3d_label_index < len(class_names):
         raise ValueError(
             f"Box {box.box3d_instance_id} carries label index {box.box3d_label_index}, which is "
-            f"neither a class index nor the ignore index {ignore_label_index}."
+            f"neither an index of the {len(class_names)} classes nor the ignore index "
+            f"{ignore_label_index}."
         )
-    if _has_filtered_attribute(box.box3d_attributes, box.box3d_label_name, filter_attributes):
+    class_name = class_names[box.box3d_label_index]
+    if _has_filtered_attribute(box.box3d_attributes, class_name, filter_attributes):
         return None
-    return box.box3d_label_name
+    return class_name
 
 
 def _has_filtered_attribute(

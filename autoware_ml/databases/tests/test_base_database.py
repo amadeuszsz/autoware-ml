@@ -108,5 +108,5 @@ def test_unique_scenario_data_merges_the_groups(tmp_path) -> None:
 def test_invalid_definitions_are_rejected(tmp_path) -> None:
     with pytest.raises(ValueError, match="at least one scenario group"):
         FakeDatabase(records=[], scenarios={}, root_path=tmp_path, cache_path=tmp_path)
-    with pytest.raises(ValueError, match="at least one class name"):
+    with pytest.raises(ValueError, match="at least one"):
         make_database(tmp_path, [], class_names=())

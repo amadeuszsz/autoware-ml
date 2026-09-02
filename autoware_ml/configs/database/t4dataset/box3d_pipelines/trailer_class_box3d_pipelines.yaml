@@ -1,12 +1,5 @@
-# Box pipelines for a taxonomy that trains trailer as a class of its own: labels are
-# resolved and velocities clipped, no trailer is folded into a truck.
-- _target_: autoware_ml.databases.box3d_pipelines.box3d_label_remapper.Box3DLabelRemapper
-  _convert_: all
-
-  label_remapper: ${database.label_remapper}
-  class_names: ${database.class_names}
-  ignore_label_index: ${database.ignore_label_index}
-
+# Box pipelines for a taxonomy that trains trailer as a class of its own: velocities are
+# clipped and no trailer is folded into a truck.
 - _target_: autoware_ml.databases.box3d_pipelines.box3d_velocity_clip.Box3DVelocityNormClip
   _convert_: all
 

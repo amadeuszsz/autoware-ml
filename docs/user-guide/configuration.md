@@ -12,7 +12,7 @@ All configs live in `autoware_ml/configs/`:
 
 ```text
 configs/
-├── records/           # Record table definitions, one per corpus
+├── database/          # Databases, their taxonomies, scenario lists and box pipelines
 ├── datasets/          # Shared dataset parameters referenced by task configs
 ├── defaults/          # Base settings and module defaults
 ├── generators/        # Dataset record generation configs
@@ -115,24 +115,36 @@ defaults:
   - /database@database: t4dataset/t4dataset_j6gen2_base
 ```
 
-A database config names the scenario groups of the corpus, binds the taxonomy of the detection
-dataset package the task composes, and points at the record table location:
+A database config names the scenario groups of the corpus, binds the taxonomy its labels are
+baked with and the box pipelines, and points at the record table location:
 
 ```yaml
 _target_: autoware_ml.databases.t4dataset.t4database.T4Database
 defaults:
+  - /database/t4dataset/taxonomy@taxonomy: online
   - /database/t4dataset/box3d_pipelines@box3d_pipelines: default_box3d_pipelines
   - /database/t4dataset/scenarios@scenarios.db_j6gen2_base: detection3d/db_j6gen2_base
 root_path: ${data_root_path}/t4dataset/
 cache_path: ${cache_root_path}/t4dataset/
-class_names: ${t4dataset.detection3d.class_names}
-label_remapper: ${t4dataset.detection3d.name_mapping}
 ```
 
-Every task that binds a database composes the detection dataset package of its family, since
-the boxes of the record table are resolved against that taxonomy. Dataset packages are composed
-by the task alone, never by a database or a metrics package, so a taxonomy override in a task
-config applies to every database the task binds.
+The taxonomy is a config group under `configs/database/<family>/taxonomy/`, one file per level
+of granularity, each holding the detection and the segmentation classes of the level and how
+the fine labels of the family vocabulary fold onto them. The dataset packages read their class
+lists from the taxonomy of the database bound at `database`, so a task selects a level with
+one override and every consumer follows:
+
+```yaml
+defaults:
+  - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
+  - override /database/t4dataset/taxonomy@database.taxonomy: offline
+  - override /database/t4dataset/box3d_pipelines@database.box3d_pipelines: trailer_class_box3d_pipelines
+```
+
+The same override, passed on the command line of `generate-dataset`, builds the table that
+task reads. Every database a task binds must carry the same taxonomy, so a rehearsal database
+takes the override at its own binding as well. Dataset packages are composed by the task alone,
+never by a database or a metrics package.
 
 Record tables are written below `cache_root_path`, mounted with `--records-path` or
 `AUTOWARE_ML_RECORDS_PATH`, so the data mount can stay read only. The scenario lists are read

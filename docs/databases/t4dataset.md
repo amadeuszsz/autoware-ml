@@ -52,8 +52,9 @@ repository and the database config only names the datasets and their parameters.
   sensor frame into every sweep composed in double precision
 - the calibration of every lidar sensor of the scene, the segmentation category table, and
   every camera image of the sample with its intrinsics, distortion and poses
-- the class of every box, resolved by the box pipelines from the taxonomy of the dataset
-  config, and optionally the recounted number of lidar points inside every box
+- the fine label and the class index of every box, baked through the taxonomy and the box
+  pipelines of the database, and optionally the recounted number of lidar points inside
+  every box
 
 Every path in a record is relative to the database root. A missing file, a point cloud
 whose size does not match the declared feature count, or a mask whose length does not match

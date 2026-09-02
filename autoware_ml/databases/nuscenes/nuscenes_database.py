@@ -22,11 +22,13 @@ from typing import Mapping, Sequence
 import numpy as np
 
 from autoware_ml.databases.base_database import BaseDatabase, run_record_workers
+from autoware_ml.databases.box3d_pipelines.box3d_label_resolver import Box3DLabelResolver
 from autoware_ml.databases.box3d_pipelines.box3d_pipeline import Box3DPipeline
 from autoware_ml.databases.nuscenes.nuscenes_records_generator import NuscenesRecordsGenerator
 from autoware_ml.databases.nuscenes.nuscenes_scenarios import NuscenesScenarios
 from autoware_ml.databases.scenarios import ScenarioData
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord
+from autoware_ml.databases.taxonomy import DatabaseTaxonomy
 
 
 @dataclass(frozen=True)
@@ -38,15 +40,13 @@ class NuscenesRecordsGeneratorWorkerParams:
       database_root_path: Root path of the nuScenes database.
       nuscenes_version: Version of the nuScenes devkit tables.
       scenario_data: Scenario data of the scenes assigned to this worker.
-      ignore_label_index: Label index to use for ignored labels.
-      box3d_pipelines: List of box 3D pipelines to process the box 3D annotations.
+      box3d_label_resolver: Resolver baking the label of every box.
     """
 
     database_root_path: str
     nuscenes_version: str
     scenario_data: Sequence[ScenarioData]
-    ignore_label_index: int
-    box3d_pipelines: Sequence[Box3DPipeline]
+    box3d_label_resolver: Box3DLabelResolver
 
 
 def _apply_nuscenes_records_generator(
@@ -66,8 +66,7 @@ def _apply_nuscenes_records_generator(
         database_root_path=worker_params.database_root_path,
         version=worker_params.nuscenes_version,
         scenario_data=worker_params.scenario_data,
-        ignore_label_index=worker_params.ignore_label_index,
-        box3d_pipelines=worker_params.box3d_pipelines,
+        box3d_label_resolver=worker_params.box3d_label_resolver,
     )
     return generator.generate_dataset_records()
 
@@ -86,9 +85,7 @@ class NuscenesDatabase(BaseDatabase):
         cache_path: str,
         cache_file_prefix_name: str,
         num_workers: int,
-        class_names: Sequence[str],
-        label_remapper: Mapping[str, str],
-        ignore_label_index: int,
+        taxonomy: DatabaseTaxonomy,
         box3d_pipelines: Sequence[Box3DPipeline],
         nuscenes_version: str,
     ) -> None:
@@ -103,9 +100,8 @@ class NuscenesDatabase(BaseDatabase):
           cache_file_prefix_name: Prefix of the record table file.
           num_workers: Number of worker processes. Every worker loads its own devkit instance,
             so keep the count moderate.
-          class_names: Class names the box labels are resolved against.
-          label_remapper: Mapping from raw dataset label names to class names.
-          ignore_label_index: Label index of a box whose class is not trained.
+          taxonomy: Taxonomies the box labels are baked with and the mask categories are
+            resolved with.
           box3d_pipelines: Box pipelines applied to the box annotations of every sample.
           nuscenes_version: Version of the nuScenes devkit tables, for example v1.0-trainval.
         """
@@ -125,9 +121,7 @@ class NuscenesDatabase(BaseDatabase):
             cache_path=cache_path,
             cache_file_prefix_name=cache_file_prefix_name,
             num_workers=num_workers,
-            class_names=class_names,
-            label_remapper=label_remapper,
-            ignore_label_index=ignore_label_index,
+            taxonomy=taxonomy,
             box3d_pipelines=box3d_pipelines,
         )
 
@@ -162,8 +156,7 @@ class NuscenesDatabase(BaseDatabase):
                 database_root_path=str(self.root_path),
                 nuscenes_version=self._nuscenes_version,
                 scenario_data=list(chunk),
-                ignore_label_index=self.ignore_label_index,
-                box3d_pipelines=self.box3d_pipelines,
+                box3d_label_resolver=self.box3d_label_resolver,
             )
             for chunk in np.array_split(scenario_list, num_chunks)
         ]

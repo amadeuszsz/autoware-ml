@@ -225,16 +225,12 @@ def _record_sampling_categories(
     for box in record.boxes_3d if record.boxes_3d is not None else []:
         class_name = resolve_box_class(
             box,
+            class_names=frame_sampling.class_names,
             ignore_label_index=frame_sampling.ignore_label_index,
             filter_attributes=filter_attributes,
         )
         if class_name is None:
             continue
-        if class_name not in category_counts:
-            raise ValueError(
-                f"Box {box.box3d_instance_id} of sample {record.sample_id} carries class "
-                f"{class_name!r}, which is not one of the configured class names."
-            )
         params = sanitize_box_params(np.asarray(box.box3d_params, dtype=np.float64))
         if not box_is_physical(params):
             continue

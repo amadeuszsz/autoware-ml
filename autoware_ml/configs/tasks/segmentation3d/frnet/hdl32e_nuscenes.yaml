@@ -47,9 +47,7 @@ datamodule:
         sweeps_num: 1
         use_features: [x, y, z, intensity]
       - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
-        label_mapping: ${dataset.segmentation3d.seg_label_mapping}
-        max_label: ${dataset.segmentation3d.max_label}
-        ignore_index: ${dataset.segmentation3d.ignore_index}
+        taxonomy: ${database.taxonomy.segmentation3d}
       - _target_: autoware_ml.transforms.point_cloud.geometry.RandomFlip3D
         flip_ratio_bev_horizontal: 0.5
         flip_ratio_bev_vertical: 0.5
@@ -70,9 +68,7 @@ datamodule:
               sweeps_num: 1
               use_features: [x, y, z, intensity]
             - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
-              label_mapping: ${dataset.segmentation3d.seg_label_mapping}
-              max_label: ${dataset.segmentation3d.max_label}
-              ignore_index: ${dataset.segmentation3d.ignore_index}
+              taxonomy: ${database.taxonomy.segmentation3d}
             - _target_: autoware_ml.transforms.point_cloud.geometry.RandomFlip3D
               flip_ratio_bev_horizontal: 0.5
               flip_ratio_bev_vertical: 0.5
@@ -89,9 +85,7 @@ datamodule:
               sweeps_num: 1
               use_features: [x, y, z, intensity]
             - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
-              label_mapping: ${dataset.segmentation3d.seg_label_mapping}
-              max_label: ${dataset.segmentation3d.max_label}
-              ignore_index: ${dataset.segmentation3d.ignore_index}
+              taxonomy: ${database.taxonomy.segmentation3d}
             - _target_: autoware_ml.transforms.point_cloud.geometry.RandomFlip3D
               flip_ratio_bev_horizontal: 0.5
               flip_ratio_bev_vertical: 0.5
@@ -112,9 +106,7 @@ datamodule:
         sweeps_num: 1
         use_features: [x, y, z, intensity]
       - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
-        label_mapping: ${dataset.segmentation3d.seg_label_mapping}
-        max_label: ${dataset.segmentation3d.max_label}
-        ignore_index: ${dataset.segmentation3d.ignore_index}
+        taxonomy: ${database.taxonomy.segmentation3d}
       - _target_: autoware_ml.transforms.segmentation3d.range_view.RangeInterpolation
         height: ${range_height}
         width: ${range_width}

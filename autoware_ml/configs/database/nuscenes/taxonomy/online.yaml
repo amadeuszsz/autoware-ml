@@ -1,0 +1,65 @@
+# Online taxonomy of nuScenes: the vocabularies already name the trained classes, so the
+# coarsening is the identity. The segmentation class list keeps vertical_thin as a placeholder
+# no lidarseg category maps to.
+_target_: autoware_ml.databases.taxonomy.DatabaseTaxonomy
+_convert_: all
+
+defaults:
+  - /database/nuscenes/taxonomy/vocabulary@detection3d.vocabulary: detection3d
+  - /database/nuscenes/taxonomy/vocabulary@segmentation3d.vocabulary: segmentation3d
+  - _self_
+
+detection3d:
+  _target_: autoware_ml.databases.taxonomy.LabelTaxonomy
+  ignore_index: -1
+  class_names:
+    - car
+    - truck
+    - bus
+    - bicycle
+    - pedestrian
+    - traffic_cone
+    - barrier
+  coarsening:
+    car: car
+    truck: truck
+    bus: bus
+    bicycle: bicycle
+    pedestrian: pedestrian
+    traffic_cone: traffic_cone
+    barrier: barrier
+
+segmentation3d:
+  _target_: autoware_ml.databases.taxonomy.LabelTaxonomy
+  ignore_index: -1
+  class_names:
+    - car
+    - truck
+    - bus
+    - bicycle
+    - pedestrian
+    - traffic_cone
+    - barrier
+    - debris
+    - drivable_surface
+    - other_flat_surface
+    - vegetation
+    - manmade
+    - vertical_thin
+    - other_stuff
+    - noise
+  coarsening:
+    car: car
+    truck: truck
+    bus: bus
+    bicycle: bicycle
+    pedestrian: pedestrian
+    traffic_cone: traffic_cone
+    barrier: barrier
+    debris: debris
+    drivable_surface: drivable_surface
+    other_flat_surface: other_flat_surface
+    vegetation: vegetation
+    manmade: manmade
+    other_stuff: other_stuff
+    noise: noise

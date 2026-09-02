@@ -6,13 +6,12 @@
 # model. Runs on the 8x H200 training server (141 GB per GPU): a training
 # step on the densest 5 cm frame peaks around 55 GB.
 #
-# Shared pipeline taxonomy: this stage trains the same 47 segmentation
-# classes as the joint voxel005 variants (first 22 = the detection class
-# list), so the segmentation head transfers checkpoint-compatibly into the
-# pseudo and joint stages. The lidarseg corpus supplies 27 of the 47
-# (manmade folds to building, semi_trailer to trailer, tractor_unit to
-# truck; unpainted is the no-label marker and maps to ignore); the
-# remaining 20 classes are placeholders that later stages populate.
+# Offline taxonomy: the database is bound to the offline level, so this stage
+# trains the same 47 segmentation classes as the joint voxel005 variants
+# (first 22 = the detection class list) and the segmentation head transfers
+# checkpoint-compatibly into the pseudo and joint stages. The lidarseg corpus
+# supplies 27 of the 47, the remaining classes are placeholders that later
+# stages populate.
 #
 # The 5 cm grid keeps ~0.5M voxels per frame at the 122.88 m range; mixed
 # precision is required because a full-precision step exceeds even the
@@ -25,6 +24,8 @@
 
 defaults:
   - /tasks/segmentation3d/ptv3/voxel012_122m_t4dataset_j6gen2
+  - override /database/t4dataset/taxonomy@database.taxonomy: offline
+  - override /database/t4dataset/box3d_pipelines@database.box3d_pipelines: trailer_class_box3d_pipelines
   - _self_
 
 grid_size: 0.05
@@ -34,104 +35,6 @@ batch_size: 2
 
 t4dataset:
   segmentation3d:
-    # Shared pipeline segmentation vocabulary (order = training index);
-    # identical to the multi voxel005 list, detection prefix first.
-    class_names:
-      # detection prefix (identical to the joint variants' detection list)
-      - car
-      - truck
-      - trailer
-      - bus
-      - train
-      - construction_vehicle
-      - emergency_vehicle
-      - forklift
-      - other_vehicle
-      - motorcycle
-      - bicycle
-      - pedestrian
-      - personal_mobility
-      - animal
-      - barrier
-      - construction_sign
-      - traffic_cone
-      - debris
-      - pushable_pullable
-      - bicycle_rack
-      - open_door
-      - vehicle_protruding_object
-      # segmentation-only: vehicles
-      - fire_truck
-      - ambulance
-      - police_car
-      - kart
-      # segmentation-only: vulnerable road users
-      - stroller
-      # segmentation-only: clutter
-      - solid_stuff
-      - other_stuff
-      # segmentation-only: surfaces
-      - drivable_surface
-      - drainage
-      - sidewalk
-      - other_flat_surface
-      - high_curb
-      - low_curb
-      # segmentation-only: vegetation
-      - vegetation
-      # segmentation-only: structure
-      - building
-      - pole
-      - bollard
-      - traffic_light
-      - traffic_sign
-      - flag
-      # segmentation-only: spurious returns
-      - noise
-      - ghost_point
-      # segmentation-only: annotation markers, trained as-is
-      - background
-      - ego_vehicle
-      - out_of_sync
-    num_classes: 47
-    # Mapping scoped to the lidarseg corpus vocabulary (29 raw categories):
-    # identity where the raw name is a shared class, three folds where the
-    # names differ, and the no-label marker ignored. Shared classes this
-    # corpus does not contain stay empty placeholders. Every entry also
-    # overrides the canonical alias merged in from the dataset config.
-    name_mapping:
-      # identity
-      car: car
-      truck: truck
-      bus: bus
-      train: train
-      construction_vehicle: construction_vehicle
-      emergency_vehicle: emergency_vehicle
-      forklift: forklift
-      kart: kart
-      motorcycle: motorcycle
-      bicycle: bicycle
-      pedestrian: pedestrian
-      personal_mobility: personal_mobility
-      stroller: stroller
-      animal: animal
-      traffic_cone: traffic_cone
-      debris: debris
-      pushable_pullable: pushable_pullable
-      other_stuff: other_stuff
-      drivable_surface: drivable_surface
-      sidewalk: sidewalk
-      other_flat_surface: other_flat_surface
-      vegetation: vegetation
-      noise: noise
-      ghost_point: ghost_point
-      out_of_sync: out_of_sync
-      # name folds
-      manmade: building
-      semi_trailer: trailer
-      tractor_unit: truck
-      # no-label marker, not a class
-      unpainted: null
     # Behaviour taxonomy over the shared vocabulary; every class exactly once.
     class_groups:
       grouped_vehicle:
@@ -206,8 +109,7 @@ datamodule:
         sweep_selection: random
         time_lag_range: [0.05, 0.25]
       - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
-        class_mapping: ${dataset.segmentation3d.class_mapping}
-        ignore_index: ${dataset.segmentation3d.ignore_index}
+        taxonomy: ${database.taxonomy.segmentation3d}
       - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
         require_time_lag: true
       - _target_: autoware_ml.transforms.segmentation3d.formatting.PreparePointSegInput

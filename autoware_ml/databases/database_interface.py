@@ -28,6 +28,7 @@ import polars as pl
 
 from autoware_ml.databases.scenarios import ScenarioData, Scenarios
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord
+from autoware_ml.databases.taxonomy import DatabaseTaxonomy
 
 
 class DatabaseInterface(Protocol):
@@ -61,18 +62,8 @@ class DatabaseInterface(Protocol):
         ...
 
     @property
-    def class_names(self) -> Sequence[str]:
-        """Class names the box labels are resolved against."""
-        ...
-
-    @property
-    def label_remapper(self) -> Mapping[str, str]:
-        """Mapping from raw dataset label names to class names."""
-        ...
-
-    @property
-    def ignore_label_index(self) -> int:
-        """Label index of a box whose class is not trained."""
+    def taxonomy(self) -> DatabaseTaxonomy:
+        """Taxonomies the box labels are baked with and the mask categories are resolved with."""
         ...
 
     @property

@@ -14,10 +14,10 @@
 
 """Hydra and OmegaConf resolver registration for bundled Autoware-ML configs."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from typing import Any, cast
 
-from omegaconf import DictConfig, ListConfig, OmegaConf
+from omegaconf import ListConfig, OmegaConf
 
 
 def strip_tasks_prefix(config_name: str) -> str:
@@ -60,39 +60,22 @@ def merge_lists(*lists: Iterable[Any]) -> ListConfig:
     return cast(ListConfig, OmegaConf.create(merged))
 
 
-def raw_name_to_train_index(
-    name_mapping: Mapping[str, str | None], class_names, ignore_index: int = -1
-) -> DictConfig:
-    """Derive the raw category to training index map for segmentation loading.
+def list_length(items: Iterable[Any]) -> int:
+    """Return the number of elements of a list, so a count never drifts from its list::
 
-    ``name_mapping`` normalizes raw dataset categories to final class names,
-    where ``null`` drops a category. ``class_names`` is the ordered list of
-    trained classes, so a name's index is its position. A raw category whose
-    final name is ``null`` or absent from ``class_names`` maps to
-    ``ignore_index``. This way one mapping can also list categories a given
-    model does not train.
+        num_classes: ${list_length:${class_names}}
 
     Args:
-        name_mapping: Raw category name to final class name, ``null`` to drop.
-        class_names: Ordered final class names defining the training indices.
-        ignore_index: Index assigned to dropped and untrained categories.
+        items: List or list-like config.
 
     Returns:
-        Config mapping of raw category name to training index. A config node
-        is required here because in-place resolution writes the value back
-        into the tree.
+        The number of elements.
     """
-    index_of = {str(name): index for index, name in enumerate(class_names)}
-    mapping: dict[str, int] = {}
-    for raw, final in dict(name_mapping).items():
-        mapping[str(raw)] = (
-            int(ignore_index) if final is None else index_of.get(str(final), int(ignore_index))
-        )
-    return cast(DictConfig, OmegaConf.create(mapping))
+    return len(list(items))
 
 
 def register_config_resolvers() -> None:
     """Register all custom OmegaConf resolvers required by bundled configs."""
     OmegaConf.register_new_resolver("user_config_name", strip_tasks_prefix, replace=True)
-    OmegaConf.register_new_resolver("seg_class_mapping", raw_name_to_train_index, replace=True)
+    OmegaConf.register_new_resolver("list_length", list_length, replace=True)
     OmegaConf.register_new_resolver("merge_lists", merge_lists, replace=True)

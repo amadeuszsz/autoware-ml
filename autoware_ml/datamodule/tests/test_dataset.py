@@ -71,13 +71,16 @@ def test_source_without_det3d_supervision_empties_the_boxes() -> None:
     assert record.category_mapping is not None
 
 
-def test_source_without_seg3d_supervision_drops_the_category_mapping() -> None:
+def test_source_without_seg3d_supervision_empties_the_category_mapping() -> None:
     dataset = T4Dataset()
     dataset.assign_source_records([_source_records([_boxed_record("s0", "sample-0")], seg3d=False)])
 
     record, _ = dataset.load_record(0)
 
-    assert record.category_mapping is None
+    # An empty mapping sends every mask label to the ignore index while the mask still loads
+    assert record.category_mapping is not None
+    assert list(record.category_mapping.category_names) == []
+    assert list(record.category_mapping.category_indices) == []
     assert len(record.boxes_3d) == 1
 
 

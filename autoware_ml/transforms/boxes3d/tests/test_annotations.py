@@ -68,10 +68,14 @@ def test_box_is_physical_decisions() -> None:
     assert box_is_physical(fast_but_physical)
 
 
-def test_resolve_box_class_returns_the_stored_class() -> None:
-    box = make_box3d_data_model(label_name="pedestrian", label_index=6)
+CLASS_NAMES = ("car", "truck", "bus", "train", "motorcycle", "bicycle", "pedestrian")
 
-    assert resolve_box_class(box, ignore_label_index=-1) == "pedestrian"
+
+def test_resolve_box_class_returns_the_class_at_the_stored_index() -> None:
+    # The stored name is the fine label, the class comes from the index
+    box = make_box3d_data_model(label_name="construction_worker", label_index=6)
+
+    assert resolve_box_class(box, class_names=CLASS_NAMES, ignore_label_index=-1) == "pedestrian"
 
 
 def test_resolve_box_class_rejects_ignored_and_filtered_boxes() -> None:
@@ -81,19 +85,27 @@ def test_resolve_box_class_rejects_ignored_and_filtered_boxes() -> None:
     )
     filter_attributes = normalize_filter_attributes([["bicycle", "vehicle_state.parked"]])
 
-    assert resolve_box_class(ignored, ignore_label_index=-1) is None
+    assert resolve_box_class(ignored, class_names=CLASS_NAMES, ignore_label_index=-1) is None
     assert (
-        resolve_box_class(filtered, ignore_label_index=-1, filter_attributes=filter_attributes)
+        resolve_box_class(
+            filtered,
+            class_names=CLASS_NAMES,
+            ignore_label_index=-1,
+            filter_attributes=filter_attributes,
+        )
         is None
     )
-    assert resolve_box_class(filtered, ignore_label_index=-1) == "bicycle"
+    assert resolve_box_class(filtered, class_names=CLASS_NAMES, ignore_label_index=-1) == "bicycle"
 
 
-def test_resolve_box_class_rejects_an_undefined_negative_index() -> None:
-    box = make_box3d_data_model(label_index=-2)
+def test_resolve_box_class_rejects_an_index_outside_the_classes() -> None:
+    negative = make_box3d_data_model(label_index=-2)
+    beyond = make_box3d_data_model(label_index=len(CLASS_NAMES))
 
-    with pytest.raises(ValueError, match="neither a class index nor the ignore index"):
-        resolve_box_class(box, ignore_label_index=-1)
+    with pytest.raises(ValueError, match="neither an index"):
+        resolve_box_class(negative, class_names=CLASS_NAMES, ignore_label_index=-1)
+    with pytest.raises(ValueError, match="neither an index"):
+        resolve_box_class(beyond, class_names=CLASS_NAMES, ignore_label_index=-1)
 
 
 def test_normalize_filter_attributes_rejects_invalid_entries() -> None:

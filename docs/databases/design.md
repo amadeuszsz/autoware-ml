@@ -5,10 +5,10 @@ icon: lucide/database
 # Database Design
 
 A database describes one corpus: the scenario lists of every dataset it holds, the taxonomy
-its box labels are resolved against, and the box pipelines applied to every sample. From
-that description it generates a record table, a parquet file with one row per sample, named
-after the hash of the description, and reads the table back for training. The same scenario
-lists decide which records belong to train, val and test.
+its labels are baked with, and the box pipelines applied to every sample. From that
+description it generates a record table, a parquet file with one row per sample, named after
+the hash of the description, and reads the table back for training. The same scenario lists
+decide which records belong to train, val and test.
 
 ## Architecture Overview
 
@@ -26,8 +26,7 @@ classDiagram
         version
         root_path
         scenarios
-        class_names
-        label_remapper
+        taxonomy
         database_hash
         cache_file_path
         process_scenario_records()
@@ -40,6 +39,16 @@ classDiagram
         generate_records()
         process_scenario_records()
         load_polars_scenario_dataframe()
+    }
+
+    class taxonomy {
+        LabelVocabulary
+        LabelTaxonomy
+        DatabaseTaxonomy
+    }
+
+    class Box3DLabelResolver {
+        __call__()
     }
 
     class T4Database {
@@ -76,6 +85,8 @@ classDiagram
     T4Database --|> BaseDatabase : extends
     NuscenesDatabase --|> BaseDatabase : extends
     BaseDatabase --> scenarios : Scenarios per group
+    BaseDatabase --> taxonomy : DatabaseTaxonomy of both label spaces
+    BaseDatabase --> Box3DLabelResolver : bakes box labels through the pipelines
     BaseDatabase --> schemas : writes and reads DatasetRecord rows
     DataModule --> DatabaseInterface : generates and loads the table
     DataModule --> ScenarioSplitter : assigns records to splits
@@ -112,13 +123,28 @@ object has a deterministic string form because the database hash is built from i
 
 ### Taxonomy
 
-The class names and the raw label mapping a database resolves its boxes against come from
-the dataset config, the same values the metrics and the models read. The box pipelines run
-when the records are generated: the label remapper writes `box3d_label_name` and
-`box3d_label_index` into every box, a box outside the trained classes takes the ignore
-index, and the geometric pipelines merge or clip boxes where the dataset family needs it.
-Training reads the stored label and index as they are and only drops ignored boxes and the
-configured class and attribute exclusions.
+The database owns the label spaces of its corpus. A `LabelVocabulary` maps every raw label
+name of the dataset family onto a fine label name, the finest distinction the corpus supports.
+A `LabelTaxonomy` selects the classes trained at one level of granularity and folds every fine
+name onto one of them or drops it, so a level is a strict coarsening of the vocabulary and
+two levels never drift apart in how they read the raw labels. A `DatabaseTaxonomy` pairs the
+detection and the segmentation taxonomy of one level. Levels are config groups under
+`configs/database/<family>/taxonomy/`, a database config binds one of them and a task
+overrides the binding when it trains another level. The dataset packages read their class
+lists from the bound taxonomy, so the metrics, the models, the record table and the mask
+loading share one definition.
+
+Box labels are baked when the records are generated. The `Box3DLabelResolver` resolves the
+raw name of every box to its fine name, runs the box pipelines on the fine names, and assigns
+the class index of the level. Every table stores the fine name in `box3d_label_name` and the
+level index in `box3d_label_index`, so the finest label stays available whatever level the
+table was baked for, and a box outside the level takes the ignore index. A pipeline whose
+behaviour depends on label names validates the taxonomy: the trailer merger rejects a level
+that trains trailer as a class of its own. Masks are not baked, the loading transform
+resolves the category names of the record through the segmentation taxonomy of the same
+database. Training reads the stored index as it is and only drops ignored boxes and the
+configured class and attribute exclusions. Every database of a datamodule must carry the same
+taxonomy, a rehearsal corpus baked at another level is rejected at construction.
 
 ### Record table
 
@@ -171,8 +197,9 @@ perception-devops checkout below `working_dir`, and the table is written below
 | `autoware_ml/databases/database_interface.py`           | `DatabaseInterface` protocol                  |
 | `autoware_ml/databases/base_database.py`                | Shared `BaseDatabase` implementation          |
 | `autoware_ml/databases/scenarios.py`                    | `DatasetParams`, `ScenarioData`, `Scenarios`  |
+| `autoware_ml/databases/taxonomy.py`                     | Vocabulary and taxonomy of the label spaces   |
 | `autoware_ml/databases/schemas/`                        | Table and nested data model definitions       |
-| `autoware_ml/databases/box3d_pipelines/`                | Box pipelines run at generation               |
+| `autoware_ml/databases/box3d_pipelines/`                | Label resolver and box pipelines              |
 | `autoware_ml/databases/t4dataset/`                      | T4dataset database, scenarios and generator   |
 | `autoware_ml/databases/nuscenes/`                       | nuScenes database, scenarios and generator    |
 | `autoware_ml/datamodule/splitters/scenario_splitter.py` | Split assignment by scenario lists            |

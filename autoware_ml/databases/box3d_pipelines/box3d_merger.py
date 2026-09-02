@@ -12,45 +12,85 @@ from shapely.geometry import Polygon
 from autoware_ml.types.geometry import Box3DFieldIndex
 from autoware_ml.databases.box3d_pipelines.box3d_pipeline import Box3DPipeline
 from autoware_ml.databases.schemas.box3d_schemas import Box3DDataModel
+from autoware_ml.databases.taxonomy import LabelTaxonomy
 
 
 class Box3DMerger(Box3DPipeline):
     """
-    Base class for merging 3D bounding boxes.
+    Base class for merging 3D bounding boxes. The merger runs on fine label names: a pair of
+    boxes carrying the two source labels of a target is replaced by one box carrying the
+    target label, and the class index of the level is assigned afterwards.
     """
 
     def __init__(
         self,
         target_labels: MappingProxyType[str, Sequence[str]],
         proximity_distance_threshold: float,
-        class_names: Sequence[str],
     ):
         """
         Initialize Box3DMerger.
 
         Args:
-          target_classes: Mapping of the target classes to the list of source classes.
+          target_labels: Mapping of the target fine label to its two source fine labels. The
+            target is one of the two sources, the other source is absorbed into it.
           proximity_distance_threshold: Proximity distance threshold to check if two boxes are
             close to each other.
-          class_names: List of class names in the database, used for category mapping.
         """
         super().__init__()
         self.target_labels = target_labels
         self.proximity_distance_threshold = proximity_distance_threshold
-        self.class_names = class_names
-        self.label_indices = {label_name: index for index, label_name in enumerate(class_names)}
 
-        # Check if target labels are valid, it supports only two source labels for each target label
         for target_label, source_labels in self.target_labels.items():
             if len(source_labels) != 2:
                 raise ValueError(
                     f"Source labels for target label {target_label} "
                     f"must have exactly 2 labels, but it's {len(source_labels)}"
                 )
+            if target_label not in source_labels:
+                raise ValueError(
+                    f"Target label {target_label} must be one of its source labels "
+                    f"{list(source_labels)}."
+                )
 
-        assert self.proximity_distance_threshold > 0, (
-            "Proximity distance threshold must be positive"
-        )
+        if self.proximity_distance_threshold <= 0:
+            raise ValueError("Proximity distance threshold must be positive")
+
+    def absorbed_labels(self) -> Set[str]:
+        """
+        Fine labels the merger folds into another label.
+
+        Returns:
+          Set[str]: Source labels that differ from their target.
+        """
+
+        return {
+            source_label
+            for target_label, source_labels in self.target_labels.items()
+            for source_label in source_labels
+            if source_label != target_label
+        }
+
+    def validate_taxonomy(self, taxonomy: LabelTaxonomy) -> None:
+        """
+        Reject a taxonomy that trains an absorbed label as a class of its own, and a target
+        label the vocabulary does not know.
+
+        Args:
+          taxonomy: Taxonomy the boxes are baked with.
+        """
+
+        fine_names = set(taxonomy.vocabulary.fine_names)
+        unknown_targets = sorted(set(self.target_labels) - fine_names)
+        if unknown_targets:
+            raise ValueError(
+                f"Merger target labels {unknown_targets} are not fine labels of the vocabulary."
+            )
+        absorbed_classes = sorted(self.absorbed_labels() & set(taxonomy.class_names))
+        if absorbed_classes:
+            raise ValueError(
+                f"The merger absorbs {absorbed_classes}, which the taxonomy trains as classes "
+                f"of their own. Use the pipelines that keep them."
+            )
 
     def __call__(self, boxes3d_data_model: Sequence[Box3DDataModel]) -> Sequence[Box3DDataModel]:
         """
@@ -256,13 +296,15 @@ class Box3DMerger(Box3DPipeline):
                     second_box3d=boxes3d_data_model[box3d_idx_2].box3d_params,
                 )
 
-                # Always pick the first box's instance ID and dataset label name
+                # Always pick the first box's instance ID and dataset label name. The class
+                # index of the level is assigned after the pipelines, so the merged box keeps
+                # the placeholder index of the first box.
                 merged_box3d_instance_id = boxes3d_data_model[box3d_idx_1].box3d_instance_id
                 merged_box3d_dataset_label_name = boxes3d_data_model[
                     box3d_idx_1
                 ].box3d_dataset_label_name
                 merged_box3d_label_name = target_label
-                merged_box3d_label_index = self.label_indices[target_label]
+                merged_box3d_label_index = boxes3d_data_model[box3d_idx_1].box3d_label_index
                 merged_box3d_num_lidar_points = (
                     boxes3d_data_model[box3d_idx_1].box3d_num_lidar_points
                     + boxes3d_data_model[box3d_idx_2].box3d_num_lidar_points
@@ -328,22 +370,19 @@ class Box3DExtendLongerMerger(Box3DMerger):
         self,
         target_labels: MappingProxyType[str, Sequence[str]],
         proximity_distance_threshold: float,
-        class_names: Sequence[str],
     ):
         """
         Initialize Box3DExtendLongerMerger.
 
         Args:
-          target_labels: Mapping of the target classes to the list of source classes.
+          target_labels: Mapping of the target fine label to its two source fine labels.
           proximity_distance_threshold: Proximity distance threshold to check if two boxes are
             close to each other.
-          class_names: List of class names in the database, used for category mapping.
         """
 
         super().__init__(
             target_labels=target_labels,
             proximity_distance_threshold=proximity_distance_threshold,
-            class_names=class_names,
         )
 
     def __str__(self) -> str:
@@ -353,10 +392,13 @@ class Box3DExtendLongerMerger(Box3DMerger):
         Returns:
           str: String representation of the pipeline.
         """
+        target_labels = ", ".join(
+            f"{target_label}: {list(source_labels)}"
+            for target_label, source_labels in sorted(self.target_labels.items())
+        )
         return (
-            f"{self.__class__.__name__}(target_labels={self.target_labels}, "
-            f"proximity_distance_threshold={self.proximity_distance_threshold}, "
-            f"class_names={self.class_names})"
+            f"{self.__class__.__name__}(target_labels=({target_labels}), "
+            f"proximity_distance_threshold={self.proximity_distance_threshold})"
         )
 
     @staticmethod

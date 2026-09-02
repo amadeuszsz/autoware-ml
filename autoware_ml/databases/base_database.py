@@ -33,9 +33,11 @@ from typing import Mapping, Sequence, TypeVar
 import polars as pl
 from tqdm import tqdm
 
+from autoware_ml.databases.box3d_pipelines.box3d_label_resolver import Box3DLabelResolver
 from autoware_ml.databases.box3d_pipelines.box3d_pipeline import Box3DPipeline
 from autoware_ml.databases.scenarios import ScenarioData, Scenarios
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord, DatasetTableSchema
+from autoware_ml.databases.taxonomy import DatabaseTaxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +83,7 @@ class BaseDatabase:
         cache_path: str,
         cache_file_prefix_name: str,
         num_workers: int,
-        class_names: Sequence[str],
-        label_remapper: Mapping[str, str],
-        ignore_label_index: int,
+        taxonomy: DatabaseTaxonomy,
         box3d_pipelines: Sequence[Box3DPipeline],
     ) -> None:
         """
@@ -97,16 +97,14 @@ class BaseDatabase:
           cache_file_prefix_name: Prefix of the record table file, the file is
             <cache_file_prefix_name>_<database_hash>.parquet.
           num_workers: Number of worker processes used to generate the records.
-          class_names: Class names the box labels are resolved against.
-          label_remapper: Mapping from raw dataset label names to class names.
-          ignore_label_index: Label index of a box whose class is not trained.
-          box3d_pipelines: Box pipelines applied to the box annotations of every sample.
+          taxonomy: Taxonomies the box labels are baked with and the mask categories are
+            resolved with.
+          box3d_pipelines: Box pipelines applied to the box annotations of every sample,
+            between the resolution of the fine label names and of the class indices.
         """
 
         if not len(scenarios):
             raise ValueError("A database requires at least one scenario group.")
-        if not len(class_names):
-            raise ValueError("A database requires at least one class name.")
         if num_workers < 1:
             raise ValueError(f"num_workers must be at least 1, got {num_workers}.")
         if not cache_file_prefix_name:
@@ -118,10 +116,11 @@ class BaseDatabase:
         self._cache_path = Path(cache_path)
         self._cache_file_prefix_name = cache_file_prefix_name
         self._num_workers = num_workers
-        self._class_names = list(class_names)
-        self._label_remapper = dict(label_remapper)
-        self._ignore_label_index = ignore_label_index
+        self._taxonomy = taxonomy
         self._box3d_pipelines = list(box3d_pipelines)
+        self._box3d_label_resolver = Box3DLabelResolver(
+            taxonomy=taxonomy.detection3d, box3d_pipelines=self._box3d_pipelines
+        )
         logger.info(f"Database initialized: {self}")
 
     def description_fields(self) -> dict[str, str]:
@@ -141,9 +140,7 @@ class BaseDatabase:
             "root_path": str(self._root_path),
             "cache_path": str(self._cache_path),
             "cache_file_prefix_name": self._cache_file_prefix_name,
-            "class_names": str(self._class_names),
-            "label_remapper": str(self._label_remapper),
-            "ignore_label_index": str(self._ignore_label_index),
+            "taxonomy": str(self._taxonomy),
             "box3d_pipelines": f"[{', '.join(str(pipeline) for pipeline in self._box3d_pipelines)}]",
             "scenarios": f"({scenarios})",
         }
@@ -205,24 +202,19 @@ class BaseDatabase:
         return self._scenarios
 
     @property
-    def class_names(self) -> Sequence[str]:
-        """Class names the box labels are resolved against."""
-        return self._class_names
-
-    @property
-    def label_remapper(self) -> Mapping[str, str]:
-        """Mapping from raw dataset label names to class names."""
-        return self._label_remapper
-
-    @property
-    def ignore_label_index(self) -> int:
-        """Label index of a box whose class is not trained."""
-        return self._ignore_label_index
+    def taxonomy(self) -> DatabaseTaxonomy:
+        """Taxonomies the box labels are baked with and the mask categories are resolved with."""
+        return self._taxonomy
 
     @property
     def box3d_pipelines(self) -> Sequence[Box3DPipeline]:
         """Box pipelines applied to the box annotations of every sample."""
         return self._box3d_pipelines
+
+    @property
+    def box3d_label_resolver(self) -> Box3DLabelResolver:
+        """Resolver baking the label of every box through the taxonomy and the pipelines."""
+        return self._box3d_label_resolver
 
     @property
     def database_hash(self) -> str:

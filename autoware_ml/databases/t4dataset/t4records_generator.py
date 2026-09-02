@@ -44,7 +44,7 @@ from t4_devkit.schema import (
     SensorModality,
 )
 
-from autoware_ml.databases.box3d_pipelines.box3d_pipeline import Box3DPipeline
+from autoware_ml.databases.box3d_pipelines.box3d_label_resolver import Box3DLabelResolver
 from autoware_ml.databases.scenarios import ScenarioData
 from autoware_ml.databases.schemas.box3d_schemas import Box3DDataModel
 from autoware_ml.databases.schemas.camera_frames import CameraFrameDataModel
@@ -72,8 +72,7 @@ class T4RecordsGenerator:
         database_root_path: str,
         scenario_data: ScenarioData,
         lidar_channel: str,
-        ignore_label_index: int,
-        box3d_pipelines: Sequence[Box3DPipeline],
+        box3d_label_resolver: Box3DLabelResolver,
         recompute_boxes3d_lidar_points_num: bool,
     ) -> None:
         """
@@ -83,8 +82,8 @@ class T4RecordsGenerator:
           database_root_path: Root path of the T4 database.
           scenario_data: Scenario to extract, carrying the parameters of its dataset.
           lidar_channel: Sensor channel of the lidar frame every sample is built around.
-          ignore_label_index: Label index to use for ignored labels in the box3d annotations.
-          box3d_pipelines: List of box3d pipelines to process the box3d annotations.
+          box3d_label_resolver: Resolver baking the label of every box through the taxonomy
+            and the box pipelines.
           recompute_boxes3d_lidar_points_num: Whether to recount the lidar points inside every
             box from the point cloud, after the pipelines ran. This reads every point cloud
             and slows generation down considerably.
@@ -93,8 +92,7 @@ class T4RecordsGenerator:
         self.database_root_path = Path(database_root_path)
         self.scenario_data = scenario_data
         self.lidar_channel = lidar_channel
-        self.ignore_label_index = ignore_label_index
-        self.box3d_pipelines = box3d_pipelines
+        self.box3d_label_resolver = box3d_label_resolver
         self.recompute_boxes3d_lidar_points_num = recompute_boxes3d_lidar_points_num
         self.num_features = scenario_data.lidar_pointcloud_num_features
         if scenario_data.sample_steps < 1:
@@ -441,8 +439,7 @@ class T4RecordsGenerator:
             self._build_box_3d(annotation_token, box)
             for annotation_token, box in zip(sample.ann_3ds, boxes, strict=True)
         ]
-        for box3d_pipeline in self.box3d_pipelines:
-            boxes_3d = box3d_pipeline(boxes_3d)
+        boxes_3d = self.box3d_label_resolver(boxes_3d)
         if self.recompute_boxes3d_lidar_points_num:
             boxes_3d = self._recount_lidar_points(boxes_3d, lidar_frame)
         return boxes_3d
@@ -481,8 +478,8 @@ class T4RecordsGenerator:
             box3d_instance_id=annotation.instance_token,
             box3d_dataset_label_name=box.semantic_label.name,
             box3d_label_name=box.semantic_label.name,
-            # The label pipelines resolve the trained class, every box starts ignored
-            box3d_label_index=self.ignore_label_index,
+            # The label resolver bakes the fine name and the class, every box starts ignored
+            box3d_label_index=self.box3d_label_resolver.ignore_index,
             box3d_num_lidar_points=int(annotation.num_lidar_pts),
             box3d_num_radar_points=int(annotation.num_radar_pts),
             box3d_valid=annotation.num_lidar_pts > 0,

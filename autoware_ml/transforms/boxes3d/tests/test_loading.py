@@ -27,6 +27,21 @@ from autoware_ml.testing.factories import make_box3d_data_model, make_record, ma
 from autoware_ml.transforms.boxes3d.loading import LoadDet3DAnnotations
 
 IGNORE = -1
+CLASS_NAMES = (
+    "car",
+    "truck",
+    "bus",
+    "train",
+    "motorcycle",
+    "bicycle",
+    "pedestrian",
+    "animal",
+    "barrier",
+    "traffic_cone",
+    "debris",
+    "bicycle_rack",
+    "vehicle_extension",
+)
 
 
 def _sample(boxes: Sequence[Box3DDataModel]) -> Sample:
@@ -34,7 +49,9 @@ def _sample(boxes: Sequence[Box3DDataModel]) -> Sample:
 
 
 def _load(sample: Sample, **kwargs) -> Sample:
-    return LoadDet3DAnnotations(ignore_label_index=IGNORE, **kwargs)(sample)
+    return LoadDet3DAnnotations(class_names=CLASS_NAMES, ignore_label_index=IGNORE, **kwargs)(
+        sample
+    )
 
 
 def test_load_annotations3d_builds_detection_targets_from_the_stored_labels() -> None:
@@ -143,7 +160,7 @@ def test_load_annotations3d_filters_class_attributes() -> None:
 def test_load_annotations3d_rejects_an_undefined_label_index() -> None:
     sample = _sample([make_box3d_data_model(label_index=-7)])
 
-    with pytest.raises(ValueError, match="neither a class index nor the ignore index"):
+    with pytest.raises(ValueError, match="neither an index"):
         _load(sample)
 
 

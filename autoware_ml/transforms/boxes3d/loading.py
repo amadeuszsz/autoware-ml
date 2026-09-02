@@ -34,24 +34,30 @@ from autoware_ml.transforms.boxes3d.annotations import (
 class LoadDet3DAnnotations(BaseTransform):
     """Load the 3D box annotations of the sample record into detection targets.
 
-    The record carries the class of every box already resolved by the database pipelines.
+    The record carries the class index of every box already baked by the database taxonomy.
     The transform drops the boxes outside the trained classes, the boxes matching a class and
     attribute exclusion, and the boxes whose parameters are not physically trainable, and
-    packs the survivors into the boxes of the sample with the stored label index.
+    packs the survivors into the boxes of the sample with the stored label index and the
+    trained class name at that index.
     """
 
     def __init__(
         self,
         *,
+        class_names: Sequence[str],
         ignore_label_index: int,
         filter_attributes: Sequence[Sequence[str]] | None = None,
     ) -> None:
         """Initialize the LoadDet3DAnnotations transform.
 
         Args:
+            class_names: Trained class names, in index order.
             ignore_label_index: Label index of a box whose class is not trained.
             filter_attributes: Class and attribute name pairs whose boxes are dropped.
         """
+        if not len(class_names):
+            raise ValueError("LoadDet3DAnnotations requires at least one class name.")
+        self.class_names = tuple(class_names)
         self.ignore_label_index = ignore_label_index
         self.filter_attributes = normalize_filter_attributes(filter_attributes)
 
@@ -77,6 +83,7 @@ class LoadDet3DAnnotations(BaseTransform):
         for box in boxes_3d:
             class_name = resolve_box_class(
                 box,
+                class_names=self.class_names,
                 ignore_label_index=self.ignore_label_index,
                 filter_attributes=self.filter_attributes,
             )

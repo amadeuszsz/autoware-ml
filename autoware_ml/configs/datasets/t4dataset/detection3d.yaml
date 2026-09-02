@@ -4,84 +4,11 @@ defaults:
   - /datasets/t4dataset/base
   - _self_
 
-class_names:
-  - car
-  - truck
-  - bus
-  - train
-  - motorcycle
-  - bicycle
-  - pedestrian
-  - animal
-  - barrier
-  - traffic_cone
-  - debris
-  - bicycle_rack
-  - vehicle_extension
-num_classes: 13
-name_mapping:
-  # vehicles
-  car: car
-  vehicle.car: car
-  forklift: car
-  kart: car
-  other_vehicle: car
-  police_car: car
-  vehicle.police: car
-  ambulance: car
-  vehicle.ambulance: car
-  "vehicle.emergency (ambulance & police)": car
-  emergency_vehicle: car
-  truck: truck
-  vehicle.truck: truck
-  tractor_unit: truck
-  construction_vehicle: truck
-  vehicle.construction: truck
-  fire_truck: truck
-  vehicle.fire: truck
-  trailer: trailer
-  vehicle.trailer: trailer
-  semi_trailer: trailer
-  bus: bus
-  vehicle.bus: bus
-  "vehicle.bus (bendy & rigid)": bus
-  train: train
-  vehicle.train: train
-  motorcycle: motorcycle
-  vehicle.motorcycle: motorcycle
-  bicycle: bicycle
-  vehicle.bicycle: bicycle
-  # vulnerable road users
-  pedestrian: pedestrian
-  pedestrian.adult: pedestrian
-  pedestrian.child: pedestrian
-  other_pedestrian: pedestrian
-  police_officer: pedestrian
-  pedestrian.police_officer: pedestrian
-  construction_worker: pedestrian
-  pedestrian.construction_worker: pedestrian
-  personal_mobility: pedestrian
-  pedestrian.personal_mobility: pedestrian
-  wheelchair: pedestrian
-  pedestrian.wheelchair: pedestrian
-  stroller: pedestrian
-  pedestrian.stroller: pedestrian
-  animal: animal
-  # static objects
-  barrier: barrier
-  movable_object.barrier: barrier
-  construction_sign: barrier
-  traffic_cone: traffic_cone
-  trafficcone: traffic_cone
-  movable_object.traffic_cone: traffic_cone
-  movable_object.trafficcone: traffic_cone
-  debris: debris
-  movable_object.debris: debris
-  pushable_pullable: debris
-  movable_object.pushable_pullable: debris
-  bicycle_rack: bicycle_rack
-  vehicle_protruding_object: vehicle_extension
-  open_door: vehicle_extension
+# The trained classes come from the detection taxonomy the database is bound to, so the
+# metrics, the models and the record table share one class list.
+class_names: ${database.taxonomy.detection3d.class_names}
+num_classes: ${list_length:${t4dataset.detection3d.class_names}}
+ignore_index: ${database.taxonomy.detection3d.ignore_index}
 # Class and attribute pairs dropped from the detection targets, keyed by the trained class.
 # Parked and rider-less two-wheelers are excluded under both the current and the older
 # attribute spellings.

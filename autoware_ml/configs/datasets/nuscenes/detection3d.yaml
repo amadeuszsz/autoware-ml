@@ -4,31 +4,11 @@ defaults:
   - /datasets/nuscenes/base
   - _self_
 
-class_names:
-  - car
-  - truck
-  - bus
-  - bicycle
-  - pedestrian
-  - traffic_cone
-  - barrier
-num_classes: 7
-# Raw nuScenes category to trained class. A category outside this mapping, such as
-# vehicle.trailer, keeps its name and takes the ignore index.
-name_mapping:
-  vehicle.car: car
-  vehicle.truck: truck
-  vehicle.construction: truck
-  vehicle.bus.bendy: bus
-  vehicle.bus.rigid: bus
-  vehicle.bicycle: bicycle
-  vehicle.motorcycle: bicycle
-  human.pedestrian.adult: pedestrian
-  human.pedestrian.child: pedestrian
-  human.pedestrian.construction_worker: pedestrian
-  human.pedestrian.police_officer: pedestrian
-  movable_object.trafficcone: traffic_cone
-  movable_object.barrier: barrier
+# The trained classes come from the detection taxonomy the database is bound to, so the
+# metrics, the models and the record table share one class list.
+class_names: ${database.taxonomy.detection3d.class_names}
+num_classes: ${list_length:${nuscenes.detection3d.class_names}}
+ignore_index: ${database.taxonomy.detection3d.ignore_index}
 filter_attributes: []
 eval_class_range:
   car: 50.0
