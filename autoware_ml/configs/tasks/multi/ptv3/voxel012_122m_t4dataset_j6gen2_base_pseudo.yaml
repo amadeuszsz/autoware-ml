@@ -14,9 +14,9 @@ defaults:
 
 # The auto-label generator writes canonical-style category names into the
 # pseudo masks (driveable_flat, non_driveable_flat, vehicle_extension, ignored,
-# ...). Those names are absorbed by the base t4 segmentation3d name_mapping, so
-# this stage needs no per-config class remapping. It inherits the derived
-# class_mapping and behaviour groups unchanged.
+# ...). Those names are absorbed by the segmentation vocabulary of the database
+# taxonomy, so this stage needs no per-config class remapping and inherits the
+# online taxonomy and the behaviour groups unchanged.
 
 datamodule:
   # Training mixes the pseudo corpus with the rehearsed seg3d GT frames.
