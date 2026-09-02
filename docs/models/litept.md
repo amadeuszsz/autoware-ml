@@ -50,15 +50,20 @@ operator calls `rope_freq`. This is a hyperparameter and needs tuning.
 
 ## Available Configurations
 
-| Config Name                                            | Task                         | Dataset   | Head        | Range | Purpose                        |
-| ------------------------------------------------------ | ---------------------------- | --------- | ----------- | ----- | ------------------------------ |
-| `segmentation3d/litept/voxel012_122m_t4dataset_j6gen2` | segmentation3d               | T4Dataset | Seg decoder | 122 m | T4Dataset segmentation         |
-| `multi/litept/voxel012_122m_t4dataset_j6gen2`          | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Joint segmentation + detection |
+| Config Name                                               | Task                         | Dataset   | Head        | Range | Purpose                                      |
+| --------------------------------------------------------- | ---------------------------- | --------- | ----------- | ----- | -------------------------------------------- |
+| `segmentation3d/litept/voxel012_122m_t4dataset_j6gen2`    | segmentation3d               | T4Dataset | Seg decoder | 122 m | T4Dataset segmentation                       |
+| `detection3d/litept/voxel012_122m_t4dataset_j6gen2`       | detection3d                  | T4Dataset | TransFusion | 122 m | T4Dataset detection                          |
+| `multi/litept/voxel012_122m_t4dataset_j6gen2`             | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Joint segmentation + detection               |
+| `multi/litept/voxel012_122m_t4dataset_base_pseudo`        | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Pretraining on the pseudo labelled base set  |
+| `multi/litept/voxel012_122m_t4dataset_j6gen2_base_pseudo` | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Joint training on the pseudo labelled J6 set |
 
 Each inherits dataset, transforms, optimizer and deploy settings from the PTv3
-config of the same name and swaps only the encoder and the decoder head.
+config of the same name and swaps only the encoder and, where the model has one,
+the decoder head. The pseudo stages inherit the pseudo labelled sources and the
+rehearsal database of their PTv3 counterparts the same way.
 
-Both come in the two scales [PTv3](ptv3.md) uses. `base` is the published LitePT
+All come in the two scales [PTv3](ptv3.md) uses. `base` is the published LitePT
 parametrization: 18 channels per attention head and a decoder that only unpools.
 `tiny` is PTv3-tiny with the gating applied and nothing else changed, so the two
 stay directly comparable - its decoder keeps PTv3-tiny's blocks and runs them

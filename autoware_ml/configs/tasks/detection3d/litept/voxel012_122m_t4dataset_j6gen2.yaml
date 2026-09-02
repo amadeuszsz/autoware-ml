@@ -1,0 +1,5 @@
+# @package _global_
+defaults:
+  - /tasks/detection3d/ptv3/voxel012_122m_t4dataset_j6gen2
+  - /tasks/segmentation3d/litept/encoder_tiny
+  - _self_
