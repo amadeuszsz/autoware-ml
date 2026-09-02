@@ -1,0 +1,239 @@
+# @package _global_
+
+# High-capacity teacher variant used for distillation and pseudo labeling,
+# not for deployment. Encoder and decoder are the exact utonia (PT-v3m3)
+# architecture so results stay directly comparable with the published
+# model. Runs on the 8x H200 training server (141 GB per GPU): a training
+# step on the densest 5 cm frame peaks around 55 GB.
+#
+# Shared pipeline taxonomy: this stage trains the same 47 segmentation
+# classes as the joint voxel005 variants (first 22 = the detection class
+# list), so the segmentation head transfers checkpoint-compatibly into the
+# pseudo and joint stages. The lidarseg corpus supplies 27 of the 47
+# (manmade folds to building, semi_trailer to trailer, tractor_unit to
+# truck; unpainted is the no-label marker and maps to ignore); the
+# remaining 20 classes are placeholders that later stages populate.
+#
+# The 5 cm grid keeps ~0.5M voxels per frame at the 122.88 m range; mixed
+# precision is required because a full-precision step exceeds even the
+# H200 headroom on dense frames. Per-GPU batch 2 (the utonia-sized model
+# measured ~67 GB per H200 at batch 1) with gradient accumulation of 8
+# keeps the production effective batch (2 x 8 x 8 = 128 = 16 x 8) and,
+# with SyncBatchNorm, gives BatchNorm 16 scenes per step, production
+# parity. The train pipeline is restated only to scale RandomJitter to the
+# finer grid, mirroring the 0.05-grid values of the nuScenes config.
+
+defaults:
+  - /tasks/segmentation3d/ptv3/voxel012_122m_t4dataset_j6gen2
+  - _self_
+
+grid_size: 0.05
+max_voxels: 1200000
+
+batch_size: 2
+
+t4dataset:
+  segmentation3d:
+    # Shared pipeline segmentation vocabulary (order = training index);
+    # identical to the multi voxel005 list, detection prefix first.
+    class_names:
+      # detection prefix (identical to the joint variants' detection list)
+      - car
+      - truck
+      - trailer
+      - bus
+      - train
+      - construction_vehicle
+      - emergency_vehicle
+      - forklift
+      - other_vehicle
+      - motorcycle
+      - bicycle
+      - pedestrian
+      - personal_mobility
+      - animal
+      - barrier
+      - construction_sign
+      - traffic_cone
+      - debris
+      - pushable_pullable
+      - bicycle_rack
+      - open_door
+      - vehicle_protruding_object
+      # segmentation-only: vehicles
+      - fire_truck
+      - ambulance
+      - police_car
+      - kart
+      # segmentation-only: vulnerable road users
+      - stroller
+      # segmentation-only: clutter
+      - solid_stuff
+      - other_stuff
+      # segmentation-only: surfaces
+      - drivable_surface
+      - drainage
+      - sidewalk
+      - other_flat_surface
+      - high_curb
+      - low_curb
+      # segmentation-only: vegetation
+      - vegetation
+      # segmentation-only: structure
+      - building
+      - pole
+      - bollard
+      - traffic_light
+      - traffic_sign
+      - flag
+      # segmentation-only: spurious returns
+      - noise
+      - ghost_point
+      # segmentation-only: annotation markers, trained as-is
+      - background
+      - ego_vehicle
+      - out_of_sync
+    num_classes: 47
+    # Mapping scoped to the lidarseg corpus vocabulary (29 raw categories):
+    # identity where the raw name is a shared class, three folds where the
+    # names differ, and the no-label marker ignored. Shared classes this
+    # corpus does not contain stay empty placeholders. Every entry also
+    # overrides the canonical alias merged in from the dataset config.
+    name_mapping:
+      # identity
+      car: car
+      truck: truck
+      bus: bus
+      train: train
+      construction_vehicle: construction_vehicle
+      emergency_vehicle: emergency_vehicle
+      forklift: forklift
+      kart: kart
+      motorcycle: motorcycle
+      bicycle: bicycle
+      pedestrian: pedestrian
+      personal_mobility: personal_mobility
+      stroller: stroller
+      animal: animal
+      traffic_cone: traffic_cone
+      debris: debris
+      pushable_pullable: pushable_pullable
+      other_stuff: other_stuff
+      drivable_surface: drivable_surface
+      sidewalk: sidewalk
+      other_flat_surface: other_flat_surface
+      vegetation: vegetation
+      noise: noise
+      ghost_point: ghost_point
+      out_of_sync: out_of_sync
+      # name folds
+      manmade: building
+      semi_trailer: trailer
+      tractor_unit: truck
+      # no-label marker, not a class
+      unpainted: null
+    # Behaviour taxonomy over the shared vocabulary; every class exactly once.
+    class_groups:
+      grouped_vehicle:
+        [car, truck, trailer, bus, train, construction_vehicle, fire_truck,
+         ambulance, police_car, emergency_vehicle, forklift, kart,
+         other_vehicle, open_door, vehicle_protruding_object]
+      grouped_two_wheeler: [motorcycle, bicycle]
+      grouped_pedestrian_animal: [pedestrian, personal_mobility, stroller, animal]
+      grouped_static_obstacle: [barrier, construction_sign, traffic_cone]
+      grouped_debris: [debris, pushable_pullable]
+      grouped_static_clutter: [solid_stuff, other_stuff]
+      grouped_flat:
+        [drivable_surface, drainage, sidewalk, other_flat_surface, high_curb, low_curb]
+      grouped_vegetation: [vegetation]
+      grouped_structure:
+        [building, pole, bollard, traffic_light, traffic_sign, flag, bicycle_rack]
+      grouped_noise: [noise, ghost_point]
+      grouped_marker: [background, ego_vehicle, out_of_sync]
+
+model:
+  # From-scratch divergence fix (NaN at epoch 15 of the first H200 run):
+  # the inherited peak of 0.002 comes from a fine-tune recipe and, at the
+  # large effective batch, warmed up in ~50 optimizer steps. Halve the
+  # OneCycle peak and stretch the warmup for the 236M from-scratch model.
+  optimizer:
+    lr: 0.001
+  optimizer_group_overrides:
+    block:
+      lr: 0.0001
+  scheduler:
+    max_lr: [0.001, 0.0001]
+    pct_start: 0.1
+  # Exact utonia (PT-v3m3) architecture so results stay directly
+  # comparable with the published model.
+  encoder:
+    enc_depths: [3, 3, 3, 12, 3]
+    enc_channels: [54, 108, 216, 432, 576]
+    enc_num_head: [3, 6, 12, 24, 32]
+    enc_patch_size: [1024, 1024, 1024, 1024, 1024]
+  seg3d_head:
+    dec_depths: [2, 2, 2, 2]
+    dec_channels: [54, 108, 216, 432]
+    dec_num_head: [3, 6, 12, 24]
+    dec_patch_size: [1024, 1024, 1024, 1024]
+
+trainer:
+  # fp16, not bf16: the GradScaler skips non-finite steps so a freak batch
+  # cannot poison the weights (a bf16 run has no scaler and died from one
+  # such step), and it keeps a single numeric range end-to-end: spconv's
+  # train path always computes its convolutions in fp16, so bf16-grown
+  # activations would overflow inside that island anyway. The fp16 recipe
+  # is viable here only together with the cooled schedule (halved peak,
+  # stretched warmup), SyncBatchNorm, and tightened clipping below.
+  precision: 16-mixed
+  accumulate_grad_batches: 8
+  # The encoder stem/pooling/unpooling use BatchNorm; at batch 1 per GPU
+  # each rank would estimate statistics from a single scene and validation
+  # (running stats) becomes unstable, so pool the statistics across ranks.
+  sync_batchnorm: true
+  # Tighter than the inherited 10.0: at batch 1 a single spiky step can
+  # poison the Adam moments for many steps after it.
+  gradient_clip_val: 5.0
+
+datamodule:
+  train_transforms:
+    _target_: autoware_ml.transforms.base.TransformsCompose
+    pipeline:
+      - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+        sweeps_num: 2
+        use_features: [x, y, z, intensity, timestamp_difference]
+        remove_close: true
+        sweep_selection: random
+        time_lag_range: [0.05, 0.25]
+      - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
+        class_mapping: ${dataset.segmentation3d.class_mapping}
+        ignore_index: ${dataset.segmentation3d.ignore_index}
+      - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
+        require_time_lag: true
+      - _target_: autoware_ml.transforms.segmentation3d.formatting.PreparePointSegInput
+        ignore_index: ${dataset.segmentation3d.ignore_index}
+      - _target_: autoware_ml.transforms.point_cloud.geometry.RandomRotateTargetAngle
+        p: 0.75
+        angle: [0.5, 1.0, 1.5]
+        center: [0.0, 0.0, 0.0]
+      - _target_: autoware_ml.transforms.point_cloud.geometry.GlobalRotScaleTrans
+        rot_range: [-3.14159, 3.14159]
+        scale_ratio_range: [0.9, 1.1]
+        translation_std: [0.5, 0.5, 0.2]
+      - _target_: autoware_ml.transforms.point_cloud.geometry.RandomFlip3D
+        flip_ratio_bev_horizontal: 0.5
+        flip_ratio_bev_vertical: 0.5
+      - _target_: autoware_ml.transforms.point_cloud.perturbation.RandomJitter
+        sigma: 0.005
+        clip: 0.02
+      - _target_: autoware_ml.transforms.point_cloud.crop.PointsRangeFilter
+        point_cloud_range: ${point_cloud_range}
+      - _target_: autoware_ml.transforms.point_cloud.sampling.RandomDropout
+        p: 0.5
+        dropout_ratio: 0.2
+      - _target_: autoware_ml.transforms.point_cloud.perturbation.RandomStrengthJitter
+        gamma_range: [0.8, 1.25]
+        scale_range: [0.9, 1.1]
+        shift_range: [-0.02, 0.02]
+      - _target_: autoware_ml.transforms.common.packing.BuildPointFeatures
+        feature_names: [x, y, z, intensity, timestamp_difference]

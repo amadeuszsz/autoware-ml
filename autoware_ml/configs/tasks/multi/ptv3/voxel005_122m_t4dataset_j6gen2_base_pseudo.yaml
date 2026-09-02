@@ -1,0 +1,81 @@
+# @package _global_
+
+# Stage 3 of the voxel005 teacher pipeline (seg3d -> base pseudo -> THIS ->
+# j6gen2 joint): joint training on the 60k j6gen2 base set (det3d GT + pseudo
+# seg3d) with the j6gen2 seg3d GT frames rehearsed in (det loss masked).
+# Inherits the architecture, geometry, precision, and the shared pipeline
+# taxonomy from the j6gen2 joint voxel005 config; the mapping block below
+# scopes to the pseudo-corpus vocabulary (rehearsal frames are covered by the
+# seg3d-stage names, which the canonical dataset aliases absorb). Initialized
+# from the stage-2 checkpoint, so the det branch is no longer random: warmup
+# shrinks and the schedule mirrors the voxel012 j6gen2 base pseudo stage.
+
+defaults:
+  - /tasks/multi/ptv3/voxel005_122m_t4dataset_j6gen2
+  - /database@rehearsal_database: t4dataset/t4dataset_j6gen2_semaseg
+  - override /database@database: t4dataset/t4dataset_j6gen2_base_pseudo
+  - _self_
+
+t4dataset:
+  detection3d:
+    # Pseudo-corpus detection vocabulary is the canonical 13-class set;
+    # twelve are shared classes already covered by the inherited identity
+    # mapping, only vehicle_extension needs a fold.
+    name_mapping:
+      vehicle_extension: vehicle_protruding_object
+  segmentation3d:
+    # Pseudo-generator vocabulary: shared names (building, vegetation,
+    # noise, ghost_point, ego_vehicle, detection classes) ride the
+    # inherited identity mapping; each coarse category folds into one
+    # member of its behaviour group so grouped metrics absorb the fold;
+    # 'ignored' keeps the inherited ignore marker.
+    name_mapping:
+      driveable_flat: drivable_surface
+      non_driveable_flat: other_flat_surface
+      vertical_thin: pole
+      static_clutter: other_stuff
+      vehicle_extension: vehicle_protruding_object
+      # rehearsal-corpus folds (lidarseg vocabulary, same as the seg3d
+      # stage; the canonical semi_trailer alias would fold to truck and
+      # diverge from stage 1)
+      manmade: building
+      semi_trailer: trailer
+      tractor_unit: truck
+      unpainted: null
+
+datamodule:
+  # Training mixes the pseudo corpus with the rehearsed seg3d GT frames.
+  # Validation and test score detection on the pseudo corpus boxes and
+  # segmentation on the GT masks only, each frame once.
+  train_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: true
+      repeat: 1
+    - database: ${rehearsal_database}
+      det3d: false
+      seg3d: true
+      repeat: 6
+  val_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: false
+      repeat: 1
+    - database: ${rehearsal_database}
+      det3d: false
+      seg3d: true
+      repeat: 1
+  test_sources: ${datamodule.val_sources}
+
+model:
+  scheduler:
+    warmup_epochs: 4
+    decay_epochs: 36
+    max_lr_factor: 5.0
+
+trainer:
+  max_epochs: 40
+
+callbacks:
+  early_stopping:
+    patience: 40

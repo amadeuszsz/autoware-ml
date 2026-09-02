@@ -1,0 +1,460 @@
+# @package _global_
+
+# High-capacity teacher variant used for distillation and pseudo labeling,
+# not for deployment. Encoder and segmentation decoder are the exact
+# utonia (PT-v3m3) architecture, identical to the segmentation3d voxel005
+# variant, so checkpoints stay interchangeable across the pipeline
+# stages and results stay comparable with the published model.
+#
+# The 5 cm grid scales the BEV geometry with it: the BEV cell stays
+# 8 x grid_size = 0.4 m, so head_voxel_size shrinks from 0.96 to 0.4 and
+# the dense BEV canvas grows to 615 cells per side (max stage-4 grid index
+# 4915 >> 3 = 614; the projector silently drops voxels beyond the canvas,
+# so undersizing it would amputate the scene). Full precision (32-true),
+# matching the only numeric regime the joint stage has ever trained in:
+# the voxel012 stack runs 32-true and its history records fp16 as the
+# divergence cliff; the from-scratch detection branch diverged under
+# reduced precision here as well. Per-GPU batch 1 with gradient
+# accumulation of 8 on the 8-GPU server keeps the production effective
+# batch (1 x 8 x 8 = 64 = 8 x 8); the utonia-sized model fits a
+# full-precision step on the 141 GB H200. The train pipeline is restated only to
+# scale RandomJitter to the finer grid, mirroring the 0.05-grid values of
+# the nuScenes config.
+#
+# Shared pipeline taxonomy: 22 detection classes + 47 segmentation classes
+# whose first 22 indices are exactly the detection list, shared verbatim by
+# every stage of the teacher pipeline (seg3d -> base pseudo -> j6gen2 base
+# pseudo -> this joint stage) so seg and det heads stay checkpoint-
+# compatible throughout. The joint corpus supplies all 47 seg classes and
+# all 22 det classes natively, so the mappings below are pure identity;
+# each other stage scopes its own mapping to its own corpus vocabulary and
+# leaves data-less classes as placeholders. Trailer is its own class, so the
+# database resolves the boxes with the pipelines that keep it (no geometric
+# truck+trailer fold), which also gives this taxonomy its own record table.
+# The NMS groups / heatmap pooling classes restate the canonical behaviour
+# over the raw constituents of each folded class.
+
+defaults:
+  - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
+  - override /database/t4dataset/box3d_pipelines@database.box3d_pipelines: trailer_class_box3d_pipelines
+  - _self_
+
+grid_size: 0.05
+max_voxels: 1200000
+head_voxel_size: [0.4, 0.4, 8.0]
+
+batch_size: 1
+
+t4dataset:
+  detection3d:
+    # Raw joint-corpus detection vocabulary (order = label index).
+    class_names:
+      - car
+      - truck
+      - trailer
+      - bus
+      - train
+      - construction_vehicle
+      - emergency_vehicle
+      - forklift
+      - other_vehicle
+      - motorcycle
+      - bicycle
+      - pedestrian
+      - personal_mobility
+      - animal
+      - barrier
+      - construction_sign
+      - traffic_cone
+      - debris
+      - pushable_pullable
+      - bicycle_rack
+      - open_door
+      - vehicle_protruding_object
+    num_classes: 22
+    # The joint corpus speaks the shared detection vocabulary natively:
+    # identity over the 22 classes. Every entry also overrides the
+    # canonical alias merged in from the dataset config (Hydra merges
+    # mapping nodes), so no inherited fold rewrites a shared class.
+    name_mapping:
+      car: car
+      truck: truck
+      trailer: trailer
+      bus: bus
+      train: train
+      construction_vehicle: construction_vehicle
+      emergency_vehicle: emergency_vehicle
+      forklift: forklift
+      other_vehicle: other_vehicle
+      motorcycle: motorcycle
+      bicycle: bicycle
+      pedestrian: pedestrian
+      personal_mobility: personal_mobility
+      animal: animal
+      barrier: barrier
+      construction_sign: construction_sign
+      traffic_cone: traffic_cone
+      debris: debris
+      pushable_pullable: pushable_pullable
+      bicycle_rack: bicycle_rack
+      open_door: open_door
+      vehicle_protruding_object: vehicle_protruding_object
+    # Detection behaviour taxonomy over the raw vocabulary; every class
+    # exactly once (mirrors the canonical groups over the raw constituents).
+    class_groups:
+      grouped_vehicle:
+        [car, truck, trailer, bus, train, construction_vehicle,
+         emergency_vehicle, forklift, other_vehicle, open_door,
+         vehicle_protruding_object]
+      grouped_two_wheeler: [motorcycle, bicycle]
+      grouped_pedestrian_animal: [pedestrian, personal_mobility, animal]
+      grouped_static_obstacle: [barrier, construction_sign, traffic_cone]
+      grouped_debris: [debris, pushable_pullable]
+      grouped_structure: [bicycle_rack]
+    # Reachability collision kinds for the raw vocabulary (the metric's
+    # built-in defaults only cover the canonical classes).
+    collision:
+      kinds:
+        car: wheeled
+        truck: wheeled
+        trailer: wheeled
+        bus: wheeled
+        train: wheeled
+        construction_vehicle: wheeled
+        emergency_vehicle: wheeled
+        forklift: wheeled
+        other_vehicle: wheeled
+        motorcycle: wheeled
+        bicycle: vru
+        pedestrian: vru
+        personal_mobility: vru
+        animal: vru
+        barrier: static
+        construction_sign: static
+        traffic_cone: static
+        debris: static
+        pushable_pullable: static
+        bicycle_rack: static
+        open_door: static
+        vehicle_protruding_object: static
+      vru_speeds:
+        pedestrian: 3.0
+        animal: 4.0
+        bicycle: 6.0
+        personal_mobility: 6.0
+    eval_class_range:
+      car: 121.0
+      truck: 121.0
+      trailer: 121.0
+      bus: 121.0
+      train: 121.0
+      construction_vehicle: 121.0
+      emergency_vehicle: 121.0
+      forklift: 121.0
+      other_vehicle: 121.0
+      motorcycle: 121.0
+      bicycle: 121.0
+      pedestrian: 121.0
+      personal_mobility: 121.0
+      animal: 121.0
+      barrier: 121.0
+      construction_sign: 121.0
+      traffic_cone: 121.0
+      debris: 121.0
+      pushable_pullable: 121.0
+      bicycle_rack: 121.0
+      open_door: 121.0
+      vehicle_protruding_object: 121.0
+  segmentation3d:
+    # Shared pipeline segmentation vocabulary (order = training index).
+    # Indices 0-21 are exactly the detection class list, in the same order,
+    # so the two label spaces overlap on their common prefix across every
+    # stage of the teacher pipeline (seg3d -> base pseudo -> j6gen2 base
+    # pseudo -> j6gen2 joint). Indices 22-46 are the segmentation-only classes.
+    class_names:
+      # detection prefix (identical to detection3d.class_names)
+      - car
+      - truck
+      - trailer
+      - bus
+      - train
+      - construction_vehicle
+      - emergency_vehicle
+      - forklift
+      - other_vehicle
+      - motorcycle
+      - bicycle
+      - pedestrian
+      - personal_mobility
+      - animal
+      - barrier
+      - construction_sign
+      - traffic_cone
+      - debris
+      - pushable_pullable
+      - bicycle_rack
+      - open_door
+      - vehicle_protruding_object
+      # segmentation-only: vehicles
+      - fire_truck
+      - ambulance
+      - police_car
+      - kart
+      # segmentation-only: vulnerable road users
+      - stroller
+      # segmentation-only: clutter
+      - solid_stuff
+      - other_stuff
+      # segmentation-only: surfaces
+      - drivable_surface
+      - drainage
+      - sidewalk
+      - other_flat_surface
+      - high_curb
+      - low_curb
+      # segmentation-only: vegetation
+      - vegetation
+      # segmentation-only: structure
+      - building
+      - pole
+      - bollard
+      - traffic_light
+      - traffic_sign
+      - flag
+      # segmentation-only: spurious returns
+      - noise
+      - ghost_point
+      # segmentation-only: annotation markers, trained as-is
+      - background
+      - ego_vehicle
+      - out_of_sync
+    num_classes: 47
+    # The joint corpus speaks the shared segmentation vocabulary natively:
+    # identity over the 47 classes. Every entry also overrides the
+    # canonical alias merged in from the dataset config (Hydra merges
+    # mapping nodes), so no inherited fold rewrites a shared class.
+    name_mapping:
+      # identity over the shared classes
+      car: car
+      truck: truck
+      trailer: trailer
+      bus: bus
+      train: train
+      construction_vehicle: construction_vehicle
+      emergency_vehicle: emergency_vehicle
+      forklift: forklift
+      other_vehicle: other_vehicle
+      motorcycle: motorcycle
+      bicycle: bicycle
+      pedestrian: pedestrian
+      personal_mobility: personal_mobility
+      animal: animal
+      barrier: barrier
+      construction_sign: construction_sign
+      traffic_cone: traffic_cone
+      debris: debris
+      pushable_pullable: pushable_pullable
+      bicycle_rack: bicycle_rack
+      open_door: open_door
+      vehicle_protruding_object: vehicle_protruding_object
+      fire_truck: fire_truck
+      ambulance: ambulance
+      police_car: police_car
+      kart: kart
+      stroller: stroller
+      solid_stuff: solid_stuff
+      other_stuff: other_stuff
+      drivable_surface: drivable_surface
+      drainage: drainage
+      sidewalk: sidewalk
+      other_flat_surface: other_flat_surface
+      high_curb: high_curb
+      low_curb: low_curb
+      vegetation: vegetation
+      building: building
+      pole: pole
+      bollard: bollard
+      traffic_light: traffic_light
+      traffic_sign: traffic_sign
+      flag: flag
+      noise: noise
+      ghost_point: ghost_point
+      background: background
+      ego_vehicle: ego_vehicle
+      out_of_sync: out_of_sync
+    # Behaviour taxonomy over the raw vocabulary; every class exactly once.
+    class_groups:
+      grouped_vehicle:
+        [car, truck, trailer, bus, train, construction_vehicle, fire_truck,
+         ambulance, police_car, emergency_vehicle, forklift, kart,
+         other_vehicle, open_door, vehicle_protruding_object]
+      grouped_two_wheeler: [motorcycle, bicycle]
+      grouped_pedestrian_animal: [pedestrian, personal_mobility, stroller, animal]
+      grouped_static_obstacle: [barrier, construction_sign, traffic_cone]
+      grouped_debris: [debris, pushable_pullable]
+      grouped_static_clutter: [solid_stuff, other_stuff]
+      grouped_flat:
+        [drivable_surface, drainage, sidewalk, other_flat_surface, high_curb, low_curb]
+      grouped_vegetation: [vegetation]
+      grouped_structure:
+        [building, pole, bollard, traffic_light, traffic_sign, flag, bicycle_rack]
+      grouped_noise: [noise, ghost_point]
+      grouped_marker: [background, ego_vehicle, out_of_sync]
+
+model:
+  # Exact utonia (PT-v3m3) encoder and segmentation decoder so results stay
+  # directly comparable with the published model (and checkpoint-compatible
+  # with the seg3d stage).
+  encoder:
+    enc_depths: [3, 3, 3, 12, 3]
+    enc_channels: [54, 108, 216, 432, 576]
+    enc_num_head: [3, 6, 12, 24, 32]
+    enc_patch_size: [1024, 1024, 1024, 1024, 1024]
+  seg3d_head:
+    dec_depths: [2, 2, 2, 2]
+    dec_channels: [54, 108, 216, 432]
+    dec_num_head: [3, 6, 12, 24]
+    dec_patch_size: [1024, 1024, 1024, 1024]
+  bev_neck:
+    # Detection branch widened over production (2x dense path): the teacher
+    # has no latency budget and the H200s (141 GB per GPU) carry the dense
+    # 615x615 canvas comfortably at the utonia encoder size.
+    fusion:
+      out_channels: 512
+    bev_projector:
+      out_channels: 256
+      output_shape: [615, 615]
+    bev_encoder:
+      hidden_channels: 256
+      out_channels: 256
+      # Receptive field is measured in BEV cells: the canonical [1, 2, 5, 2]
+      # schedule spans a 21 m radius at the 0.96 m cell but only 8.8 m at
+      # 0.4 m. Scaled by the 2.4x cell shrink to recover a 20 m radius.
+      dilations: [2, 5, 12, 5]
+  bbox_head:
+    in_channels: 256
+    hidden_channel: 256
+    feedforward_channels: 512
+    # Dense-heatmap local-max window, also cell-based: 3 cells was 2.88 m at
+    # the 0.96 m cell but 1.2 m at 0.4 m, adjacent duplicate query peaks on
+    # one large vehicle. 7 cells restores a 2.8 m window.
+    nms_kernel_size: 7
+    # Canonical pooling covered car/truck/bus plus everything folded into
+    # them; restated here over the raw constituents.
+    dense_heatmap_pooling_classes:
+      [car, truck, trailer, bus, construction_vehicle, emergency_vehicle,
+       forklift, other_vehicle]
+    # Large vehicles cross-suppress (raw constituents of the canonical
+    # car/truck/bus/train group); the rest are per-class top-k caps.
+    nms_groups:
+      - class_names:
+          [car, truck, trailer, bus, train, construction_vehicle,
+           emergency_vehicle, forklift, other_vehicle]
+        nms_radius: 0.25
+        post_max_size: 300
+      - class_names: [motorcycle]
+        nms_radius: 0.0
+        post_max_size: 50
+      - class_names: [bicycle]
+        nms_radius: 0.0
+        post_max_size: 50
+      - class_names: [pedestrian]
+        nms_radius: 0.0
+        post_max_size: 100
+      - class_names: [personal_mobility]
+        nms_radius: 0.0
+        post_max_size: 50
+      - class_names: [animal]
+        nms_radius: 0.0
+        post_max_size: 50
+      - class_names: [barrier]
+        nms_radius: 0.0
+        post_max_size: 50
+      - class_names: [construction_sign]
+        nms_radius: 0.0
+        post_max_size: 50
+      - class_names: [traffic_cone]
+        nms_radius: 0.0
+        post_max_size: 100
+      - class_names: [debris]
+        nms_radius: 0.0
+        post_max_size: 50
+      - class_names: [pushable_pullable]
+        nms_radius: 0.0
+        post_max_size: 50
+      - class_names: [bicycle_rack]
+        nms_radius: 0.0
+        post_max_size: 50
+      - class_names: [open_door]
+        nms_radius: 0.0
+        post_max_size: 50
+      - class_names: [vehicle_protruding_object]
+        nms_radius: 0.0
+        post_max_size: 50
+    bbox_coder:
+      # Teacher decodes everything; the per-class canonical thresholds do not
+      # apply to the raw vocabulary.
+      score_threshold: 0.0
+
+trainer:
+  precision: 32-true
+  accumulate_grad_batches: 8
+  # The encoder stem/pooling/unpooling and the dense BEV branch use
+  # BatchNorm; at batch 1 per GPU each rank would estimate statistics from
+  # a single scene and validation (running stats) becomes unstable, so pool
+  # the statistics across ranks. Inherited by the pseudo stages.
+  sync_batchnorm: true
+
+datamodule:
+  train_transforms:
+    _target_: autoware_ml.transforms.base.TransformsCompose
+    pipeline:
+      - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
+        ignore_label_index: ${database.ignore_label_index}
+        filter_attributes: ${dataset.detection3d.filter_attributes}
+      - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
+        sweeps_num: 2
+        use_features: [x, y, z, intensity, timestamp_difference]
+        remove_close: true
+        sweep_selection: random
+        time_lag_range: [0.05, 0.25]
+      - _target_: autoware_ml.transforms.segmentation3d.loading.LoadSeg3DAnnotations
+        class_mapping: ${segmentation_class_mapping}
+        ignore_index: ${dataset.segmentation3d.ignore_index}
+      - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
+        require_time_lag: true
+      - _target_: autoware_ml.transforms.segmentation3d.formatting.PreparePointSegInput
+        ignore_index: ${dataset.segmentation3d.ignore_index}
+      - _target_: autoware_ml.transforms.point_cloud.geometry.RandomRotateTargetAngle
+        p: 0.75
+        angle: [0.5, 1.0, 1.5]
+        center: [0.0, 0.0, 0.0]
+      - _target_: autoware_ml.transforms.point_cloud.geometry.GlobalRotScaleTrans
+        rot_range: [-1.57079633, 1.57079633]
+        scale_ratio_range: [0.9, 1.1]
+        translation_std: [0.5, 0.5, 0.2]
+      - _target_: autoware_ml.transforms.point_cloud.geometry.RandomFlip3D
+        flip_ratio_bev_horizontal: 0.5
+        flip_ratio_bev_vertical: 0.5
+      - _target_: autoware_ml.transforms.point_cloud.perturbation.RandomJitter
+        sigma: 0.005
+        clip: 0.02
+      - _target_: autoware_ml.transforms.point_cloud.crop.PointsRangeFilter
+        point_cloud_range: ${point_cloud_range}
+      - _target_: autoware_ml.transforms.point_cloud.sampling.RandomDropout
+        p: 0.5
+        dropout_ratio: 0.2
+      - _target_: autoware_ml.transforms.point_cloud.perturbation.RandomStrengthJitter
+        gamma_range: [0.8, 1.25]
+        scale_range: [0.9, 1.1]
+        shift_range: [-0.02, 0.02]
+      - _target_: autoware_ml.transforms.boxes3d.filters.ObjectRangeFilter
+        point_cloud_range: ${point_cloud_range}
+      - _target_: autoware_ml.transforms.boxes3d.filters.ObjectRangeMinPointsFilter
+        range_radius: [0.0, 60.0]
+        min_num_points: ${dataset.detection3d.train_min_points_near}
+      - _target_: autoware_ml.transforms.boxes3d.filters.ObjectRangeMinPointsFilter
+        range_radius: [60.0, 130.0]
+        min_num_points: ${dataset.detection3d.train_min_points_far}
+      - _target_: autoware_ml.transforms.common.packing.BuildPointFeatures
+        feature_names: [x, y, z, intensity, timestamp_difference]
