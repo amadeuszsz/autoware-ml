@@ -89,17 +89,20 @@ See [Configuration Guide](../user-guide/configuration.md) for full details on Hy
 ### Data Module
 
 Data flows from databases. A database owns one corpus, generates its dataset records once, and
-caches them as a parquet table. The datamodule splits the records with a scenario splitter and
-serves them through one dataset class per dataset family. A `DatasetSource` pairs a database
-with its supervision coverage, so one datamodule can mix corpora with different labels.
+caches them as a parquet table named after its hash. The datamodule splits the records with a
+scenario splitter and serves them through one dataset class per dataset family. A
+`DatasetSource` pairs a database with its supervision coverage, and every split declares its
+own sources, so one datamodule can mix corpora with different labels.
 
 ```python
 class DataModule(L.LightningDataModule):
     def __init__(
         self,
         dataset: Callable[..., Dataset],
-        sources: Sequence[DatasetSource],
-        splitter: SplitterInterface,
+        splitter: ScenarioSplitter,
+        train_sources: Sequence[DatasetSource],
+        val_sources: Sequence[DatasetSource],
+        test_sources: Sequence[DatasetSource],
         train_transforms: TransformsCompose | None = None,
         val_transforms: TransformsCompose | None = None,
         test_transforms: TransformsCompose | None = None,

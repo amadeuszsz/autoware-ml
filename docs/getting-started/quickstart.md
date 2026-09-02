@@ -27,12 +27,11 @@ cd ~/autoware-ml
 autoware-ml train --config-name segmentation3d/ptv3/voxel005_51m_nuscenes
 ```
 
-Training reads a dataset record table, a parquet file generated ahead of time and shared by
-every model that trains on it. Mount your records directory with `--records-path` and generate
-the table once, with
-[t4dataset-generator](https://github.com/tier4/t4dataset-generator) for T4dataset or with
-`autoware_ml/scripts/generate_nuscenes_records.py` for nuScenes (see
-[dataset records](../databases/design.md)).
+Training reads the record table of the configured database, a parquet file named after the
+hash of the database definition. Mount your records directory with `--records-path`. A missing
+table is generated on the first run, or ahead of time with
+`autoware-ml generate-dataset --config-name default_nuscenes_generator` (see
+[database design](../databases/design.md)).
 
 Training progress appears in your terminal. Checkpoints are saved automatically.
 

@@ -4,7 +4,7 @@ icon: lucide/table
 
 # Dataset Schema
 
-The output schema lives in the `autoware_ml/databases/schemas/` package. It is split into a top-level table definition and reusable nested data models that can be shared across dataset families. A generator emits `Sequence[DatasetRecord]` and persists the rows as a Polars `DataFrame` in Parquet using `DatasetTableSchema`, and `RecordTable` reads them back.
+The output schema lives in the `autoware_ml/databases/schemas/` package. It is split into a top-level table definition and reusable nested data models that can be shared across dataset families. A database emits `Sequence[DatasetRecord]` from its record generator, persists the rows as a Polars `DataFrame` in Parquet using `DatasetTableSchema`, and reads them back through `DatasetRecord.load_from_dictionary()`.
 
 ## Base building blocks (`base_schemas.py`)
 
@@ -88,10 +88,10 @@ Each list entry is a `LidarFrameDataModel` covering one keyframe or sweep:
 | `lidar_timestamp_seconds`               | `Float64`             | Frame timestamp in seconds                                 |
 | `lidar_pointcloud_path`                 | `String`              | Point cloud path relative to the database root             |
 | `lidar_pointcloud_source_path`          | `String`              | Path to per-point metadata (or null)                       |
-| `lidar_pointcloud_num_features`         | `Int32`               | Number of features per point (configured on the database)  |
+| `lidar_pointcloud_num_features`         | `Int32`               | Number of features per point (declared per dataset)        |
 | `lidar_sensor_to_ego_pose_matrix`       | `Array(Float32, 4x4)` | Sensor-to-ego transform                                    |
 | `lidar_frame_ego_pose_to_global_matrix` | `Array(Float32, 4x4)` | Ego-to-global transform for this frame                     |
-| `lidar_sensor_to_lidar_sweep_matrices`  | `Array(Float32, 4x4)` | Sensor-to-sweep transform                                  |
+| `lidar_sensor_to_lidar_sweep_matrix`    | `Array(Float32, 4x4)` | Sensor-to-sweep transform                                  |
 | `lidar_pointcloud_semantic_mask_path`   | `String`              | LiDAR segmentation mask path (or null)                     |
 
 ### `camera_frames` struct fields

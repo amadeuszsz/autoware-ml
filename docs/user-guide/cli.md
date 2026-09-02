@@ -12,18 +12,44 @@ Bash completion is installed automatically by the Docker image build and by
 
 ## Commands
 
-| Command          | Purpose                                            |
-| ---------------- | -------------------------------------------------- |
-| `train`          | Train models using PyTorch Lightning               |
-| `test`           | Evaluate models from a checkpoint                  |
-| `deploy`         | Export models to ONNX and TensorRT                 |
-| `mlflow ui`      | Launch the MLflow tracking UI                      |
-| `mlflow export`  | Export one experiment into its own MLflow store    |
-| `session start`  | Start a managed background task                    |
-| `session attach` | View live terminal output from a background task   |
-| `session detach` | Disconnect raw tmux clients from a managed session |
-| `session ls`     | List managed background tasks                      |
-| `session stop`   | Stop a managed background task                     |
+| Command            | Purpose                                            |
+| ------------------ | -------------------------------------------------- |
+| `generate-dataset` | Generate the record table of a database            |
+| `train`            | Train models using PyTorch Lightning               |
+| `test`             | Evaluate models from a checkpoint                  |
+| `deploy`           | Export models to ONNX and TensorRT                 |
+| `mlflow ui`        | Launch the MLflow tracking UI                      |
+| `mlflow export`    | Export one experiment into its own MLflow store    |
+| `session start`    | Start a managed background task                    |
+| `session attach`   | View live terminal output from a background task   |
+| `session detach`   | Disconnect raw tmux clients from a managed session |
+| `session ls`       | List managed background tasks                      |
+| `session stop`     | Stop a managed background task                     |
+
+## generate-dataset
+
+Generate the record table of a database ahead of training. Training generates a missing
+table itself, this command builds it once, for example on a machine with many cores.
+
+```bash
+autoware-ml generate-dataset --config-name <generator_config> [hydra_overrides...]
+```
+
+**Arguments:**
+
+- `--config-name`: Name of a config under `configs/generators/`, or a YAML config path
+
+All remaining arguments are passed to Hydra as overrides. The scenario lists are read from the
+perception-devops checkout below `working_dir` and the table is written below
+`cache_root_path`, see [database design](../databases/design.md).
+
+**Example:**
+
+```bash
+autoware-ml generate-dataset --config-name default_t4dataset_generator \
+    database=t4dataset/t4dataset_j6gen2_base \
+    database.num_workers=32
+```
 
 ## train
 

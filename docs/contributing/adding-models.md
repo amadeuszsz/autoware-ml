@@ -111,16 +111,17 @@ class MyModel(BaseModel):
 ## Step 2: Provide the Data
 
 Models do not own datamodules. The shared `DataModule` in
-`autoware_ml/datamodule/base.py` reads dataset records from the configured
-record tables, keeps the split each table declares, and serves typed samples
-through the transform pipelines. What you add depends on the data:
+`autoware_ml/datamodule/base.py` generates the record table of every configured
+database when it is missing, splits the records by the scenario lists of the
+database, and serves typed samples through the transform pipelines. What you
+add depends on the data:
 
-- **New corpus already in a table** - Reuse `T4Dataset` or `NuscenesDataset`
-  and add a config under `autoware_ml/configs/records/` naming the table, its
-  data root and the databases to keep. No code is needed.
-- **New corpus format** - Generate its table outside this repository, emitting
-  the columns of `DatasetTableSchema` (see
-  [dataset records](../databases/design.md)). Then subclass `Dataset` and
+- **New corpus of a known format** - Reuse `T4Dataset` or `NuscenesDataset`
+  and add a scenario group and a database config under
+  `autoware_ml/configs/database/`. No code is needed.
+- **New corpus format** - Subclass `BaseDatabase` and implement
+  `generate_records()` emitting `DatasetRecord` objects (see
+  [database design](../databases/design.md)). Then subclass `Dataset` and
   implement `build_meta()` returning the frame metadata of the family. The
   dataset seeds a typed `Sample` from one record, file loading and sample
   materialization happen in transforms.
@@ -204,11 +205,13 @@ datamodule:
   dataset:
     _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
     _partial_: true
-  sources:
+  train_sources:
     - database: ${database}
       det3d: true
       seg3d: false
       repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}
   train_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}

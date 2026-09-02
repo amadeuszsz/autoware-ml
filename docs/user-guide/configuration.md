@@ -68,9 +68,9 @@ A complete task config includes these sections:
 
 ### `datamodule`
 
-Controls data sources and split-specific transforms. The datamodule reads dataset records from
-the configured record tables, keeps the split each table declares, and serves typed samples
-through the transform pipelines:
+Controls data sources and split-specific transforms. The datamodule generates the record table
+of every configured database when it is missing, splits the records by the scenario lists of
+the database, and serves typed samples through the transform pipelines:
 
 ```yaml
 datamodule:
@@ -78,11 +78,13 @@ datamodule:
   dataset:
     _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
     _partial_: true
-  sources:
-    - records: ${records}
+  train_sources:
+    - database: ${database}
       det3d: true
       seg3d: false
       repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}
 
   train_dataloader_cfg:
     batch_size: 8
@@ -99,34 +101,39 @@ datamodule:
 The section is built from these blocks:
 
 - `dataset` - partial factory of the dataset family (`T4Dataset` or `NuscenesDataset`). The datamodule calls it once per split with the transform pipeline of that split.
-- `sources` - record tables served by the datamodule. Every source declares its supervision coverage (`det3d`, `seg3d`) and how often its frames appear per epoch (`repeat`), so one datamodule can mix corpora with different labels.
+- `splitter` - assigns the records of a database to train, val and test by its scenario lists. The default runtime binds the scenario splitter.
+- `train_sources`, `val_sources`, `test_sources` - databases served by each split, the test sources also serve predict. Every source declares its supervision coverage (`det3d`, `seg3d`) and how often its frames appear per epoch (`repeat`), so one split can mix corpora with different labels.
 - `train/val/test/predict_transforms` - per-split transform pipelines, applied per sample on CPU.
 - `train/val/test/predict_dataloader_cfg` - per-split dataloader settings.
 - `train_frame_sampling` - optional repeat factor sampling settings for the training split.
 
-The `records` value of a source comes from the `configs/records/` group and is bound through a
-defaults entry in the task config:
+The `database` value of a source comes from the `configs/database/` group and is bound through
+a defaults entry in the task config:
 
 ```yaml
 defaults:
-  - /records@records: t4dataset/t4dataset_j6gen2_base
+  - /database@database: t4dataset/t4dataset_j6gen2_base
 ```
 
-A record table is a parquet file generated outside this repository, by t4dataset-generator for
-T4dataset. It carries its own splits and database names, so a corpus config is just a table path,
-the data root its paths resolve against, and the databases to keep:
+A database config names the scenario groups of the corpus, composes the dataset config whose
+taxonomy the box labels are resolved against, and points at the record table location:
 
 ```yaml
-_target_: autoware_ml.databases.record_table.RecordTable
-path: /workspace/records/t4dataset.parquet
-data_root: ${data_root_path}/t4dataset/
-databases:
-  - db_j6gen2_v1
+_target_: autoware_ml.databases.t4dataset.t4database.T4Database
+defaults:
+  - /datasets/t4dataset/detection3d
+  - /database/t4dataset/box3d_pipelines@box3d_pipelines: default_box3d_pipelines
+  - /database/t4dataset/scenarios@scenarios.db_j6gen2_base: detection3d/db_j6gen2_base
+root_path: ${data_root_path}/t4dataset/
+cache_path: ${cache_root_path}/t4dataset/
+class_names: ${t4dataset.detection3d.class_names}
+label_remapper: ${t4dataset.detection3d.name_mapping}
 ```
 
-Tables live at a fixed `/workspace/records`, mounted with `--records-path` or
-`AUTOWARE_ML_RECORDS_PATH`, so the data mount can stay read only and every user can map their
-own records directory.
+Record tables are written below `cache_root_path`, mounted with `--records-path` or
+`AUTOWARE_ML_RECORDS_PATH`, so the data mount can stay read only. The scenario lists are read
+from the perception-devops checkout below `working_dir`. See
+[database design](../databases/design.md).
 
 Collation is not configurable. `Batch.collate` turns the transformed samples into the typed
 `Batch` the models consume, and model family specific layouts are derived later by the runtime
