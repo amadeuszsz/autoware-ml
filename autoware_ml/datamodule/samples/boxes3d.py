@@ -57,21 +57,15 @@ class Boxes3D(BaseModel):
                 f"got {self.params.shape}."
             )
         if self.params.dtype != np.float32:
-            raise ValueError(
-                f"Box parameters must be float32, got {self.params.dtype}."
-            )
+            raise ValueError(f"Box parameters must be float32, got {self.params.dtype}.")
         if self.labels.dtype != np.int64 or self.labels.shape != (len(self),):
             raise ValueError(
                 f"Box labels must be int64 with shape ({len(self)},), "
                 f"got {self.labels.dtype} with shape {self.labels.shape}."
             )
         if len(self.names) != len(self):
-            raise ValueError(
-                f"Boxes declare {len(self.names)} names but hold {len(self)} boxes."
-            )
-        if self.num_lidar_points.dtype != np.int64 or self.num_lidar_points.shape != (
-            len(self),
-        ):
+            raise ValueError(f"Boxes declare {len(self.names)} names but hold {len(self)} boxes.")
+        if self.num_lidar_points.dtype != np.int64 or self.num_lidar_points.shape != (len(self),):
             raise ValueError(
                 f"Box lidar point counts must be int64 with shape ({len(self)},), "
                 f"got {self.num_lidar_points.dtype} with shape {self.num_lidar_points.shape}."
@@ -113,9 +107,7 @@ class Boxes3D(BaseModel):
             }
         )
 
-    def with_params(
-        self, params: Float32[np.ndarray, "num_boxes num_box_params"]
-    ) -> Boxes3D:
+    def with_params(self, params: Float32[np.ndarray, "num_boxes num_box_params"]) -> Boxes3D:
         """
         Create boxes with replaced parameters and untouched labels, names, and point counts.
 
@@ -128,7 +120,6 @@ class Boxes3D(BaseModel):
 
         if params.shape != self.params.shape:
             raise ValueError(
-                f"Replacement parameters must have shape {self.params.shape}, "
-                f"got {params.shape}."
+                f"Replacement parameters must have shape {self.params.shape}, got {params.shape}."
             )
         return self.model_copy(update={"params": params.astype(np.float32)})

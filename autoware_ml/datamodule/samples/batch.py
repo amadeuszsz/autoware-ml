@@ -110,9 +110,7 @@ class PointCloudBatch(BaseModel):
         """
 
         return self.model_copy(
-            update={
-                "features": tuple(features.to(device) for features in self.features)
-            }
+            update={"features": tuple(features.to(device) for features in self.features)}
         )
 
     def pin_memory(self) -> PointCloudBatch:
@@ -124,9 +122,7 @@ class PointCloudBatch(BaseModel):
         """
 
         return self.model_copy(
-            update={
-                "features": tuple(features.pin_memory() for features in self.features)
-            }
+            update={"features": tuple(features.pin_memory() for features in self.features)}
         )
 
 
@@ -163,9 +159,7 @@ class Boxes3DBatch(BaseModel):
             update={
                 "params": tuple(params.to(device) for params in self.params),
                 "labels": tuple(labels.to(device) for labels in self.labels),
-                "num_lidar_points": tuple(
-                    counts.to(device) for counts in self.num_lidar_points
-                ),
+                "num_lidar_points": tuple(counts.to(device) for counts in self.num_lidar_points),
             }
         )
 
@@ -181,9 +175,7 @@ class Boxes3DBatch(BaseModel):
             update={
                 "params": tuple(params.pin_memory() for params in self.params),
                 "labels": tuple(labels.pin_memory() for labels in self.labels),
-                "num_lidar_points": tuple(
-                    counts.pin_memory() for counts in self.num_lidar_points
-                ),
+                "num_lidar_points": tuple(counts.pin_memory() for counts in self.num_lidar_points),
             }
         )
 
@@ -297,9 +289,7 @@ class ImageBatch(BaseModel):
             "lidar2img": tuple(m.pin_memory() for m in self.lidar2img),
         }
         if self.img_aug_matrix is not None:
-            update["img_aug_matrix"] = tuple(
-                m.pin_memory() for m in self.img_aug_matrix
-            )
+            update["img_aug_matrix"] = tuple(m.pin_memory() for m in self.img_aug_matrix)
         return self.model_copy(update=update)
 
 
@@ -439,10 +429,7 @@ class Batch(BaseModel):
         """
 
         batch_size = len(self.meta.sample_ids)
-        if (
-            self.point_cloud is not None
-            and len(self.point_cloud.features) != batch_size
-        ):
+        if self.point_cloud is not None and len(self.point_cloud.features) != batch_size:
             raise ValueError(
                 f"Point cloud batch covers {len(self.point_cloud.features)} samples but the batch "
                 f"holds {batch_size} samples."
@@ -473,10 +460,7 @@ class Batch(BaseModel):
                 f"Image batch covers {len(self.images.images)} samples but the batch holds "
                 f"{batch_size} samples."
             )
-        if (
-            self.calibration is not None
-            and self.calibration.fused_images.shape[0] != batch_size
-        ):
+        if self.calibration is not None and self.calibration.fused_images.shape[0] != batch_size:
             raise ValueError(
                 f"Calibration batch covers {self.calibration.fused_images.shape[0]} samples "
                 f"but the batch holds {batch_size} samples."
@@ -821,9 +805,7 @@ class Batch(BaseModel):
             update["boxes"] = cls._collate_boxes(samples)
         if _uniform_presence(samples, "segment"):
             update["segmentation"] = SegmentationBatch(
-                labels=tuple(
-                    torch.from_numpy(sample.segment.labels) for sample in samples
-                )
+                labels=tuple(torch.from_numpy(sample.segment.labels) for sample in samples)
             )
         if _uniform_presence(samples, "images"):
             update["images"] = cls._collate_images(samples)
@@ -845,14 +827,10 @@ class Batch(BaseModel):
 
         scene_presence = [sample.meta.scene_token is not None for sample in samples]
         if any(scene_presence) and not all(scene_presence):
-            raise ValueError(
-                "Scene tokens must be present in every sample of a batch or none."
-            )
+            raise ValueError("Scene tokens must be present in every sample of a batch or none.")
         ego_presence = [sample.meta.ego2global is not None for sample in samples]
         if any(ego_presence) and not all(ego_presence):
-            raise ValueError(
-                "Ego poses must be present in every sample of a batch or none."
-            )
+            raise ValueError("Ego poses must be present in every sample of a batch or none.")
         prev_presence = [sample.meta.prev_exists is not None for sample in samples]
         if any(prev_presence) and not all(prev_presence):
             raise ValueError(
@@ -865,9 +843,7 @@ class Batch(BaseModel):
             if all(scene_presence)
             else None,
             timestamps=tuple(sample.meta.timestamp_seconds for sample in samples),
-            ego2globals=tuple(
-                torch.from_numpy(sample.meta.ego2global) for sample in samples
-            )
+            ego2globals=tuple(torch.from_numpy(sample.meta.ego2global) for sample in samples)
             if all(ego_presence)
             else None,
             prev_exists=tuple(sample.meta.prev_exists for sample in samples)
@@ -897,9 +873,7 @@ class Batch(BaseModel):
         current_counts = tuple(sample.points.num_current_points for sample in samples)
         num_current_points = current_counts if None not in current_counts else None
         return PointCloudBatch(
-            features=tuple(
-                torch.from_numpy(sample.points.features) for sample in samples
-            ),
+            features=tuple(torch.from_numpy(sample.points.features) for sample in samples),
             feature_names=feature_names,
             num_current_points=num_current_points,
         )
@@ -948,12 +922,8 @@ class Batch(BaseModel):
             camera_intrinsics=tuple(
                 torch.from_numpy(sample.images.camera_intrinsics) for sample in samples
             ),
-            lidar2cam=tuple(
-                torch.from_numpy(sample.images.lidar2cam) for sample in samples
-            ),
-            lidar2img=tuple(
-                torch.from_numpy(sample.images.lidar2img) for sample in samples
-            ),
+            lidar2cam=tuple(torch.from_numpy(sample.images.lidar2cam) for sample in samples),
+            lidar2img=tuple(torch.from_numpy(sample.images.lidar2img) for sample in samples),
             img_aug_matrix=tuple(
                 torch.from_numpy(sample.images.img_aug_matrix) for sample in samples
             )
@@ -975,9 +945,7 @@ class Batch(BaseModel):
 
         for sample in samples:
             if sample.calibration.fused_image is None:
-                raise ValueError(
-                    "Every calibration sample of a batch must carry a fused image."
-                )
+                raise ValueError("Every calibration sample of a batch must carry a fused image.")
         status_presence = [sample.calibration.status is not None for sample in samples]
         if any(status_presence) and not all(status_presence):
             raise ValueError(

@@ -40,20 +40,23 @@ AREA_WAY_TYPES = frozenset(
 # fails loud at filter construction. A known token that happens to have no
 # polygons in a particular scene (walkway is sparse) is a legitimate empty
 # region where membership is simply false.
-KNOWN_REGION_TOKENS = frozenset(
-    {
-        "road",
-        "highway",
-        "road_shoulder",
-        "bicycle_lane",
-        "bus_lane",
-        "walkway",
-        "crosswalk",
-        "pedestrian_lane",
-        "play_street",
-        "emergency_lane",
-    }
-) | AREA_WAY_TYPES
+KNOWN_REGION_TOKENS = (
+    frozenset(
+        {
+            "road",
+            "highway",
+            "road_shoulder",
+            "bicycle_lane",
+            "bus_lane",
+            "walkway",
+            "crosswalk",
+            "pedestrian_lane",
+            "play_street",
+            "emergency_lane",
+        }
+    )
+    | AREA_WAY_TYPES
+)
 
 
 def _tags(element: ET.Element) -> dict[str, str]:

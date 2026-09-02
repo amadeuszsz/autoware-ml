@@ -108,7 +108,9 @@ class TestLoadMultiViewImagesFromFiles:
         assert images.camera_names == ("CAM_FRONT", "CAM_LEFT")
         keyframe = sample.record.lidar_frames[0]
         for index, channel in enumerate(images.camera_names):
-            frame = next(f for f in sample.record.camera_frames if f.camera_sensor_channel_name == channel)
+            frame = next(
+                f for f in sample.record.camera_frames if f.camera_sensor_channel_name == channel
+            )
             expected = (
                 np.linalg.inv(frame.camera_sensor_to_ego_pose_matrix)
                 @ np.linalg.inv(frame.camera_frame_ego_pose_to_global_matrix)

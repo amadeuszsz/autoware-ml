@@ -231,7 +231,8 @@ class LabelTaxonomy:
     def __str__(self) -> str:
         """Canonical string form, the input of the database hash."""
         coarsening = ", ".join(
-            f"{fine_name}: {class_name}" for fine_name, class_name in sorted(self._coarsening.items())
+            f"{fine_name}: {class_name}"
+            for fine_name, class_name in sorted(self._coarsening.items())
         )
         return (
             f"{self.__class__.__name__}(class_names={list(self._class_names)}, "

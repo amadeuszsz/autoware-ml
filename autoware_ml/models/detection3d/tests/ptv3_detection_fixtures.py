@@ -300,6 +300,7 @@ def build_processed(device: torch.device | None = None, is_training: bool = True
         batch = batch.to(device)
     return DataPreprocessing([build_preprocessor()])(batch, is_training=is_training)
 
+
 def build_litept_encoder() -> LitePTEncoder:
     """Return a small LitePT encoder exercising both gating directions.
 

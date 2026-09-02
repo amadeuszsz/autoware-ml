@@ -42,13 +42,9 @@ class SegmentationLabels(BaseModel):
         """
 
         if self.labels.ndim != 1:
-            raise ValueError(
-                f"Segmentation labels must be 1D, got shape {self.labels.shape}."
-            )
+            raise ValueError(f"Segmentation labels must be 1D, got shape {self.labels.shape}.")
         if self.labels.dtype != np.int64:
-            raise ValueError(
-                f"Segmentation labels must be int64, got {self.labels.dtype}."
-            )
+            raise ValueError(f"Segmentation labels must be int64, got {self.labels.dtype}.")
         return self
 
     def __len__(self) -> int:

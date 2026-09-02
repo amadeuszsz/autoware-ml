@@ -20,9 +20,7 @@ def _indexed_sample(num_points: int, num_current_points: int | None = None):
     points = PointCloud(
         features=features,
         feature_names=XYZ,
-        num_current_points=(
-            num_current_points if num_current_points is not None else num_points
-        ),
+        num_current_points=(num_current_points if num_current_points is not None else num_points),
     )
     sample = make_sample(points=points)
     return sample.model_copy(

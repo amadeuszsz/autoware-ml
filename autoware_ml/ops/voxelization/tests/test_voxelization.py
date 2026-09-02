@@ -406,7 +406,9 @@ class TestHardVoxelizationDummyPointData(unittest.TestCase):
         self.assertNotEqual(int(indices[0]), int(indices[4]))
         self.assertEqual(result.num_points[indices[0]].item(), 2)
         self.assertEqual(int(result.num_dropped_voxels), 0)
-        self.assertTrue(torch.equal(result.coords[indices[4]], torch.tensor([1, 1, 0], dtype=torch.int32)))
+        self.assertTrue(
+            torch.equal(result.coords[indices[4]], torch.tensor([1, 1, 0], dtype=torch.int32))
+        )
 
     def test_point_voxel_indices_mark_dropped_voxels(self) -> None:
         """Points whose voxel exceeds the max_voxels budget are unassigned."""

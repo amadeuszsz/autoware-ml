@@ -188,8 +188,7 @@ def wheeled_front(
     runs: list[list[tuple[float, float]]] = [[]]
     for kappa in np.linspace(-kmax, kmax, params.arc_samples):
         arc = [
-            _arc_endpoint(agent.x, agent.y, agent.heading, float(kappa), float(s))
-            for s in lengths
+            _arc_endpoint(agent.x, agent.y, agent.heading, float(kappa), float(s)) for s in lengths
         ]
         if drivable.covers(LineString(arc)):
             runs[-1].append(arc[-1])
@@ -197,9 +196,7 @@ def wheeled_front(
             runs.append([])
     body = min(agent.body_radius, length)
     pieces = [
-        (LineString(run) if len(run) > 1 else Point(run[0])).buffer(body)
-        for run in runs
-        if run
+        (LineString(run) if len(run) > 1 else Point(run[0])).buffer(body) for run in runs if run
     ]
     if not pieces:
         return Polygon()
@@ -388,9 +385,7 @@ class EgoReachability:
         hat_distance = self._hat.distance(Point(obj.x, obj.y))
         start_hat = self._first_step(hat_distance, obj.speed, obj.body_radius)
         gap = hypot(obj.x - ego.x, obj.y - ego.y)
-        start_gap = self._first_step(
-            gap, ego.speed + obj.speed, ego.body_radius + obj.body_radius
-        )
+        start_gap = self._first_step(gap, ego.speed + obj.speed, ego.body_radius + obj.body_radius)
         if start_hat is None or start_gap is None:
             return inf
         # A wheeled object's whole path must stay on the surface, so its feasibility

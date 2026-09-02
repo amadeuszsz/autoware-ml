@@ -156,9 +156,7 @@ class CollisionTTC:
         )
         frame = EgoReachability(ego, drivable, self.params)
         footprints = box_footprints_map(boxes, ego2global)
-        centroids = np.array(
-            [[p.centroid.x, p.centroid.y] for p in footprints], dtype=np.float64
-        )
+        centroids = np.array([[p.centroid.x, p.centroid.y] for p in footprints], dtype=np.float64)
 
         for index in range(boxes.shape[0]):
             name = self.class_names[int(labels[index])]

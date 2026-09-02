@@ -21,9 +21,7 @@ FEATURE_NAMES = (
 
 def _segmented_sample(coord: list[list[float]], num_current_points: int | None = None):
     coord = np.asarray(coord, dtype=np.float32)
-    features = np.concatenate(
-        [coord, np.arange(coord.shape[0], dtype=np.float32)[:, None]], axis=1
-    )
+    features = np.concatenate([coord, np.arange(coord.shape[0], dtype=np.float32)[:, None]], axis=1)
     points = PointCloud(
         features=features,
         feature_names=FEATURE_NAMES,

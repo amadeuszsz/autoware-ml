@@ -88,7 +88,13 @@ class Segmentation3DPointCloudMetricSuite(MetricSuite[PointCloudSegState]):
     _required_keys = ("seg_frames",)
 
     _FRAME_STATES = (
-        "coord", "pred", "target", "confidence", "entropy", "gt_boxes", "gt_box_labels"
+        "coord",
+        "pred",
+        "target",
+        "confidence",
+        "entropy",
+        "gt_boxes",
+        "gt_box_labels",
     )
 
     def __init__(
@@ -133,8 +139,7 @@ class Segmentation3DPointCloudMetricSuite(MetricSuite[PointCloudSegState]):
         # per-class ones. grouped_components read that view under grouped/.
         self._grouped_components = list(grouped_components) if grouped_components else []
         self._needs_boxes = any(
-            component.needs_boxes
-            for component in [*self.components, *self._grouped_components]
+            component.needs_boxes for component in [*self.components, *self._grouped_components]
         )
         if (class_groups is None) != (not self._grouped_components):
             raise ValueError(
@@ -169,9 +174,7 @@ class Segmentation3DPointCloudMetricSuite(MetricSuite[PointCloudSegState]):
 
     def _active_grouped_components(self) -> list[Metric[PointCloudSegState]]:
         return [
-            component
-            for component in self._grouped_components
-            if self._stage in component.stages
+            component for component in self._grouped_components if self._stage in component.stages
         ]
 
     def runs_at(self, stage) -> bool:
@@ -328,9 +331,7 @@ class Segmentation3DPointCloudMetricSuite(MetricSuite[PointCloudSegState]):
                         columns.append(np.zeros(coord_np.shape[0], dtype=bool))
                         box_columns.append(np.zeros(boxes_np.shape[0], dtype=bool))
                         continue
-                    missing = [
-                        key for key in metric_filter.required_eval_keys if key not in frame
-                    ]
+                    missing = [key for key in metric_filter.required_eval_keys if key not in frame]
                     if missing:
                         raise ValueError(
                             f"Filter {metric_filter.name!r} needs {missing} inside each "
@@ -387,9 +388,7 @@ class Segmentation3DPointCloudMetricSuite(MetricSuite[PointCloudSegState]):
                 self.gt_box_labels[index],
                 metric_range,
                 None if column is None else self.region_masks[index][:, column].cpu().numpy(),
-                None
-                if column is None
-                else self.box_region_masks[index][:, column].cpu().numpy(),
+                None if column is None else self.box_region_masks[index][:, column].cpu().numpy(),
             )
             for index in range(len(self.coord))
         ]
@@ -421,9 +420,7 @@ class Segmentation3DPointCloudMetricSuite(MetricSuite[PointCloudSegState]):
                 self.gt_box_labels[index],
                 metric_range,
                 None if column is None else self.region_masks[index][:, column].cpu().numpy(),
-                None
-                if column is None
-                else self.box_region_masks[index][:, column].cpu().numpy(),
+                None if column is None else self.box_region_masks[index][:, column].cpu().numpy(),
                 fold_lut=self._group_lut,
             )
             for index in range(len(self.coord))
@@ -571,4 +568,3 @@ def confidence(scores: np.ndarray) -> np.ndarray:
         Per-point maximum probability ``(N,)``.
     """
     return scores.max(axis=1)
-

@@ -57,16 +57,11 @@ class CalibrationSample(BaseModel):
         """
 
         if self.image is not None and self.image.ndim != 3:
-            raise ValueError(
-                f"The camera image must be 3D, got shape {self.image.shape}."
-            )
+            raise ValueError(f"The camera image must be 3D, got shape {self.image.shape}.")
         if self.fused_image is not None and self.fused_image.ndim != 3:
-            raise ValueError(
-                f"The fused image must be 3D, got shape {self.fused_image.shape}."
-            )
+            raise ValueError(f"The fused image must be 3D, got shape {self.fused_image.shape}.")
         if self.affine_transform is not None and self.affine_transform.shape != (3, 3):
             raise ValueError(
-                f"The affine transform must have shape (3, 3), "
-                f"got {self.affine_transform.shape}."
+                f"The affine transform must have shape (3, 3), got {self.affine_transform.shape}."
             )
         return self

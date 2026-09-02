@@ -20,9 +20,7 @@ XYZ = (PointFeatureName.X, PointFeatureName.Y, PointFeatureName.Z)
 
 def _sample(coord: list[list[float]], box_params: list[list[float]] | None = None):
     features = np.asarray(coord, dtype=np.float32)
-    points = PointCloud(
-        features=features, feature_names=XYZ, num_current_points=features.shape[0]
-    )
+    points = PointCloud(features=features, feature_names=XYZ, num_current_points=features.shape[0])
     boxes = None
     if box_params is not None:
         params = np.asarray(box_params, dtype=np.float32)
