@@ -34,8 +34,8 @@ detection3d:
     truck: truck
     construction_vehicle: truck
     # A trailer attached to a truck is merged into the truck box by the pipelines, a trailer
-    # on its own is not a trained class
-    trailer: null
+    # on its own is an obstacle the size of a truck and trains as one
+    trailer: truck
     bus: bus
     train: train
     motorcycle: motorcycle
