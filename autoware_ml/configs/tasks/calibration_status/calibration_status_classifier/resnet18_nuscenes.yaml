@@ -1,6 +1,7 @@
 # @package _global_
 defaults:
   - /tasks/calibration_status/calibration_status_classifier/resnet18_base
+  - /datasets/nuscenes/detection3d
   - /datasets/nuscenes/camera
   - /database@database: nuscenes/nuscenes_trainval
   - _self_

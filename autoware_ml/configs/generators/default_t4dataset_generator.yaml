@@ -6,6 +6,7 @@ hydra:
   output_subdir: code/hydra # Store hydra's config breakdown here for debugging
 
 defaults:
+  - /datasets/t4dataset/detection3d
   - /database@database: t4dataset/t4dataset_base
   - override /hydra/hydra_logging: none # Disable hydra's logging
   - _self_

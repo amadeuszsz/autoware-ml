@@ -115,13 +115,12 @@ defaults:
   - /database@database: t4dataset/t4dataset_j6gen2_base
 ```
 
-A database config names the scenario groups of the corpus, composes the dataset config whose
-taxonomy the box labels are resolved against, and points at the record table location:
+A database config names the scenario groups of the corpus, binds the taxonomy of the detection
+dataset package the task composes, and points at the record table location:
 
 ```yaml
 _target_: autoware_ml.databases.t4dataset.t4database.T4Database
 defaults:
-  - /datasets/t4dataset/detection3d
   - /database/t4dataset/box3d_pipelines@box3d_pipelines: default_box3d_pipelines
   - /database/t4dataset/scenarios@scenarios.db_j6gen2_base: detection3d/db_j6gen2_base
 root_path: ${data_root_path}/t4dataset/
@@ -129,6 +128,11 @@ cache_path: ${cache_root_path}/t4dataset/
 class_names: ${t4dataset.detection3d.class_names}
 label_remapper: ${t4dataset.detection3d.name_mapping}
 ```
+
+Every task that binds a database composes the detection dataset package of its family, since
+the boxes of the record table are resolved against that taxonomy. Dataset packages are composed
+by the task alone, never by a database or a metrics package, so a taxonomy override in a task
+config applies to every database the task binds.
 
 Record tables are written below `cache_root_path`, mounted with `--records-path` or
 `AUTOWARE_ML_RECORDS_PATH`, so the data mount can stay read only. The scenario lists are read

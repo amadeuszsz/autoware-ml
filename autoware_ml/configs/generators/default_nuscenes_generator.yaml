@@ -6,6 +6,7 @@ hydra:
   output_subdir: code/hydra # Store hydra's config breakdown here for debugging
 
 defaults:
+  - /datasets/nuscenes/detection3d
   - /database@database: nuscenes/nuscenes_trainval
   - override /hydra/hydra_logging: none # Disable hydra's logging
   - _self_

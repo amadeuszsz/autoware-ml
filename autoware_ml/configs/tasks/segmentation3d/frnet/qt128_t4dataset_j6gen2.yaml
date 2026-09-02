@@ -1,6 +1,7 @@
 # @package _global_
 defaults:
   - /tasks/segmentation3d/frnet/base
+  - /datasets/t4dataset/detection3d
   - /datasets/t4dataset/segmentation3d
   - /datasets/t4dataset/lidar
   - /database@database: t4dataset/t4dataset_j6gen2_semaseg

@@ -1,6 +1,7 @@
 # @package _global_
 defaults:
   - /tasks/calibration_status/calibration_status_classifier/resnet18_base
+  - /datasets/t4dataset/detection3d
   - /datasets/t4dataset/camera
   - /database@database: t4dataset/t4dataset_gen2_base
   - _self_

@@ -1,13 +1,9 @@
 # @package t4dataset.detection3d_segmentation3d
 
-defaults:
-  - /datasets/t4dataset/detection3d
-  - /datasets/t4dataset/segmentation3d
-  - _self_
-
-# Metrics scored on the joint detection and segmentation predictions of one model. The
-# segmentation taxonomy starts with the detection taxonomy, which the partial detection score
-# validates, so a detection class and its segmentation class share one index.
+# Metrics scored on the joint detection and segmentation predictions of one model. The task
+# composes the detection3d and segmentation3d packages alongside this one. The segmentation
+# taxonomy starts with the detection taxonomy, which the partial detection score validates, so
+# a detection class and its segmentation class share one index.
 
 # Detection classes the partial detection score reports: the small objects where a few
 # correctly segmented points already matter.
