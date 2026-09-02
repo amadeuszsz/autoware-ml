@@ -119,9 +119,9 @@ def test_suite_demands_boxes_for_box_reading_components() -> None:
     suite = Segmentation3DPointCloudMetricSuite(
         components=[
             PartialDetectionScore(
-                box_label_to_seg_class={0: 1},
+                det_class_names=CLASS_NAMES,
                 seg_class_names=CLASS_NAMES,
-                class_names=("ped",),
+                class_names=("obstacle",),
                 stages=["test"],
             )
         ],
@@ -227,7 +227,7 @@ def test_error_clusters_emits_global_and_per_class() -> None:
 
 
 def test_partial_detection_credit_landmarks() -> None:
-    # One box (det label 0 -> seg class 1) containing 4 points, 1 correct -> credit ~0.5.
+    # One obstacle box (det label 1, seg class 1) containing 4 points, 1 correct -> credit ~0.5.
     coord = np.array([[0.0, 0.0, 0.0], [0.2, 0.0, 0.0], [-0.2, 0.0, 0.0], [0.0, 0.2, 0.0]])
     scores = np.full((4, 2), 0.5)
     frame = FramePoints(
@@ -237,22 +237,62 @@ def test_partial_detection_credit_landmarks() -> None:
         confidence=confidence(scores),
         entropy=normalized_entropy(scores),
         gt_boxes=np.array([[0.0, 0.0, 0.0, 2.0, 2.0, 2.0, 0.0]], dtype=np.float64),
-        gt_box_labels=np.array([0], dtype=np.int64),
+        gt_box_labels=np.array([1], dtype=np.int64),
     )
     out = PartialDetectionScore(
-        box_label_to_seg_class={0: 1}, seg_class_names=CLASS_NAMES, class_names=("ped",)
+        det_class_names=CLASS_NAMES, seg_class_names=CLASS_NAMES, class_names=("obstacle",)
     ).evaluate(_state([frame]), EvalStage.TEST)
     # s(1)/s(4) with h=1 -> (1/2)/(4/5) = 0.625
-    assert out["pd_score_ped"] == pytest.approx(0.625)
+    assert out["pd_score_obstacle"] == pytest.approx(0.625)
+    assert "pd_score_road" not in out
     assert out["pd_skipped_low_point_boxes"] == pytest.approx(0.0)
 
 
+def test_partial_detection_shares_the_index_of_a_detection_prefix() -> None:
+    # The segmentation taxonomy extends the detection taxonomy, a detection class scores
+    # the segmentation class at the same index without a mapping.
+    metric = PartialDetectionScore(
+        det_class_names=("road",),
+        seg_class_names=CLASS_NAMES,
+        class_names=("road",),
+    )
+    frame = _frame([0, 1], target=[0, 0], pred=[0, 1])
+    frame = FramePoints(
+        coord=frame.coord,
+        pred=frame.pred,
+        target=frame.target,
+        confidence=frame.confidence,
+        entropy=frame.entropy,
+        gt_boxes=np.array([[0.0, 0.0, 0.0, 200.0, 200.0, 2.0, 0.0]], dtype=np.float64),
+        gt_box_labels=np.array([0], dtype=np.int64),
+    )
+
+    out = metric.evaluate(_state([frame]), EvalStage.TEST)
+
+    assert metric.scored_labels == {0: "road"}
+    assert out["pd_score_road"] == pytest.approx((1 / 2) / (2 / 3))
+
+
+def test_partial_detection_rejects_a_segmentation_taxonomy_without_the_detection_prefix() -> None:
+    with pytest.raises(ValueError, match="must start with det_class_names"):
+        PartialDetectionScore(
+            det_class_names=("obstacle",), seg_class_names=CLASS_NAMES, class_names=("obstacle",)
+        )
+
+
+def test_partial_detection_rejects_a_scored_class_outside_the_detection_classes() -> None:
+    with pytest.raises(ValueError, match="are not detection classes"):
+        PartialDetectionScore(
+            det_class_names=CLASS_NAMES, seg_class_names=CLASS_NAMES, class_names=("ped",)
+        )
+
+
 def test_partial_detection_rejects_mismatched_class_space() -> None:
-    # A grouped suite folds labels into another index space, the mapping must
+    # A grouped suite folds labels into another index space, the shared index must
     # refuse to score it rather than hit the wrong classes.
     frame = _frame([0, 1], target=[0, 0], pred=[0, 0])
     metric = PartialDetectionScore(
-        box_label_to_seg_class={0: 1}, seg_class_names=("other", "space"), class_names=("ped",)
+        det_class_names=("other",), seg_class_names=("other", "space"), class_names=("other",)
     )
     with pytest.raises(ValueError, match="index space"):
         metric.evaluate(_state([frame]), EvalStage.TEST)

@@ -3,44 +3,12 @@ defaults:
   - /tasks/multi/ptv3/tiny
   - /datasets/t4dataset/detection3d
   - /datasets/t4dataset/segmentation3d
+  - /datasets/t4dataset/detection3d_segmentation3d
   - /datasets/t4dataset/lidar
   - /database@database: t4dataset/t4dataset_j6gen2_segdet3d
   - _self_
 
 dataset: ${t4dataset}
-
-t4dataset:
-  segmentation3d:
-    point_components_extra:
-      - _target_: autoware_ml.metrics.segmentation3d.partial_detection.PartialDetectionScore
-        stages: [test]
-        box_label_to_seg_class: {4: 4, 5: 5, 6: 6, 9: 9}
-        seg_class_names: ${t4dataset.segmentation3d.class_names}
-        class_names: ${t4dataset.detection3d.class_names}
-      - _target_: autoware_ml.metrics.segmentation3d.partial_detection.PartialDetectionScore
-        stages: [test]
-        box_label_to_seg_class: {4: 4, 5: 5, 6: 6, 9: 9}
-        seg_class_names: ${t4dataset.segmentation3d.class_names}
-        class_names: ${t4dataset.detection3d.class_names}
-        filter: ${t4dataset.segmentation3d.region_filters.road}
-      - _target_: autoware_ml.metrics.segmentation3d.partial_detection.PartialDetectionScore
-        stages: [test]
-        box_label_to_seg_class: {4: 4, 5: 5, 6: 6, 9: 9}
-        seg_class_names: ${t4dataset.segmentation3d.class_names}
-        class_names: ${t4dataset.detection3d.class_names}
-        filter: ${t4dataset.segmentation3d.region_filters.walkway}
-      - _target_: autoware_ml.metrics.segmentation3d.partial_detection.PartialDetectionScore
-        stages: [test]
-        box_label_to_seg_class: {4: 4, 5: 5, 6: 6, 9: 9}
-        seg_class_names: ${t4dataset.segmentation3d.class_names}
-        class_names: ${t4dataset.detection3d.class_names}
-        filter: ${t4dataset.segmentation3d.corridor_filter}
-      - _target_: autoware_ml.metrics.segmentation3d.partial_detection.PartialDetectionScore
-        stages: [test]
-        box_label_to_seg_class: {4: 4, 5: 5, 6: 6, 9: 9}
-        seg_class_names: ${t4dataset.segmentation3d.class_names}
-        class_names: ${t4dataset.detection3d.class_names}
-        filter: ${t4dataset.segmentation3d.collision_filter}
 
 point_cloud_range: [-122.88, -122.88, -3.0, 122.88, 122.88, 5.0]
 grid_size: 0.12
@@ -178,6 +146,8 @@ datamodule:
         feature_names: [x, y, z, intensity, timestamp_difference]
 
 model:
+  # The joint package scores the segmentation of detected small objects
+  metrics: ${merge_lists:${dataset.detection3d.metrics},${dataset.segmentation3d.metrics},${dataset.detection3d_segmentation3d.metrics}}
   bev_neck:
     bev_projector:
       output_shape: [256, 256]

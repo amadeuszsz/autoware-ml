@@ -1,0 +1,61 @@
+# @package t4dataset.detection3d_segmentation3d
+
+defaults:
+  - /datasets/t4dataset/detection3d
+  - /datasets/t4dataset/segmentation3d
+  - _self_
+
+# Metrics scored on the joint detection and segmentation predictions of one model. The
+# segmentation taxonomy starts with the detection taxonomy, which the partial detection score
+# validates, so a detection class and its segmentation class share one index.
+
+# Detection classes the partial detection score reports: the small objects where a few
+# correctly segmented points already matter.
+class_names:
+  - motorcycle
+  - bicycle
+  - pedestrian
+  - traffic_cone
+point_components:
+  # Whole-scene.
+  - _target_: autoware_ml.metrics.segmentation3d.partial_detection.PartialDetectionScore
+    stages: [test]
+    det_class_names: ${t4dataset.detection3d.class_names}
+    seg_class_names: ${t4dataset.segmentation3d.class_names}
+    class_names: ${t4dataset.detection3d_segmentation3d.class_names}
+  # Road slice.
+  - _target_: autoware_ml.metrics.segmentation3d.partial_detection.PartialDetectionScore
+    stages: [test]
+    det_class_names: ${t4dataset.detection3d.class_names}
+    seg_class_names: ${t4dataset.segmentation3d.class_names}
+    class_names: ${t4dataset.detection3d_segmentation3d.class_names}
+    filter: ${t4dataset.segmentation3d.region_filters.road}
+  # Walkway slice.
+  - _target_: autoware_ml.metrics.segmentation3d.partial_detection.PartialDetectionScore
+    stages: [test]
+    det_class_names: ${t4dataset.detection3d.class_names}
+    seg_class_names: ${t4dataset.segmentation3d.class_names}
+    class_names: ${t4dataset.detection3d_segmentation3d.class_names}
+    filter: ${t4dataset.segmentation3d.region_filters.walkway}
+  # Straight-corridor slice.
+  - _target_: autoware_ml.metrics.segmentation3d.partial_detection.PartialDetectionScore
+    stages: [test]
+    det_class_names: ${t4dataset.detection3d.class_names}
+    seg_class_names: ${t4dataset.segmentation3d.class_names}
+    class_names: ${t4dataset.detection3d_segmentation3d.class_names}
+    filter: ${t4dataset.segmentation3d.corridor_filter}
+  # Collision-area slice.
+  - _target_: autoware_ml.metrics.segmentation3d.partial_detection.PartialDetectionScore
+    stages: [test]
+    det_class_names: ${t4dataset.detection3d.class_names}
+    seg_class_names: ${t4dataset.segmentation3d.class_names}
+    class_names: ${t4dataset.detection3d_segmentation3d.class_names}
+    filter: ${t4dataset.segmentation3d.collision_filter}
+metrics:
+  - _target_: autoware_ml.metrics.segmentation3d.point_cloud.Segmentation3DPointCloudMetricSuite
+    prefix: segdet3d_pt
+    components: ${t4dataset.detection3d_segmentation3d.point_components}
+    num_classes: ${t4dataset.segmentation3d.num_classes}
+    ignore_index: ${t4dataset.segmentation3d.ignore_index}
+    class_names: ${t4dataset.segmentation3d.class_names}
+    ranges: ${t4dataset.segmentation3d.metric_ranges}

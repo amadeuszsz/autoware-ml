@@ -12,11 +12,12 @@ a release gate.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 
 from autoware_ml.metrics.base import EvalStage, Metric
 from autoware_ml.metrics.detection3d.matching import mean_valid
-from autoware_ml.metrics.detection3d.naming import label_metric_name
 from autoware_ml.metrics.segmentation3d.point_cloud import (
     PointCloudSegState,
     valid_point_mask,
@@ -38,65 +39,67 @@ def _points_in_bev_box(coord_xy: np.ndarray, box: np.ndarray) -> np.ndarray:
 class PartialDetectionScore(Metric[PointCloudSegState]):
     """Saturating credit for partial segmentation of small-object detection boxes.
 
-    The metric refuses to run on a state whose class set differs from
-    ``seg_class_names``: a grouped suite folds labels into another index space,
-    where the box to class mapping would silently score the wrong class.
+    The metric joins two label spaces: the detection classes of the ground truth boxes and
+    the segmentation classes of the points. It requires the segmentation taxonomy to start
+    with the detection taxonomy, so a detection class and its segmentation class share the
+    index and no hand written mapping is needed. It refuses to run on a state whose class
+    set differs from ``seg_class_names``: a grouped suite folds labels into another index
+    space, where the shared index would silently score the wrong class.
     """
 
     needs_boxes = True
 
     def __init__(
         self,
-        box_label_to_seg_class: dict[int, int],
-        seg_class_names: tuple[str, ...] | list[str],
-        class_names: tuple[str, ...] | None = None,
+        det_class_names: Sequence[str],
+        seg_class_names: Sequence[str],
+        class_names: Sequence[str],
         half_saturation: float = 1.0,
         min_points: int = 1,
         stages: tuple[str, ...] | list[str] = ("test",),
         filter=None,
     ) -> None:
-        """Validate the box to class mapping against the label spaces.
+        """Validate the two label spaces and the scored class selection.
 
         Args:
-            box_label_to_seg_class: Detection class index to the segmentation class its
-                interior points should carry, in the label space named by ``seg_class_names``.
+            det_class_names: Ordered detection class names, the label space of the boxes.
             seg_class_names: Ordered segmentation class names the suite state must match.
-            class_names: Ordered detection class names for the reported keys, or ``None`` for
-                index-based keys.
+                They must start with ``det_class_names``.
+            class_names: Detection class names the score is reported for, a subset of
+                ``det_class_names``.
             half_saturation: Correct-point count earning half the existence credit.
             min_points: Smallest interior point count a box needs to be scored.
             stages: Stage names this metric reports for, as in :class:`Metric`.
             filter: Optional selection axis, as in :class:`Metric`.
         """
         super().__init__(stages, filter=filter)
-        self.box_label_to_seg_class = {int(k): int(v) for k, v in box_label_to_seg_class.items()}
+        self.det_class_names = tuple(det_class_names)
         self.seg_class_names = tuple(seg_class_names)
-        self.class_names = tuple(class_names) if class_names is not None else None
+        self.class_names = tuple(class_names)
         self.half_saturation = float(half_saturation)
         self.min_points = int(min_points)
         if self.min_points < 1:
             raise ValueError("min_points must be >= 1.")
-        out_of_range = sorted(
-            seg_class
-            for seg_class in self.box_label_to_seg_class.values()
-            if not 0 <= seg_class < len(self.seg_class_names)
-        )
-        if out_of_range:
+        if not self.det_class_names:
+            raise ValueError("det_class_names must not be empty.")
+        if self.seg_class_names[: len(self.det_class_names)] != self.det_class_names:
             raise ValueError(
-                f"box_label_to_seg_class values {out_of_range} are outside "
-                f"seg_class_names ({len(self.seg_class_names)} classes)."
+                f"seg_class_names {self.seg_class_names} must start with det_class_names "
+                f"{self.det_class_names}, the partial detection score shares one index between "
+                "a detection class and its segmentation class."
             )
-        if self.class_names is not None:
-            bad_keys = sorted(
-                label
-                for label in self.box_label_to_seg_class
-                if not 0 <= label < len(self.class_names)
+        if not self.class_names:
+            raise ValueError("class_names must name at least one detection class to score.")
+        if len(set(self.class_names)) != len(self.class_names):
+            raise ValueError(f"class_names must not repeat a class, got {self.class_names}.")
+        unknown = [name for name in self.class_names if name not in self.det_class_names]
+        if unknown:
+            raise ValueError(
+                f"class_names {unknown} are not detection classes {self.det_class_names}."
             )
-            if bad_keys:
-                raise ValueError(
-                    f"box_label_to_seg_class keys {bad_keys} are outside class_names "
-                    f"({len(self.class_names)} detection classes)."
-                )
+        self.scored_labels: dict[int, str] = {
+            self.det_class_names.index(name): name for name in self.class_names
+        }
 
     def _credit(self, k: int, n: int) -> float:
         h = self.half_saturation
@@ -104,7 +107,7 @@ class PartialDetectionScore(Metric[PointCloudSegState]):
         return saturate(k) / saturate(n)
 
     def evaluate(self, state: PointCloudSegState, stage: EvalStage) -> dict[str, float]:
-        """Mean per-instance credit per detection class, over small-object boxes.
+        """Mean per-instance credit per scored detection class, over its ground truth boxes.
 
         Args:
             state: Point-cache state for one (filter, range) bucket.
@@ -117,15 +120,15 @@ class PartialDetectionScore(Metric[PointCloudSegState]):
             raise ValueError(
                 "PartialDetectionScore was configured for segmentation classes "
                 f"{self.seg_class_names} but the suite provides {state.class_names}, "
-                "the box to class mapping would score the wrong index space."
+                "the shared class index would score the wrong index space."
             )
-        credits: dict[int, list[float]] = {label: [] for label in self.box_label_to_seg_class}
+        credits: dict[int, list[float]] = {label: [] for label in self.scored_labels}
         skipped = 0
         for frame in state.frames:
             boxes = [
                 (box, int(box_label))
                 for box, box_label in zip(frame.gt_boxes, frame.gt_box_labels, strict=True)
-                if int(box_label) in self.box_label_to_seg_class
+                if int(box_label) in credits
             ]
             if not boxes:
                 continue
@@ -156,13 +159,14 @@ class PartialDetectionScore(Metric[PointCloudSegState]):
                 if n < self.min_points:
                     skipped += 1
                     continue
-                correct = int(np.sum(pred[inside] == self.box_label_to_seg_class[label]))
+                # The detection class and its segmentation class share the label index
+                correct = int(np.sum(pred[inside] == label))
                 credits[label].append(self._credit(correct, n))
 
         report: dict[str, float] = {"pd_skipped_low_point_boxes": float(skipped)}
         per_class_means: list[float] = []
         for label, values in credits.items():
-            name = label_metric_name(label, self.class_names)
+            name = self.scored_labels[label]
             if not values:
                 report[f"pd_score_{name}"] = float("nan")
                 continue

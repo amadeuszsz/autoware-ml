@@ -484,9 +484,11 @@ walkway, corridor, collision area). Every key is also emitted per radial range b
 per behaviour group through the grouped twin suite. This is a profiling starting point, drop the
 combinations that do not earn their compute in your project. The road slice unions the lanelet
 primitives road, road_shoulder, crosswalk, drivable_area, intersection_area, and
-crosswalk_polygon. The partial-detection score is wired in the joint detection plus segmentation
-configs only (the detection ground truth rides in seg_frames) and is never grouped, its box to
-class mapping is bound to the trained label space.
+crosswalk_polygon. The partial-detection score lives in the joint detection and segmentation
+dataset package, composed by the joint configs only, since the detection ground truth rides in
+seg_frames. That package names the detection classes it scores and the score validates that the
+segmentation taxonomy starts with the detection taxonomy, so both share one class index. It is
+never grouped.
 
 ## Detection metrics
 
@@ -1132,8 +1134,9 @@ right there.
 `PartialDetectionScore` groups segmentation points inside each small-object ground-truth box and
 rewards partial hits with a saturating credit: for a pedestrian or a cone, classifying even a few
 points correctly is far better than none, which point-averaged mIoU cannot see. A diagnostic
-metric wired in the joint detection plus segmentation configs, whose `seg_frames` carry the
-detection ground-truth boxes.
+metric of the joint detection and segmentation dataset package, whose `seg_frames` carry the
+detection ground-truth boxes. It scores the detection classes the package names and reads the
+segmentation class of a box at the same index, which the shared taxonomy prefix guarantees.
 
 <div class="metrics-fig">
 <svg viewBox="0 0 660 210" width="660" height="210" role="img" aria-labelledby="fig-d3-title">
