@@ -40,8 +40,8 @@ autoware-ml generate-dataset --config-name <generator_config> [hydra_overrides..
 - `--config-name`: Name of a config under `configs/generators/`, or a YAML config path
 
 All remaining arguments are passed to Hydra as overrides. The scenario lists are read from the
-perception-devops checkout below `working_dir` and the table is written below
-`cache_root_path`, see [database design](../databases/design.md).
+perception-devops checkout below `working_dir` and the table is written below the `.cache`
+directory of the workspace, see [database design](../databases/design.md).
 
 **Example:**
 

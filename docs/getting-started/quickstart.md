@@ -28,8 +28,8 @@ autoware-ml train --config-name segmentation3d/ptv3/voxel005_51m_nuscenes
 ```
 
 Training reads the record table of the configured database, a parquet file named after the
-hash of the database definition. Mount your records directory with `--records-path`. A missing
-table is generated on the first run, or ahead of time with
+hash of the database definition, from the `.cache` directory of the workspace. A missing table
+is generated on the first run, or ahead of time with
 `autoware-ml generate-dataset --config-name default_nuscenes_generator` (see
 [database design](../databases/design.md)).
 

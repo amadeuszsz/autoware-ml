@@ -146,10 +146,10 @@ task reads. Every database a task binds must carry the same taxonomy, so a rehea
 takes the override at its own binding as well. Dataset packages are composed by the task alone,
 never by a database or a metrics package.
 
-Record tables are written below `cache_root_path`, mounted with `--records-path` or
-`AUTOWARE_ML_RECORDS_PATH`, so the data mount can stay read only. The scenario lists are read
-from the perception-devops checkout below `working_dir`. See
-[database design](../databases/design.md).
+Record tables are written below `cache_root_path`, the `.cache` directory of the workspace.
+They index the datasets and stay small, so they need no mount of their own, and the data
+mount is read only. The scenario lists are read from the perception-devops checkout below
+`working_dir`. See [database design](../databases/design.md).
 
 Collation is not configurable. `Batch.collate` turns the transformed samples into the typed
 `Batch` the models consume, and model family specific layouts are derived later by the runtime

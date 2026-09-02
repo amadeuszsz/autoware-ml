@@ -152,12 +152,10 @@ The table of a database is `<cache_path>/<cache_file_prefix_name>_<database_hash
 The hash covers the whole database definition, scenario lists, taxonomy, pipelines and
 generation parameters, together with the table schema, so a change to any of them selects a
 new file and a stale table is never read. Generation skips an existing table and loading a
-missing one fails. Tables live below `cache_root_path`, a writable mount separate from the
-data mount, so the data mount can stay read only:
-
-```bash
-./docker/container.sh --records-path /my/records   # or AUTOWARE_ML_RECORDS_PATH
-```
+missing one fails. Tables live below `cache_root_path`, the `.cache` directory of the
+workspace. A table indexes the samples of a corpus and stores paths into the data mount, not
+the data itself, so the directory stays small, is ignored by git, and needs no mount of its
+own. The data mount is read only, the workspace mount is read-write.
 
 ### Splits and sources
 
@@ -178,8 +176,8 @@ autoware-ml generate-dataset --config-name default_t4dataset_generator database.
 ```
 
 Every remaining argument is a Hydra override. The scenario lists are read from the
-perception-devops checkout below `working_dir`, and the table is written below
-`cache_root_path`.
+perception-devops checkout below `working_dir`, and the table is written below the `.cache`
+directory of the workspace.
 
 ## Extending the Database
 
