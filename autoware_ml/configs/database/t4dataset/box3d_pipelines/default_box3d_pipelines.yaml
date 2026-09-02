@@ -1,0 +1,29 @@
+# Box pipelines applied to every sample when the record table is generated. The labels
+# they resolve are what training reads, so a change here regenerates the table.
+- _target_: autoware_ml.databases.box3d_pipelines.box3d_label_remapper.Box3DLabelRemapper
+  _convert_: all
+
+  label_remapper: ${database.label_remapper}
+  class_names: ${database.class_names}
+  ignore_label_index: ${database.ignore_label_index}
+
+# A trailer touching a truck extends the truck box over the trailer. A trailer without a
+# truck keeps its own name, which is outside the trained classes, so it is ignored.
+- _target_: autoware_ml.databases.box3d_pipelines.box3d_merger.Box3DExtendLongerMerger
+  _convert_: all
+
+  target_labels:
+    truck:
+      - truck
+      - trailer
+
+  proximity_distance_threshold: 1.0
+  class_names: ${database.class_names}
+
+- _target_: autoware_ml.databases.box3d_pipelines.box3d_velocity_clip.Box3DVelocityNormClip
+  _convert_: all
+
+  # Clip the ground plane velocity norm (ground plane (x and y) speed in m/s) of the
+  # 3D bounding boxes to be at most 25 m/s (~ 90 km/h),
+  # This is to prevent outliers in the velocity from affecting the training and evaluation metrics.
+  max_ground_plane_speed: 25.0

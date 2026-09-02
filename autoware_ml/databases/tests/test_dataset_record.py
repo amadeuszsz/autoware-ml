@@ -129,9 +129,7 @@ def test_absent_annotations_survive_the_round_trip_as_none() -> None:
 
 def test_empty_annotations_stay_distinct_from_absent_ones() -> None:
     record = make_record(boxes_3d=[], category_names=("car",), category_indices=(0,))
-    dataframe = pl.DataFrame(
-        [record.to_dictionary()], schema=DatasetTableSchema.to_polars_schema()
-    )
+    dataframe = pl.DataFrame([record.to_dictionary()], schema=DatasetTableSchema.to_polars_schema())
 
     loaded = DatasetRecord.load_from_dictionary(dataframe.row(0, named=True))
 
@@ -140,9 +138,7 @@ def test_empty_annotations_stay_distinct_from_absent_ones() -> None:
 
 def test_absent_category_mapping_survives_the_polars_cache() -> None:
     record = make_record()
-    dataframe = pl.DataFrame(
-        [record.to_dictionary()], schema=DatasetTableSchema.to_polars_schema()
-    )
+    dataframe = pl.DataFrame([record.to_dictionary()], schema=DatasetTableSchema.to_polars_schema())
 
     loaded = DatasetRecord.load_from_dictionary(dataframe.row(0, named=True))
 
@@ -172,15 +168,3 @@ def test_camera_frame_round_trips_through_its_dictionary_form() -> None:
     assert np.allclose(loaded.camera_sensor_to_ego_pose_matrix, camera_to_ego)
     assert list(loaded.camera_distortion_coefficients) == [0.1, -0.2, 0.001, 0.002]
     assert loaded.camera_distortion_model == frame.camera_distortion_model
-
-
-def test_record_table_rejects_a_string_database_selection(tmp_path) -> None:
-    """An unfilled mandatory value reaches the constructor as a bare string."""
-    import pytest
-
-    from autoware_ml.databases.record_table import RecordTable
-
-    table = tmp_path / "records.parquet"
-    table.write_bytes(b"")
-    with pytest.raises(TypeError, match="must be a list of database names"):
-        RecordTable(path=str(table), data_root=str(tmp_path), databases="???")

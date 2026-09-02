@@ -1,15 +1,22 @@
 # @package _global_
 
-# Root of the read only data mount the record paths resolve against. Record tables
-# themselves live at a fixed /workspace/records, a separate writable mount, so the data
-# mount can stay read only and every user can map their own records directory.
+defaults:
+  - /datamodule/splitter@datamodule.splitter: default_scenario_splitter
+
+# Root of the data mount the record paths resolve against.
 data_root_path: ${oc.env:AUTOWARE_ML_DATA_PATH}
+# Writable mount the record tables are written to, so the data mount can stay read only.
+cache_root_path: /workspace/records
+# Directory holding the perception-devops checkout with the scenario lists.
+working_dir: /workspace
 
 datamodule:
   _target_: autoware_ml.datamodule.base.DataModule
   _convert_: all
   dataset: ???
-  sources: ???
+  train_sources: ???
+  val_sources: ???
+  test_sources: ???
   train_dataloader_cfg:
     pin_memory: true
     persistent_workers: true

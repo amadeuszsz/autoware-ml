@@ -14,9 +14,10 @@
 
 """Base datamodule abstractions for Autoware-ML.
 
-The datamodule reads dataset records from the configured record tables, selects the split
-each table declares, and serves typed samples through the transform pipelines. Batches are
-collated into the typed Batch, the single interface the models consume.
+The datamodule generates the record table of every configured database when it is absent,
+splits the records by the scenario lists of the database, and serves typed samples through
+the transform pipelines. Batches are collated into the typed Batch, the single interface the
+models consume.
 """
 
 from __future__ import annotations
@@ -33,11 +34,8 @@ import polars as pl
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
 
-from autoware_ml.databases.schemas.dataset_schemas import (
-    DatasetRecord,
-)
-from autoware_ml.datamodule.samples.calibration import CalibrationSample
-from autoware_ml.utils.calibration import CalibrationData
+from autoware_ml.databases.base_database import BaseDatabase
+from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord, DatasetTableSchema
 from autoware_ml.datamodule.pipeline_context import PipelineContext
 from autoware_ml.datamodule.samplers import (
     DistributedWeightedRandomSampler,
@@ -46,10 +44,14 @@ from autoware_ml.datamodule.samplers import (
     compute_frame_sampling_weights,
 )
 from autoware_ml.datamodule.samples.batch import Batch
-from autoware_ml.datamodule.samples.sample import Sample
+from autoware_ml.datamodule.samples.calibration import CalibrationSample
 from autoware_ml.datamodule.samples.meta import FrameMeta
+from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.datamodule.sources import DatasetSource, coerce_sources
+from autoware_ml.datamodule.splitters.scenario_splitter import ScenarioSplitter
 from autoware_ml.transforms.base import TransformsCompose
+from autoware_ml.types.dataset import SplitType
+from autoware_ml.utils.calibration import CalibrationData
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +62,18 @@ _STAGE_SPLITS: Mapping[str, Sequence[str]] = {
     "predict": ("predict",),
 }
 
-_RECORD_SPLITS: Mapping[str, str] = {
+# The predict split serves the test frames without ground truth requirements
+_RECORD_SPLITS: Mapping[str, SplitType] = {
+    "train": SplitType.TRAIN,
+    "val": SplitType.VAL,
+    "test": SplitType.TEST,
+    "predict": SplitType.TEST,
+}
+
+_SOURCE_SPLITS: Mapping[str, str] = {
     "train": "train",
     "val": "val",
     "test": "test",
-    # The predict split serves the test frames without ground truth requirements
     "predict": "test",
 }
 
@@ -338,17 +347,21 @@ class Dataset(TorchDataset, ABC):
 
 
 class DataModule(L.LightningDataModule):
-    """Lightning DataModule serving typed batches from the configured record tables.
+    """Lightning DataModule serving typed batches from the configured databases.
 
-    Setup reads the split each source declares in its record table and assigns the records
-    to the split datasets, and the dataloaders collate typed samples into the typed Batch.
-    Record tables are generated outside this repository, so nothing is built here.
+    Every split declares its own dataset sources. Preparation generates the record table of
+    every database that has none yet, setup loads each table once, splits it by the scenario
+    lists of its database and assigns the records to the split datasets, and the dataloaders
+    collate typed samples into the typed Batch.
     """
 
     def __init__(
         self,
         dataset: Any,
-        sources: Sequence[DatasetSource | Mapping[str, Any]],
+        splitter: ScenarioSplitter,
+        train_sources: Sequence[DatasetSource | Mapping[str, Any]],
+        val_sources: Sequence[DatasetSource | Mapping[str, Any]],
+        test_sources: Sequence[DatasetSource | Mapping[str, Any]],
         train_transforms: TransformsCompose | None = None,
         val_transforms: TransformsCompose | None = None,
         test_transforms: TransformsCompose | None = None,
@@ -364,8 +377,10 @@ class DataModule(L.LightningDataModule):
         Args:
             dataset: Partial dataset factory of the dataset family. It is called once per
                 split with the split transform pipeline as dataset_transforms.
-            sources: Dataset sources served by this datamodule. All sources must belong to
-                the dataset family of the factory.
+            splitter: Splitter assigning the records of a database to its splits.
+            train_sources: Dataset sources served by the training split.
+            val_sources: Dataset sources served by the validation split.
+            test_sources: Dataset sources served by the test and predict splits.
             train_transforms: Transform pipeline applied to training samples.
             val_transforms: Transform pipeline applied to validation samples.
             test_transforms: Transform pipeline applied to test samples.
@@ -380,7 +395,12 @@ class DataModule(L.LightningDataModule):
         super().__init__()
 
         self.dataset_factory = dataset
-        self.sources = coerce_sources(sources)
+        self.splitter = splitter
+        self.sources: Mapping[str, tuple[DatasetSource, ...]] = {
+            "train": coerce_sources(train_sources),
+            "val": coerce_sources(val_sources),
+            "test": coerce_sources(test_sources),
+        }
         self.train_transforms = train_transforms
         self.val_transforms = val_transforms
         self.test_transforms = test_transforms
@@ -395,7 +415,7 @@ class DataModule(L.LightningDataModule):
         self.val_dataset: Dataset | None = None
         self.test_dataset: Dataset | None = None
         self.predict_dataset: Dataset | None = None
-        self._split_source_records: dict[str, list[SourceRecords]] = {}
+        self._split_frames: dict[tuple[str, SplitType], pl.DataFrame] = {}
 
     @staticmethod
     def _coerce_dataloader_cfg(
@@ -427,8 +447,57 @@ class DataModule(L.LightningDataModule):
             f"got {type(cfg)!r}."
         )
 
-    def _split_records(self, split: str) -> list[SourceRecords]:
-        """Collect the records of every source for one split.
+    def databases(self) -> Sequence[BaseDatabase]:
+        """Every distinct database of every split, in declaration order.
+
+        Returns:
+            Databases of the datamodule, one per database hash.
+        """
+        databases: dict[str, BaseDatabase] = {}
+        for sources in self.sources.values():
+            for source in sources:
+                databases.setdefault(source.database.database_hash, source.database)
+        return list(databases.values())
+
+    def prepare_data(self) -> None:
+        """Generate the record table of every database that has none yet.
+
+        Lightning calls this on one process per node, so the tables are written once.
+        """
+        for database in self.databases():
+            database.process_scenario_records()
+
+    def _split_frame(self, database: BaseDatabase, split: SplitType) -> pl.DataFrame:
+        """Records of one split of one database, ordered by scenario and sample.
+
+        The table of a database is loaded and split once, then every split is served from
+        memory.
+
+        Args:
+            database: Database the records come from.
+            split: Split to serve.
+
+        Returns:
+            Records of the split.
+
+        Raises:
+            ValueError: If the scenarios of the database put no records into the split.
+        """
+        key = (database.database_hash, split)
+        if key not in self._split_frames:
+            frames = self.splitter.split_by_polars_dataframe(
+                database.load_polars_scenario_dataframe(), database.scenarios
+            )
+            for frame_split, frame in frames.items():
+                self._split_frames[(database.database_hash, frame_split)] = frame.sort(
+                    [DatasetTableSchema.SCENARIO_ID.name, DatasetTableSchema.SAMPLE_INDEX.name]
+                )
+        if key not in self._split_frames or self._split_frames[key].is_empty():
+            raise ValueError(f"Database {database.version} holds no {split.value} records.")
+        return self._split_frames[key]
+
+    def _source_records(self, split: str) -> list[SourceRecords]:
+        """Collect the records of every source of one split.
 
         Args:
             split: Dataset split name.
@@ -436,20 +505,15 @@ class DataModule(L.LightningDataModule):
         Returns:
             Records of every source of the split.
         """
-        if split in self._split_source_records:
-            return self._split_source_records[split]
-
         record_split = _RECORD_SPLITS[split]
-        source_records = [
+        return [
             SourceRecords(
                 source=source,
-                records=source.records.load(record_split),
-                data_root=source.records.data_root,
+                records=self._split_frame(source.database, record_split),
+                data_root=str(source.database.root_path),
             )
-            for source in self.sources
+            for source in self.sources[_SOURCE_SPLITS[split]]
         ]
-        self._split_source_records[split] = source_records
-        return source_records
 
     def setup(self, stage: str | None = None) -> None:
         """Create the datasets of every split of the stage.
@@ -467,7 +531,7 @@ class DataModule(L.LightningDataModule):
                 raise TypeError(
                     f"The dataset factory must build a Dataset, got {type(dataset).__name__}."
                 )
-            dataset.assign_source_records(self._split_records(split))
+            dataset.assign_source_records(self._source_records(split))
             setattr(self, f"{split}_dataset", dataset)
 
     @staticmethod

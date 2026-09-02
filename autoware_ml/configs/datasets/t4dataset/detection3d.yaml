@@ -82,20 +82,16 @@ name_mapping:
   bicycle_rack: bicycle_rack
   vehicle_protruding_object: vehicle_extension
   open_door: vehicle_extension
+# Class and attribute pairs dropped from the detection targets, keyed by the trained class.
+# Parked and rider-less two-wheelers are excluded under both the current and the older
+# attribute spellings.
 filter_attributes:
-  # new t4 spec (two_wheel_vehicle_state), drop parked / rider-less two-wheelers
   - [bicycle, vehicle_state.parked]
   - [bicycle, two_wheel_vehicle_state.without_rider]
+  - [bicycle, cycle_state.without_rider]
   - [motorcycle, vehicle_state.parked]
   - [motorcycle, two_wheel_vehicle_state.without_rider]
-  # nuScenes + older-t4 aliases kept for compatibility
-  - [vehicle.bicycle, vehicle_state.parked]
-  - [vehicle.bicycle, cycle_state.without_rider]
-  - [vehicle.motorcycle, vehicle_state.parked]
-  - [vehicle.motorcycle, motorcycle_state.without_rider]
-  - [bicycle, cycle_state.without_rider]
   - [motorcycle, motorcycle_state.without_rider]
-merge_objects: [[truck, [truck, trailer]]]
 train_min_points_near: 3
 train_min_points_far: 2
 eval_class_range:

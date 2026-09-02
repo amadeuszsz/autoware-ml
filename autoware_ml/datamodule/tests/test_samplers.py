@@ -35,7 +35,7 @@ def _config(**overrides) -> FrameSamplingConfig:
         "low_pedestrian_height_threshold": 1.5,
         "low_pedestrian_bev_range": [-50.0, -50.0, 50.0, 50.0],
         "class_names": ["car", "pedestrian"],
-        "name_mapping": {"car": "car", "pedestrian": "pedestrian"},
+        "ignore_label_index": -1,
     }
     settings.update(overrides)
     return FrameSamplingConfig(**settings)
@@ -97,6 +97,7 @@ class TestComputeFrameSamplingWeights:
         low_pedestrian = make_box3d_data_model(
             params=(1.0, 1.0, 0.0, 0.6, 0.6, 1.2, 0.0, 0.0, 0.0, 0.0),
             label_name="pedestrian",
+            label_index=1,
         )
         records = _records([[_car_box()]] * 5 + [[_car_box(), low_pedestrian]])
 
@@ -109,6 +110,7 @@ class TestComputeFrameSamplingWeights:
         pedestrian_without_points = make_box3d_data_model(
             params=(1.0, 1.0, 0.0, 0.6, 0.6, 1.2, 0.0, 0.0, 0.0, 0.0),
             label_name="pedestrian",
+            label_index=1,
             num_lidar_points=0,
         )
         records = _records(
@@ -122,32 +124,41 @@ class TestComputeFrameSamplingWeights:
         assert weights == [1.0] * 6
 
     def test_filtered_attributes_exclude_boxes_from_category_counting(self) -> None:
-        parked_motorcycle = make_box3d_data_model(
+        parked_bicycle = make_box3d_data_model(
             params=(1.0, 1.0, 0.0, 1.8, 0.8, 1.2, 0.0, 0.0, 0.0, 0.0),
-            label_name="motorcycle",
+            label_name="bicycle",
+            label_index=1,
             attributes=("vehicle_state.parked",),
         )
-        records = _records([[_car_box()], [_car_box(), parked_motorcycle]])
+        records = _records([[_car_box()], [_car_box(), parked_bicycle]])
 
         weights = compute_frame_sampling_weights(
             records,
             _config(
                 class_names=["car", "bicycle"],
-                name_mapping={"car": "car", "motorcycle": "bicycle"},
-                filter_attributes=[["motorcycle", "vehicle_state.parked"]],
+                filter_attributes=[["bicycle", "vehicle_state.parked"]],
             ),
         )
 
         assert weights == [1.0, 1.0]
 
+    def test_a_class_outside_the_configured_names_is_rejected(self) -> None:
+        stranger = make_box3d_data_model(label_name="animal", label_index=7)
+        records = _records([[_car_box(), stranger]])
+
+        with pytest.raises(ValueError, match="not one of the configured class names"):
+            compute_frame_sampling_weights(records, _config())
+
     def test_physically_invalid_boxes_contribute_no_category_evidence(self) -> None:
         negative_dimension = make_box3d_data_model(
             params=(1.0, 1.0, 0.0, 0.6, -0.6, 1.2, 0.0, 0.0, 0.0, 0.0),
             label_name="pedestrian",
+            label_index=1,
         )
         impossible_speed = make_box3d_data_model(
             params=(2.0, 2.0, 0.0, 0.6, 0.6, 1.7, 0.0, 200.0, 200.0, 0.0),
             label_name="pedestrian",
+            label_index=1,
         )
         records = _records([[_car_box()], [negative_dimension, impossible_speed]])
 

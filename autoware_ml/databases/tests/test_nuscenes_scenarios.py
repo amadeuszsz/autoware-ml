@@ -28,7 +28,14 @@ from autoware_ml.types.dataset import SplitType
 def _scenarios(version: str) -> NuscenesScenarios:
     return NuscenesScenarios(
         scenario_root_path="/data/nuscenes",
-        dataset_params=[DatasetParams(dataset_name=version, max_sweeps=2, sample_steps=1)],
+        dataset_params=[
+            DatasetParams(
+                dataset_name=version,
+                max_sweeps=2,
+                sample_steps=1,
+                lidar_pointcloud_num_features=5,
+            )
+        ],
     )
 
 
@@ -60,6 +67,8 @@ def test_scenario_entries_carry_the_dataset_parameters() -> None:
     assert entry.scenario_version == "v1.0-mini"
     assert entry.max_sweeps == 2
     assert entry.sample_steps == 1
+    assert entry.lidar_pointcloud_num_features == 5
+    assert entry.semantic_masks is False
 
 
 def test_an_unsupported_version_is_rejected() -> None:

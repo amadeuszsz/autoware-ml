@@ -13,18 +13,22 @@ class_names:
   - traffic_cone
   - barrier
 num_classes: 7
+# Raw nuScenes category to trained class. A category outside this mapping, such as
+# vehicle.trailer, keeps its name and takes the ignore index.
 name_mapping:
-  car: car
-  truck: truck
-  construction_vehicle: truck
-  # trailer: trailer
-  bus: bus
-  motorcycle: bicycle
-  bicycle: bicycle
-  pedestrian: pedestrian
-  traffic_cone: traffic_cone
-  barrier: barrier
-# merge_objects: [[truck, [truck, trailer]]]  # TODO: support objects merge for nuscenes
+  vehicle.car: car
+  vehicle.truck: truck
+  vehicle.construction: truck
+  vehicle.bus.bendy: bus
+  vehicle.bus.rigid: bus
+  vehicle.bicycle: bicycle
+  vehicle.motorcycle: bicycle
+  human.pedestrian.adult: pedestrian
+  human.pedestrian.child: pedestrian
+  human.pedestrian.construction_worker: pedestrian
+  human.pedestrian.police_officer: pedestrian
+  movable_object.trafficcone: traffic_cone
+  movable_object.barrier: barrier
 filter_attributes: []
 eval_class_range:
   car: 50.0

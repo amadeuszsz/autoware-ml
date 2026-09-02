@@ -59,7 +59,6 @@ class NuscenesRecordsGenerator:
         database_root_path: str,
         version: str,
         scenario_data: Sequence[ScenarioData],
-        lidar_pointcloud_num_features: int,
         ignore_label_index: int,
         box3d_pipelines: Sequence[Box3DPipeline],
     ) -> None:
@@ -70,7 +69,6 @@ class NuscenesRecordsGenerator:
           database_root_path: Root path of the nuScenes database.
           version: Version of the nuScenes database, for example v1.0-trainval.
           scenario_data: Scenario data of the scenes to process, one entry per scene.
-          lidar_pointcloud_num_features: Number of features of the lidar pointcloud.
           ignore_label_index: Label index to use for ignored labels in the box3d annotations.
           box3d_pipelines: List of box3d pipelines to process the box3d annotations.
         """
@@ -78,7 +76,6 @@ class NuscenesRecordsGenerator:
         self.database_root_path = database_root_path
         self.version = version
         self.scenario_data = scenario_data
-        self.lidar_pointcloud_num_features = lidar_pointcloud_num_features
         self.ignore_label_index = ignore_label_index
         self.box3d_pipelines = box3d_pipelines
         self.nuscenes_dataset = NuScenes(
@@ -167,19 +164,19 @@ class NuscenesRecordsGenerator:
             vehicle_type=log_record["vehicle"],
         )
 
-        lidar_frame_data_model, boxes_3d_data_model = self._extract_lidar_frame(sample)
+        lidar_frame_data_model, boxes_3d_data_model = self._extract_lidar_frame(
+            sample, scenario.lidar_pointcloud_num_features
+        )
         lidar_sweep_data_models = self._extract_lidar_sweeps(
-            sample=sample,
             lidar_frame_data_model=lidar_frame_data_model,
             max_sweeps=scenario.max_sweeps,
+            num_features=scenario.lidar_pointcloud_num_features,
         )
         camera_frame_data_models = self._extract_camera_frames(sample)
         lidar_source_data_models = self._extract_lidar_sources(sample)
         category_mapping_data_model = self._extract_category_mapping()
 
         return DatasetRecord(
-            database=scenario.dataset_name,
-            split=scenario.split,
             scenario_id=frame_basic_metadata.scenario_id,
             sample_id=frame_basic_metadata.sample_id,
             sample_index=frame_basic_metadata.sample_index,
@@ -195,13 +192,14 @@ class NuscenesRecordsGenerator:
         )
 
     def _extract_lidar_frame(
-        self, sample: Mapping[str, Any]
+        self, sample: Mapping[str, Any], num_features: int
     ) -> Tuple[LidarFrameDataModel, Sequence[Box3DDataModel]]:
         """
         Extract the keyframe lidar frame and its box annotations from a nuScenes sample.
 
         Args:
           sample: nuScenes sample record.
+          num_features: Number of float32 features per point.
 
         Returns:
           Tuple of:
@@ -233,7 +231,7 @@ class NuscenesRecordsGenerator:
             lidar_timestamp_seconds=sd_record["timestamp"] / 1e6,
             lidar_pointcloud_path=sd_record["filename"],
             lidar_pointcloud_source_path=None,
-            lidar_pointcloud_num_features=self.lidar_pointcloud_num_features,
+            lidar_pointcloud_num_features=num_features,
             lidar_sensor_to_ego_pose_matrix=lidar_sensor_to_ego_pose_matrix,
             lidar_frame_ego_pose_to_global_matrix=lidar_frame_ego_pose_to_global_matrix,
             # Always the identity matrix for the main lidar sensor
@@ -360,24 +358,23 @@ class NuscenesRecordsGenerator:
 
     def _extract_lidar_sweeps(
         self,
-        sample: Mapping[str, Any],
         lidar_frame_data_model: LidarFrameDataModel,
         max_sweeps: int,
+        num_features: int,
     ) -> Sequence[LidarFrameDataModel]:
         """
         Extract multi-sweep lidar frames preceding a nuScenes sample.
 
         Args:
-          sample: nuScenes sample record.
           lidar_frame_data_model: Lidar frame data model of the keyframe.
           max_sweeps: Max number of lidar sweeps to include.
+          num_features: Number of float32 features per point.
 
         Returns:
           Sequence[LidarFrameDataModel]: Lidar sweep frame data models ordered from nearest
             to oldest.
         """
 
-        del sample
         lidar_frame_data_models = []
         current_sample_data_record = self.nuscenes_dataset.get(
             "sample_data", lidar_frame_data_model.lidar_frame_id
@@ -430,7 +427,7 @@ class NuscenesRecordsGenerator:
                     lidar_timestamp_seconds=current_sample_data_record["timestamp"] / 1e6,
                     lidar_pointcloud_path=current_sample_data_record["filename"],
                     lidar_pointcloud_source_path=None,  # Always None for lidar sweeps
-                    lidar_pointcloud_num_features=self.lidar_pointcloud_num_features,
+                    lidar_pointcloud_num_features=num_features,
                     lidar_sensor_to_ego_pose_matrix=sweep_sensor_to_ego_pose_matrix,
                     lidar_frame_ego_pose_to_global_matrix=sweep_ego_pose_to_global_matrix,
                     lidar_sensor_to_lidar_sweep_matrix=lidar_sensor_to_lidar_sweep_matrix,
@@ -463,10 +460,11 @@ class NuscenesRecordsGenerator:
             ego_pose_record = self.nuscenes_dataset.get("ego_pose", sd_record["ego_pose_token"])
 
             camera_intrinsic_matrix = np.asarray(cs_record["camera_intrinsic"], dtype=np.float64)
-            assert camera_intrinsic_matrix.shape == (3, 3), (
-                f"Camera intrinsic matrix of channel {channel_name} must be (3, 3), "
-                f"got {camera_intrinsic_matrix.shape}."
-            )
+            if camera_intrinsic_matrix.shape != (3, 3):
+                raise ValueError(
+                    f"Camera intrinsic matrix of channel {channel_name} must be (3, 3), "
+                    f"got {camera_intrinsic_matrix.shape}."
+                )
             camera_sensor_to_ego_pose_matrix = convert_quaternion_to_matrix(
                 rotation_quaternion=Quaternion(cs_record["rotation"]),
                 translation=np.asarray(cs_record["translation"], dtype=np.float64),

@@ -4,7 +4,7 @@ defaults:
   - /datasets/t4dataset/detection3d
   - /datasets/t4dataset/segmentation3d
   - /datasets/t4dataset/lidar
-  - /records@records: t4dataset/t4dataset_j6gen2_segdet3d
+  - /database@database: t4dataset/t4dataset_j6gen2_segdet3d
   - _self_
 
 dataset: ${t4dataset}
@@ -58,18 +58,20 @@ datamodule:
   dataset:
     _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
     _partial_: true
-  sources:
-    - records: ${records}
+  train_sources:
+    - database: ${database}
       det3d: true
       seg3d: true
       repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}
   train_frame_sampling:
     repeat_sampling_factor: 0.30
     object_bev_range: [-122.88, -122.88, 122.88, 122.88]
     low_pedestrian_height_threshold: 1.5
     low_pedestrian_bev_range: [-50.0, -50.0, 50.0, 50.0]
     class_names: ${dataset.detection3d.class_names}
-    name_mapping: ${dataset.detection3d.name_mapping}
+    ignore_label_index: ${database.ignore_label_index}
     filter_attributes: ${dataset.detection3d.filter_attributes}
   train_dataloader_cfg:
     batch_size: ${batch_size}
@@ -84,12 +86,8 @@ datamodule:
   train_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.merge.MergeObjects3D
-        merge_objects: ${dataset.detection3d.merge_objects}
-        name_mapping: ${dataset.detection3d.name_mapping}
       - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
-        class_names: ${dataset.detection3d.class_names}
-        name_mapping: ${dataset.detection3d.name_mapping}
+        ignore_label_index: ${database.ignore_label_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 2
@@ -140,12 +138,8 @@ datamodule:
   val_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.merge.MergeObjects3D
-        merge_objects: ${dataset.detection3d.merge_objects}
-        name_mapping: ${dataset.detection3d.name_mapping}
       - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
-        class_names: ${dataset.detection3d.class_names}
-        name_mapping: ${dataset.detection3d.name_mapping}
+        ignore_label_index: ${database.ignore_label_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 2

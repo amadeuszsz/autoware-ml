@@ -14,10 +14,11 @@
 
 """Multi-source dataset specifications.
 
-A datamodule can mix several record tables with different supervision coverage, for example a
-detection and segmentation corpus combined with a pseudo labeled segmentation corpus. Each
-source declares explicitly which supervision its records provide (det3d and seg3d) and how
-often its frames are repeated (repeat), so nothing is inferred from the record content.
+A datamodule split can mix several databases with different supervision coverage, for
+example a detection and segmentation corpus combined with a pseudo labeled segmentation
+corpus. Each source declares explicitly which supervision its records provide (det3d and
+seg3d) and how often its frames are repeated (repeat), so nothing is inferred from the
+record content.
 """
 
 from __future__ import annotations
@@ -26,15 +27,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from autoware_ml.databases.record_table import RecordTable
+from autoware_ml.databases.base_database import BaseDatabase
 
 
 @dataclass(frozen=True)
 class DatasetSource:
-    """One record table with its declared supervision coverage.
+    """One database with its declared supervision coverage.
 
     Attributes:
-        records: Record table providing the dataset records of the source.
+        database: Database providing the dataset records of the source.
         det3d: Whether the source's detection annotations supervise training and evaluation.
             When False, the boxes of every record are dropped, box free frames contribute no
             detection loss and neutral detection metric entries.
@@ -45,13 +46,17 @@ class DatasetSource:
         repeat: How many times the source's frames appear per epoch, physical repetition.
     """
 
-    records: RecordTable
+    database: BaseDatabase
     det3d: bool = True
     seg3d: bool = True
     repeat: int = 1
 
     def __post_init__(self) -> None:
         """Validate the source specification."""
+        if not isinstance(self.database, BaseDatabase):
+            raise TypeError(
+                f"Dataset source database must be a database instance, got {type(self.database)!r}."
+            )
         if self.repeat < 1:
             raise ValueError(f"Dataset source repeat must be >= 1, got {self.repeat}.")
 
@@ -71,7 +76,7 @@ def coerce_sources(
     """
 
     if not len(sources):
-        raise ValueError("A datamodule requires at least one dataset source.")
+        raise ValueError("A datamodule split requires at least one dataset source.")
     normalized = []
     for entry in sources:
         if isinstance(entry, DatasetSource):

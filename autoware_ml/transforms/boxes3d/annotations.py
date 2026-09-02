@@ -4,7 +4,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-# http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,7 +21,7 @@ datamodule sampling weights interpret annotations through the exact same rules.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Sequence
 
 import numpy as np
 from jaxtyping import Float32, Float64
@@ -135,20 +135,18 @@ def normalize_filter_attributes(
     return frozenset(normalized)
 
 
-def resolve_detection_class(
+def resolve_box_class(
     box: Box3DDataModel,
     *,
-    class_names: Sequence[str],
-    name_mapping: Mapping[str, str | None] | None,
+    ignore_label_index: int,
     filter_attributes: Collection[tuple[str, str]] | None = None,
 ) -> str | None:
-    """Resolve one stored box annotation into a detector class or reject it.
+    """Return the trained class of a stored box annotation, or None when it is not a target.
 
-    The stored dataset label name together with the configured name_mapping is the single
-    source of truth for the class: the config decides the taxonomy, the record only delivers
-    raw dataset categories. The label name and index a record generation pipeline may have
-    baked in are ignored, so changing the configured class set never requires regenerating
-    the records.
+    The database pipelines resolve the raw dataset label into the stored label name and
+    index when the records are generated, so the record is the single source of the class.
+    A box outside the trained classes carries the ignore index. A box whose class and
+    attributes match an exclusion rule is rejected as well.
 
     Low-point boxes are not filtered here, that is the job of the point-count filters
     (min_num_points at train time, the metric suite at eval), which subsume the lidar-point
@@ -156,36 +154,30 @@ def resolve_detection_class(
 
     Args:
         box: Stored box annotation.
-        class_names: Detector class names.
-        name_mapping: Raw dataset category to detector class mapping.
+        ignore_label_index: Label index of a box whose class is not trained.
         filter_attributes: Normalized class and attribute exclusions.
 
     Returns:
-        The detector class name, or None when the box is rejected.
+        The class name, or None when the box is rejected.
     """
-    raw_name = box.box3d_dataset_label_name
-    mapped_name = _map_name(raw_name, name_mapping)
-    if mapped_name is None or mapped_name not in class_names:
+    if box.box3d_label_index == ignore_label_index:
         return None
-    if _has_filtered_attribute(box.box3d_attributes, raw_name, filter_attributes):
+    if box.box3d_label_index < 0:
+        raise ValueError(
+            f"Box {box.box3d_instance_id} carries label index {box.box3d_label_index}, which is "
+            f"neither a class index nor the ignore index {ignore_label_index}."
+        )
+    if _has_filtered_attribute(box.box3d_attributes, box.box3d_label_name, filter_attributes):
         return None
-    return mapped_name
-
-
-def _map_name(raw_name: str, name_mapping: Mapping[str, str | None] | None) -> str | None:
-    """Map a raw dataset category name into the configured detector taxonomy."""
-    if name_mapping is None:
-        return raw_name
-    mapped_name = name_mapping.get(raw_name, raw_name)
-    return str(mapped_name) if mapped_name is not None else None
+    return box.box3d_label_name
 
 
 def _has_filtered_attribute(
     attributes: Collection[str],
-    raw_name: str,
+    class_name: str,
     filter_attributes: Collection[tuple[str, str]] | None,
 ) -> bool:
-    """Return whether the raw class and attributes match an exclusion rule."""
+    """Return whether the class and attributes match an exclusion rule."""
     if not filter_attributes:
         return False
-    return any((raw_name, str(attribute)) in filter_attributes for attribute in attributes)
+    return any((class_name, str(attribute)) in filter_attributes for attribute in attributes)

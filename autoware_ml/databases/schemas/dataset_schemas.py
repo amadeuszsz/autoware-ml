@@ -54,12 +54,6 @@ class DatasetTableSchema:
       LIDAR_FRAMES: Lidar frames column, which is a list of dictionaries to save metadata of a lidar
         frame. It also saves lidar sweeps as each item here.
 
-      DATABASE: Database the scenario belongs to, so a task can train on a subset of the
-        databases a table holds.
-      SPLIT: Split the scenario belongs to, train, val or test. The generator writes it, so
-        no consumer side scenario list is needed and frames of one scenario cannot straddle
-        a split boundary.
-
       # Camera Schema
       CAMERA_FRAMES: Camera frames column, which is a list of dictionaries to save metadata of
         every camera frame captured at this sample.
@@ -81,8 +75,6 @@ class DatasetTableSchema:
     LOCATION = DatasetTableColumn("location", pl.String)
     VEHICLE_TYPE = DatasetTableColumn("vehicle_type", pl.String)
     SCENARIO_NAME = DatasetTableColumn("scenario_name", pl.String)
-    DATABASE = DatasetTableColumn("database", pl.String)
-    SPLIT = DatasetTableColumn("split", pl.String)
 
     # LiDAR Frames Schema
     LIDAR_FRAMES = DatasetTableColumn(
@@ -164,8 +156,6 @@ class DatasetRecord(BaseModel, DataModelInterface):
     location: str | None
     vehicle_type: str | None
     scenario_name: str
-    database: str
-    split: str
 
     lidar_frames: Sequence[LidarFrameDataModel]
     camera_frames: Sequence[CameraFrameDataModel] | None
@@ -188,8 +178,6 @@ class DatasetRecord(BaseModel, DataModelInterface):
             DatasetTableSchema.LOCATION.name: self.location,
             DatasetTableSchema.VEHICLE_TYPE.name: self.vehicle_type,
             DatasetTableSchema.SCENARIO_NAME.name: self.scenario_name,
-            DatasetTableSchema.DATABASE.name: self.database,
-            DatasetTableSchema.SPLIT.name: self.split,
         }
         data_model[DatasetTableSchema.LIDAR_FRAMES.name] = [
             lidar_frame.to_dictionary() for lidar_frame in self.lidar_frames
@@ -277,8 +265,6 @@ class DatasetRecord(BaseModel, DataModelInterface):
             location=data_model[DatasetTableSchema.LOCATION.name],
             vehicle_type=data_model[DatasetTableSchema.VEHICLE_TYPE.name],
             scenario_name=data_model[DatasetTableSchema.SCENARIO_NAME.name],
-            database=data_model[DatasetTableSchema.DATABASE.name],
-            split=data_model[DatasetTableSchema.SPLIT.name],
             lidar_frames=lidar_frames,
             camera_frames=camera_frames,
             lidar_sources=lidar_sources,

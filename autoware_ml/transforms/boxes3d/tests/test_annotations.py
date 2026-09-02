@@ -23,7 +23,7 @@ from autoware_ml.testing.factories import make_box3d_data_model
 from autoware_ml.transforms.boxes3d.annotations import (
     box_is_physical,
     normalize_filter_attributes,
-    resolve_detection_class,
+    resolve_box_class,
     sanitize_box_params,
 )
 
@@ -68,34 +68,32 @@ def test_box_is_physical_decisions() -> None:
     assert box_is_physical(fast_but_physical)
 
 
-def test_resolve_detection_class_uses_the_dataset_label_name() -> None:
-    box = make_box3d_data_model(label_name="vehicle.car").create_new_data_model(
-        box3d_label_name="stale", box3d_label_index=5
+def test_resolve_box_class_returns_the_stored_class() -> None:
+    box = make_box3d_data_model(label_name="pedestrian", label_index=6)
+
+    assert resolve_box_class(box, ignore_label_index=-1) == "pedestrian"
+
+
+def test_resolve_box_class_rejects_ignored_and_filtered_boxes() -> None:
+    ignored = make_box3d_data_model(label_name="trailer", label_index=-1)
+    filtered = make_box3d_data_model(
+        label_name="bicycle", label_index=5, attributes=["vehicle_state.parked"]
     )
+    filter_attributes = normalize_filter_attributes([["bicycle", "vehicle_state.parked"]])
 
-    resolved = resolve_detection_class(
-        box, class_names=["car"], name_mapping={"vehicle.car": "car"}
-    )
-
-    assert resolved == "car"
-
-
-def test_resolve_detection_class_rejects_unmapped_and_filtered_boxes() -> None:
-    unmapped = make_box3d_data_model(label_name="ignore-me")
-    filtered = make_box3d_data_model(label_name="motorcycle", attributes=["vehicle_state.parked"])
-
-    filter_attributes = normalize_filter_attributes([["motorcycle", "vehicle_state.parked"]])
-
-    assert resolve_detection_class(unmapped, class_names=["car"], name_mapping=None) is None
+    assert resolve_box_class(ignored, ignore_label_index=-1) is None
     assert (
-        resolve_detection_class(
-            filtered,
-            class_names=["bicycle"],
-            name_mapping={"motorcycle": "bicycle"},
-            filter_attributes=filter_attributes,
-        )
+        resolve_box_class(filtered, ignore_label_index=-1, filter_attributes=filter_attributes)
         is None
     )
+    assert resolve_box_class(filtered, ignore_label_index=-1) == "bicycle"
+
+
+def test_resolve_box_class_rejects_an_undefined_negative_index() -> None:
+    box = make_box3d_data_model(label_index=-2)
+
+    with pytest.raises(ValueError, match="neither a class index nor the ignore index"):
+        resolve_box_class(box, ignore_label_index=-1)
 
 
 def test_normalize_filter_attributes_rejects_invalid_entries() -> None:

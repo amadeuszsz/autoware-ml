@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Sequence, Mapping
+from typing import Mapping, Sequence
 
 from nuscenes.utils import splits
 from pydantic import model_validator
 
+from autoware_ml.databases.scenarios import DatasetParams, ScenarioData, Scenarios
 from autoware_ml.types.dataset import SplitType
-from autoware_ml.databases.scenarios import ScenarioData, Scenarios, DatasetParams
 
 logger = logging.getLogger(__name__)
 
@@ -62,16 +62,16 @@ class NuscenesScenarios(Scenarios):
           NuscenesScenarios: NuscenesScenarios class instance.
         """
 
-        scenario_data = defaultdict(list)
-        for dataset_param in self.dataset_params:
-            version_splits = self._resolve_version_splits(dataset_param)
+        scenario_data: dict[SplitType, list[ScenarioData]] = defaultdict(list)
+        for dataset_params in self.dataset_params:
+            version_splits = self._resolve_version_splits(dataset_params)
             for split, scene_names in version_splits.items():
                 scenario_data[split] += [
-                    self._build_scenario_data(scene_name, dataset_param, split)
+                    self._build_scenario_data(scene_name, dataset_params)
                     for scene_name in scene_names
                 ]
 
-        object.__setattr__(self, "scenario_data", scenario_data)
+        object.__setattr__(self, "scenario_data", dict(scenario_data))
         for split, scenarios in scenario_data.items():
             logger.info(f"Loaded total of {len(scenarios)} scenarios for split {split}")
         return self
@@ -98,26 +98,22 @@ class NuscenesScenarios(Scenarios):
         return _NUSCENES_VERSION_SPLITS[dataset_params.dataset_name]
 
     @staticmethod
-    def _build_scenario_data(
-        scene_name: str, dataset_params: DatasetParams, split: SplitType
-    ) -> ScenarioData:
+    def _build_scenario_data(scene_name: str, dataset_params: DatasetParams) -> ScenarioData:
         """
         Build scenario data from a nuScenes scene name and dataset parameters.
 
         Args:
           scene_name: Name of the nuScenes scene.
           dataset_params: Dataset parameters.
-          split: Split the scene belongs to.
 
         Returns:
           ScenarioData: Scenario data.
         """
 
-        return ScenarioData(
-            dataset_name=dataset_params.dataset_name,
+        return ScenarioData.from_dataset_params(
+            dataset_params,
             scenario_id=scene_name,
             scenario_version=dataset_params.dataset_name,
-            max_sweeps=dataset_params.max_sweeps,
-            sample_steps=dataset_params.sample_steps,
-            split=split.value,
+            vehicle_type=None,
+            location=None,
         )

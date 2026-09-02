@@ -3,7 +3,7 @@ defaults:
   - /tasks/segmentation3d/frnet/base
   - /datasets/t4dataset/segmentation3d
   - /datasets/t4dataset/lidar
-  - /records@records: t4dataset/t4dataset_j6gen2_semaseg
+  - /database@database: t4dataset/t4dataset_j6gen2_semaseg
   - _self_
 
 batch_size: 8
@@ -22,11 +22,13 @@ datamodule:
   dataset:
     _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
     _partial_: true
-  sources:
-    - records: ${records}
+  train_sources:
+    - database: ${database}
       det3d: false
       seg3d: true
       repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}
   train_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}

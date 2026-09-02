@@ -33,7 +33,7 @@ from autoware_ml.datamodule.sources import DatasetSource
 from autoware_ml.transforms.boxes3d.annotations import (
     box_is_physical,
     normalize_filter_attributes,
-    resolve_detection_class,
+    resolve_box_class,
     sanitize_box_params,
 )
 
@@ -104,8 +104,8 @@ class FrameSamplingConfig:
         low_pedestrian_height_threshold: Height below which a pedestrian box counts into the
             low pedestrian bucket.
         low_pedestrian_bev_range: BEV range of the low pedestrian bucket.
-        class_names: Detector class names in label order.
-        name_mapping: Raw category to detector class mapping.
+        class_names: Trained class names, the categories boxes are counted into.
+        ignore_label_index: Label index of a box whose class is not trained.
         filter_attributes: Class and attribute name pairs excluded from class counting.
         low_pedestrian_category_name: Name of the low pedestrian sampling bucket.
     """
@@ -115,7 +115,7 @@ class FrameSamplingConfig:
     low_pedestrian_height_threshold: float
     low_pedestrian_bev_range: list[float]
     class_names: list[str]
-    name_mapping: Mapping[str, str]
+    ignore_label_index: int
     filter_attributes: list[list[str]] | None = None
     low_pedestrian_category_name: str = "low_pedestrian"
 
@@ -223,14 +223,18 @@ def _record_sampling_categories(
     category_counts = {category: 0 for category in categories}
 
     for box in record.boxes_3d if record.boxes_3d is not None else []:
-        mapped_name = resolve_detection_class(
+        class_name = resolve_box_class(
             box,
-            class_names=frame_sampling.class_names,
-            name_mapping=frame_sampling.name_mapping,
+            ignore_label_index=frame_sampling.ignore_label_index,
             filter_attributes=filter_attributes,
         )
-        if mapped_name is None:
+        if class_name is None:
             continue
+        if class_name not in category_counts:
+            raise ValueError(
+                f"Box {box.box3d_instance_id} of sample {record.sample_id} carries class "
+                f"{class_name!r}, which is not one of the configured class names."
+            )
         params = sanitize_box_params(np.asarray(box.box3d_params, dtype=np.float64))
         if not box_is_physical(params):
             continue
@@ -241,8 +245,8 @@ def _record_sampling_categories(
         if not _box_center_in_bev_range(params, frame_sampling.object_bev_range):
             continue
 
-        category = mapped_name
-        if _is_low_pedestrian(mapped_name, params, frame_sampling):
+        category = class_name
+        if _is_low_pedestrian(class_name, params, frame_sampling):
             category = frame_sampling.low_pedestrian_category_name
         category_counts[category] += 1
 
@@ -250,14 +254,14 @@ def _record_sampling_categories(
 
 
 def _is_low_pedestrian(
-    mapped_name: str,
+    class_name: str,
     params: Float32[np.ndarray, " num_box_params"],
     frame_sampling: FrameSamplingConfig,
 ) -> bool:
-    """Return whether a mapped box belongs to the low pedestrian sampling bucket.
+    """Return whether a box belongs to the low pedestrian sampling bucket.
 
     Args:
-        mapped_name: Detector class name of the box.
+        class_name: Class name of the box.
         params: Box parameters following Box3DFieldIndex.
         frame_sampling: Repeat factor settings.
 
@@ -265,7 +269,7 @@ def _is_low_pedestrian(
         Whether the box belongs to the low pedestrian bucket.
     """
     return (
-        mapped_name == "pedestrian"
+        class_name == "pedestrian"
         and float(params[5]) < frame_sampling.low_pedestrian_height_threshold
         and _box_center_in_bev_range(params, frame_sampling.low_pedestrian_bev_range)
     )

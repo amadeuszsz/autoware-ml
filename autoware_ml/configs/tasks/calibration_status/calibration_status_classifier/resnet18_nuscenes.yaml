@@ -2,7 +2,7 @@
 defaults:
   - /tasks/calibration_status/calibration_status_classifier/resnet18_base
   - /datasets/nuscenes/camera
-  - /records@records: nuscenes/nuscenes_trainval
+  - /database@database: nuscenes/nuscenes_trainval
   - _self_
 
 dataset: ${nuscenes}
@@ -12,8 +12,10 @@ datamodule:
     _target_: autoware_ml.datamodule.nuscenes.dataset.NuscenesDataset
     _partial_: true
     calibration_cameras: ${dataset.camera.camera_order}
-  sources:
-    - records: ${records}
+  train_sources:
+    - database: ${database}
       det3d: false
       seg3d: false
       repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}

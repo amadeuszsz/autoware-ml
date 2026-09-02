@@ -3,7 +3,7 @@ defaults:
   - /tasks/detection3d/bevfusion/base
   - /datasets/t4dataset/detection3d
   - /datasets/t4dataset/lidar
-  - /records@records: t4dataset/t4dataset_j6gen2_base
+  - /database@database: t4dataset/t4dataset_j6gen2_base
   - _self_
 
 batch_size: 16
@@ -20,11 +20,13 @@ datamodule:
   dataset:
     _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
     _partial_: true
-  sources:
-    - records: ${records}
+  train_sources:
+    - database: ${database}
       det3d: true
       seg3d: false
       repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}
   train_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
@@ -38,12 +40,8 @@ datamodule:
   train_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.merge.MergeObjects3D
-        merge_objects: ${dataset.detection3d.merge_objects}
-        name_mapping: ${dataset.detection3d.name_mapping}
       - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
-        class_names: ${dataset.detection3d.class_names}
-        name_mapping: ${dataset.detection3d.name_mapping}
+        ignore_label_index: ${database.ignore_label_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 2
@@ -73,12 +71,8 @@ datamodule:
   val_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.merge.MergeObjects3D
-        merge_objects: ${dataset.detection3d.merge_objects}
-        name_mapping: ${dataset.detection3d.name_mapping}
       - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
-        class_names: ${dataset.detection3d.class_names}
-        name_mapping: ${dataset.detection3d.name_mapping}
+        ignore_label_index: ${database.ignore_label_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 2

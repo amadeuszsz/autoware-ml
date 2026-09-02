@@ -1,0 +1,26 @@
+# The nuScenes trainval database. The taxonomy comes from the dataset config, so training
+# and generation resolve the same classes.
+_target_: autoware_ml.databases.nuscenes.nuscenes_database.NuscenesDatabase
+_convert_: all
+
+defaults:
+  - /datasets/nuscenes/detection3d
+  - /database/nuscenes/box3d_pipelines@box3d_pipelines: default_box3d_pipelines
+  - /database/nuscenes/scenarios@scenarios.trainval: trainval
+
+version: nuScenes-trainval-v1.0.0
+nuscenes_version: v1.0-trainval
+# Root path of actual annotation files
+root_path: ${data_root_path}/nuscenes/
+
+# Record table, it will be <cache_path>/<cache_file_prefix_name>_<database_hash>.parquet
+cache_path: ${cache_root_path}/nuscenes/
+cache_file_prefix_name: database
+
+# Every worker loads its own devkit instance, so keep the count moderate
+num_workers: 8
+
+# Taxonomy the box labels are resolved against
+class_names: ${nuscenes.detection3d.class_names}
+label_remapper: ${nuscenes.detection3d.name_mapping}
+ignore_label_index: -1

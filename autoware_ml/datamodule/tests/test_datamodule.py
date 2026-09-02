@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the datamodule serving typed batches from stubbed databases."""
+"""Tests for the datamodule serving typed batches from fake databases."""
 
 from __future__ import annotations
 
@@ -21,48 +21,61 @@ import pytest
 from autoware_ml.datamodule.base import DataLoaderConfig, DataModule
 from autoware_ml.datamodule.samplers import DistributedWeightedRandomSampler
 from autoware_ml.datamodule.samples.batch import Batch
+from autoware_ml.datamodule.splitters.scenario_splitter import ScenarioSplitter
 from autoware_ml.datamodule.t4dataset.dataset import T4Dataset
-from autoware_ml.datamodule.tests.fakes import make_stored_record, write_record_table
+from autoware_ml.datamodule.tests.fakes import make_database, make_stored_record
 from autoware_ml.testing.factories import make_box3d_data_model
 
+SPLITS = {"train": ["s-train"], "val": ["s-val"], "test": ["s-test"]}
 
-def _records(splits: tuple[str, ...] = ("train", "val", "test")) -> list:
+
+def _records() -> list:
     boxes = [make_box3d_data_model()]
-    records = [
+    return [
         make_stored_record(
-            scenario_id="s-train",
-            sample_id="train-1",
-            sample_index=1,
-            split="train",
-            boxes_3d=boxes,
+            scenario_id="s-train", sample_id="train-1", sample_index=1, boxes_3d=boxes
         ),
         make_stored_record(
-            scenario_id="s-train",
-            sample_id="train-0",
-            sample_index=0,
-            split="train",
-            boxes_3d=boxes,
+            scenario_id="s-train", sample_id="train-0", sample_index=0, boxes_3d=boxes
         ),
-        make_stored_record(
-            scenario_id="s-val", sample_id="val-0", split="val", boxes_3d=boxes
-        ),
-        make_stored_record(
-            scenario_id="s-test", sample_id="test-0", split="test", boxes_3d=boxes
-        ),
+        make_stored_record(scenario_id="s-val", sample_id="val-0", boxes_3d=boxes),
+        make_stored_record(scenario_id="s-test", sample_id="test-0", boxes_3d=boxes),
     ]
-    return [record for record in records if record.split in splits]
 
 
-def _datamodule(tmp_path, splits: tuple[str, ...] = ("train", "val", "test"), **kwargs):
-    table = write_record_table(tmp_path, _records(splits))
-    return DataModule(
+def _datamodule(tmp_path, splits=SPLITS, prepare: bool = True, **kwargs) -> DataModule:
+    source = {"database": make_database(tmp_path, _records(), splits=splits)}
+    datamodule = DataModule(
         dataset=T4Dataset,
-        sources=[{"records": table}],
+        splitter=ScenarioSplitter(),
+        train_sources=[source],
+        val_sources=[source],
+        test_sources=[source],
         **kwargs,
     )
+    if prepare:
+        datamodule.prepare_data()
+    return datamodule
 
 
-def test_setup_none_assigns_every_split_declared_by_the_table(tmp_path) -> None:
+def test_prepare_data_generates_every_database_table_once(tmp_path) -> None:
+    datamodule = _datamodule(tmp_path)
+    database = datamodule.databases()[0]
+
+    datamodule.prepare_data()
+
+    assert database.cache_file_path.is_file()
+    assert database.generate_calls == 1
+
+
+def test_setup_without_a_generated_table_fails(tmp_path) -> None:
+    datamodule = _datamodule(tmp_path, prepare=False)
+
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        datamodule.setup(stage="fit")
+
+
+def test_setup_none_assigns_every_split_declared_by_the_scenarios(tmp_path) -> None:
     datamodule = _datamodule(tmp_path)
 
     datamodule.setup(stage=None)
@@ -85,18 +98,47 @@ def test_setup_orders_split_records_by_scenario_and_sample_index(tmp_path) -> No
     assert sample_ids == ["train-0", "train-1"]
 
 
-def test_setup_rejects_a_stage_whose_split_the_table_lacks(tmp_path) -> None:
-    datamodule = _datamodule(tmp_path, splits=("train",))
+def test_setup_rejects_a_split_the_scenarios_leave_empty(tmp_path) -> None:
+    datamodule = _datamodule(tmp_path, splits={"train": ["s-train"]})
 
     with pytest.raises(ValueError, match="holds no val records"):
         datamodule.setup(stage="validate")
 
 
+def test_each_split_serves_its_own_sources(tmp_path) -> None:
+    train_database = make_database(
+        tmp_path, _records()[:2], splits={"train": ["s-train"]}, version="train-db"
+    )
+    val_database = make_database(
+        tmp_path, _records()[2:3], splits={"val": ["s-val"]}, version="val-db"
+    )
+    datamodule = DataModule(
+        dataset=T4Dataset,
+        splitter=ScenarioSplitter(),
+        train_sources=[{"database": train_database, "repeat": 2}],
+        val_sources=[{"database": val_database}],
+        test_sources=[{"database": val_database}],
+    )
+    datamodule.prepare_data()
+
+    datamodule.setup(stage="fit")
+
+    assert len(datamodule.databases()) == 2
+    assert len(datamodule.train_dataset) == 4
+    assert len(datamodule.val_dataset) == 1
+    assert datamodule.val_dataset[0].record.sample_id == "val-0"
+
+
 def test_setup_rejects_a_factory_that_builds_no_dataset(tmp_path) -> None:
+    source = {"database": make_database(tmp_path, _records(), splits=SPLITS)}
     datamodule = DataModule(
         dataset=lambda dataset_transforms: object(),
-        sources=[{"records": write_record_table(tmp_path, _records())}],
+        splitter=ScenarioSplitter(),
+        train_sources=[source],
+        val_sources=[source],
+        test_sources=[source],
     )
+    datamodule.prepare_data()
 
     with pytest.raises(TypeError, match="must build a Dataset"):
         datamodule.setup(stage="fit")
@@ -140,7 +182,7 @@ def test_train_frame_sampling_installs_the_weighted_sampler(tmp_path) -> None:
             "low_pedestrian_height_threshold": 1.5,
             "low_pedestrian_bev_range": [-50.0, -50.0, 50.0, 50.0],
             "class_names": ["car"],
-            "name_mapping": {"car": "car"},
+            "ignore_label_index": -1,
         },
     )
     datamodule.setup(stage="fit")

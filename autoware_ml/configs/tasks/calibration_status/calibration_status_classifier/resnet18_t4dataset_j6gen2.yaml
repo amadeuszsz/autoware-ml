@@ -2,7 +2,7 @@
 defaults:
   - /tasks/calibration_status/calibration_status_classifier/resnet18_base
   - /datasets/t4dataset/camera
-  - /records@records: t4dataset/t4dataset_gen2_base
+  - /database@database: t4dataset/t4dataset_gen2_base
   - _self_
 
 dataset: ${t4dataset}
@@ -12,8 +12,10 @@ datamodule:
     _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
     _partial_: true
     calibration_cameras: ${dataset.camera.camera_order}
-  sources:
-    - records: ${records}
+  train_sources:
+    - database: ${database}
       det3d: false
       seg3d: false
       repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}

@@ -140,19 +140,19 @@ def make_box3d_data_model(
     *,
     params: Sequence[float] = (1.0, 2.0, 0.5, 4.0, 2.0, 1.5, 0.0, 0.0, 0.0, 0.0),
     label_name: str = "car",
-    label_index: int = -1,
+    label_index: int = 0,
     num_lidar_points: int = 10,
     valid: bool = True,
     instance_id: str = "instance-0",
     attributes: Sequence[str] = (),
 ) -> Box3DDataModel:
     """
-    Build a box data model.
+    Build a box data model whose label is already resolved, a trained car by default.
 
     Args:
       params: Box parameters following Box3DFieldIndex.
-      label_name: Label name of the box.
-      label_index: Label index of the box.
+      label_name: Resolved label name of the box.
+      label_index: Resolved label index of the box, the ignore index for an untrained class.
       num_lidar_points: Number of lidar points inside the box.
       valid: Whether the box is valid.
       instance_id: Instance ID of the box.
@@ -186,8 +186,6 @@ def make_record(
     scenario_id: str = "scene-0",
     sample_id: str = "sample-0",
     timestamp_seconds: float = 100.0,
-    database: str = "db-0",
-    split: str = "train",
 ) -> DatasetRecord:
     """
     Build a dataset record with one keyframe lidar frame by default.
@@ -201,8 +199,6 @@ def make_record(
       scenario_id: Scenario ID of the record.
       sample_id: Sample ID of the record.
       timestamp_seconds: Timestamp in seconds.
-      database: Database the record belongs to.
-      split: Split the record belongs to.
 
     Returns:
       DatasetRecord: The dataset record.
@@ -216,8 +212,6 @@ def make_record(
             category_names=list(category_names), category_indices=list(category_indices)
         )
     return DatasetRecord(
-        database=database,
-        split=split,
         scenario_id=scenario_id,
         sample_id=sample_id,
         sample_index=0,

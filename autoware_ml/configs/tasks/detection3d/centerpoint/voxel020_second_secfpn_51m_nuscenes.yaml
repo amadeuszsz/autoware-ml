@@ -3,7 +3,7 @@ defaults:
   - /tasks/detection3d/centerpoint/base
   - /datasets/nuscenes/detection3d
   - /datasets/nuscenes/lidar
-  - /records@records: nuscenes/nuscenes_trainval
+  - /database@database: nuscenes/nuscenes_trainval
   - _self_
 
 batch_size: 16
@@ -29,11 +29,13 @@ datamodule:
   dataset:
     _target_: autoware_ml.datamodule.nuscenes.dataset.NuscenesDataset
     _partial_: true
-  sources:
-    - records: ${records}
+  train_sources:
+    - database: ${database}
       det3d: true
       seg3d: false
       repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}
   train_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
@@ -48,8 +50,7 @@ datamodule:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
       - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
-        class_names: ${dataset.detection3d.class_names}
-        name_mapping: ${dataset.detection3d.name_mapping}
+        ignore_label_index: ${database.ignore_label_index}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 10
         use_features: [x, y, z, intensity, timestamp_difference]
@@ -76,8 +77,7 @@ datamodule:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
       - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
-        class_names: ${dataset.detection3d.class_names}
-        name_mapping: ${dataset.detection3d.name_mapping}
+        ignore_label_index: ${database.ignore_label_index}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
         sweeps_num: 10
         use_features: [x, y, z, intensity, timestamp_difference]
