@@ -99,6 +99,15 @@ class DataLoaderConfig:
     shuffle: bool = False
     drop_last: bool = False
 
+    def __post_init__(self) -> None:
+        """Validate the settings against each other."""
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be at least 1, got {self.batch_size}.")
+        if self.num_workers < 0:
+            raise ValueError(f"num_workers must not be negative, got {self.num_workers}.")
+        if self.persistent_workers and self.num_workers == 0:
+            raise ValueError("persistent_workers requires at least one dataloader worker.")
+
     def to_dataloader_kwargs(self) -> dict[str, Any]:
         """Convert to keyword arguments accepted by DataLoader.
 
@@ -110,7 +119,7 @@ class DataLoaderConfig:
             "shuffle": self.shuffle,
             "num_workers": self.num_workers,
             "pin_memory": self.pin_memory,
-            "persistent_workers": self.persistent_workers and self.num_workers > 0,
+            "persistent_workers": self.persistent_workers,
             "drop_last": self.drop_last,
         }
 
@@ -587,10 +596,14 @@ class DataModule(L.LightningDataModule):
         cfg: DataLoaderConfig = getattr(self, f"{split}_dataloader_cfg")
         kwargs = cfg.to_dataloader_kwargs()
         if split == "train" and self.train_frame_sampling is not None:
+            if cfg.shuffle:
+                raise ValueError(
+                    "The training dataloader cannot shuffle when frame sampling is enabled, the "
+                    "weighted sampler draws the order. Set shuffle to false."
+                )
             weights = compute_frame_sampling_weights(
                 dataset.iter_records(), self.train_frame_sampling
             )
-            kwargs["shuffle"] = False
             return DataLoader(
                 dataset=dataset,
                 collate_fn=self.collate_fn,

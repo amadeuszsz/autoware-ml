@@ -179,21 +179,45 @@ def test_test_dataloader_serves_a_typed_batch(tmp_path) -> None:
     assert batch.sample_token == ("test-0",)
 
 
+FRAME_SAMPLING = {
+    "repeat_sampling_factor": 1.0,
+    "object_bev_range": [-50.0, -50.0, 50.0, 50.0],
+    "low_pedestrian_height_threshold": 1.5,
+    "low_pedestrian_bev_range": [-50.0, -50.0, 50.0, 50.0],
+    "class_names": ["car"],
+    "ignore_label_index": -1,
+}
+
+
 def test_train_frame_sampling_installs_the_weighted_sampler(tmp_path) -> None:
     datamodule = _datamodule(
         tmp_path,
-        train_dataloader_cfg={"batch_size": 1, "num_workers": 0, "shuffle": True},
-        train_frame_sampling={
-            "repeat_sampling_factor": 1.0,
-            "object_bev_range": [-50.0, -50.0, 50.0, 50.0],
-            "low_pedestrian_height_threshold": 1.5,
-            "low_pedestrian_bev_range": [-50.0, -50.0, 50.0, 50.0],
-            "class_names": ["car"],
-            "ignore_label_index": -1,
-        },
+        train_dataloader_cfg={"batch_size": 1, "num_workers": 0},
+        train_frame_sampling=FRAME_SAMPLING,
     )
     datamodule.setup(stage="fit")
 
     dataloader = datamodule.train_dataloader()
 
     assert isinstance(dataloader.sampler, DistributedWeightedRandomSampler)
+
+
+def test_train_frame_sampling_rejects_a_shuffling_dataloader(tmp_path) -> None:
+    datamodule = _datamodule(
+        tmp_path,
+        train_dataloader_cfg={"batch_size": 1, "num_workers": 0, "shuffle": True},
+        train_frame_sampling=FRAME_SAMPLING,
+    )
+    datamodule.setup(stage="fit")
+
+    with pytest.raises(ValueError, match="cannot shuffle when frame sampling"):
+        datamodule.train_dataloader()
+
+
+def test_dataloader_config_rejects_inconsistent_settings() -> None:
+    with pytest.raises(ValueError, match="batch_size"):
+        DataLoaderConfig(batch_size=0)
+    with pytest.raises(ValueError, match="num_workers"):
+        DataLoaderConfig(num_workers=-1)
+    with pytest.raises(ValueError, match="persistent_workers"):
+        DataLoaderConfig(num_workers=0, persistent_workers=True)

@@ -42,7 +42,7 @@ datamodule:
   train_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
-    shuffle: true
+    shuffle: false
   val_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
