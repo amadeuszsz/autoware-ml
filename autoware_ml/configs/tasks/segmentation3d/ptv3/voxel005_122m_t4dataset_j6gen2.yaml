@@ -33,27 +33,6 @@ max_voxels: 1200000
 
 batch_size: 2
 
-t4dataset:
-  segmentation3d:
-    # Behaviour taxonomy over the shared vocabulary; every class exactly once.
-    class_groups:
-      grouped_vehicle:
-        [car, truck, trailer, bus, train, construction_vehicle, fire_truck,
-         ambulance, police_car, emergency_vehicle, forklift, kart,
-         other_vehicle, open_door, vehicle_protruding_object]
-      grouped_two_wheeler: [motorcycle, bicycle]
-      grouped_pedestrian_animal: [pedestrian, personal_mobility, stroller, animal]
-      grouped_static_obstacle: [barrier, construction_sign, traffic_cone]
-      grouped_debris: [debris, pushable_pullable]
-      grouped_static_clutter: [solid_stuff, other_stuff]
-      grouped_flat:
-        [drivable_surface, drainage, sidewalk, other_flat_surface, high_curb, low_curb]
-      grouped_vegetation: [vegetation]
-      grouped_structure:
-        [building, pole, bollard, traffic_light, traffic_sign, flag, bicycle_rack]
-      grouped_noise: [noise, ghost_point]
-      grouped_marker: [background, ego_vehicle, out_of_sync]
-
 model:
   # From-scratch divergence fix (NaN at epoch 15 of the first H200 run):
   # the inherited peak of 0.002 comes from a fine-tune recipe and, at the

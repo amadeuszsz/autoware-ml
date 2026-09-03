@@ -65,9 +65,11 @@ import shapely
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.geometry.base import BaseGeometry
 
-WHEELED = "wheeled"
-VRU = "vru"
-STATIC = "static"
+from autoware_ml.types.collision import CollisionKind
+
+WHEELED = CollisionKind.WHEELED.value
+VRU = CollisionKind.VRU.value
+STATIC = CollisionKind.STATIC.value
 _KINDS = frozenset({WHEELED, VRU, STATIC})
 
 

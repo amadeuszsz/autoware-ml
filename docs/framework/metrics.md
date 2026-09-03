@@ -361,7 +361,8 @@ filter, computed per frame from the same collision model the collision metrics u
 
 **Behaviour groups.** `class_groups` folds the trained classes onto behaviour-equivalent groups.
 Confusing a bus for a truck does not change how the vehicle drives, so inside a group it counts
-as a hit. Grouping always replaces the class axis, never extends it: the same suite is configured
+as a hit. The groups belong to the taxonomy of the bound database, every class sits in exactly
+one group. Grouping always replaces the class axis, never extends it: the same suite is configured
 twice, once per class and once grouped under its own prefix, and both views share one
 accumulation contract.
 
@@ -458,7 +459,8 @@ ego's overlap. An object that cannot reach ego within the horizon has an infinit
 </div>
 
 The model runs on the following constants. Values marked config are set in the bundled dataset
-configs and tunable there, the rest are code defaults.
+configs and tunable there, values marked taxonomy come from the detection taxonomy of the bound
+database, the rest are code defaults.
 
 | Constant                              | Value                                                          |
 |---------------------------------------|----------------------------------------------------------------|
@@ -471,10 +473,8 @@ configs and tunable there, the rest are code defaults.
 | object body radius                    | half the object's box width                                    |
 | wheeled speed on the map              | the lanelet speed limit at the agent's position                |
 | off-map fallback speed                | 16.7 m/s (config)                                              |
-| VRU run speeds                        | pedestrian 3.0, animal 4.0, bicycle 6.0 m/s                    |
-| wheeled classes                       | car, truck, bus, train, motorcycle                             |
-| VRU classes                           | pedestrian, animal, bicycle                                    |
-| static classes (footprint only)       | barrier, traffic_cone, debris, bicycle_rack, vehicle_extension |
+| VRU run speeds                        | per VRU class (taxonomy)                                       |
+| wheeled, VRU and static classes       | per class (taxonomy)                                           |
 | corridor width                        | 3.0 m (config)                                                 |
 
 ### Default slices

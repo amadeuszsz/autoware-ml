@@ -46,17 +46,8 @@ collision_filter:
     horizon_s: 4.0
     dt_s: 0.1
     max_lateral_accel_mps2: 3.0
-class_groups:
-  grouped_vehicle: [car, truck, bus, train, vehicle_extension]
-  grouped_two_wheeler: [motorcycle, bicycle]
-  grouped_pedestrian_animal: [pedestrian, animal]
-  grouped_static_obstacle: [barrier, traffic_cone]
-  grouped_debris: [debris]
-  grouped_static_clutter: [static_clutter]
-  grouped_flat: [drivable_flat, non_drivable_flat]
-  grouped_vegetation: [vegetation]
-  grouped_structure: [building, vertical_thin, bicycle_rack]
-  grouped_noise: [noise]
+# The behaviour groups come from the segmentation taxonomy the database is bound to
+class_groups: ${database.taxonomy.segmentation3d.class_groups}
 confusion_components:
   # Whole-scene.
   - { _target_: autoware_ml.metrics.segmentation3d.iou.IoU, stages: [val, test] }

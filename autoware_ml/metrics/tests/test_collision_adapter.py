@@ -27,6 +27,24 @@ CLASS_NAMES = (
 )
 
 
+KINDS = {
+    "car": "wheeled",
+    "truck": "wheeled",
+    "bus": "wheeled",
+    "train": "wheeled",
+    "motorcycle": "wheeled",
+    "bicycle": "vru",
+    "pedestrian": "vru",
+    "animal": "vru",
+    "barrier": "static",
+    "traffic_cone": "static",
+    "debris": "static",
+    "bicycle_rack": "static",
+    "vehicle_extension": "static",
+}
+VRU_SPEEDS = {"pedestrian": 3.0, "animal": 4.0, "bicycle": 6.0}
+
+
 class _FakeMap:
     def __init__(self, polygon):
         self._polygon = polygon
@@ -56,6 +74,8 @@ def _adapter():
     return CollisionTTC(
         CLASS_NAMES,
         _FakeProvider(road),
+        kinds=KINDS,
+        vru_speeds=VRU_SPEEDS,
         params=ReachabilityParams(horizon_s=4.0, dt_s=0.1),
         max_speed_mps=10.0,
     )
@@ -98,7 +118,9 @@ def test_adapter_empty_frame() -> None:
 def test_adapter_rejects_unmapped_class() -> None:
     road = box(-10.0, -10.0, 10.0, 10.0)
     try:
-        CollisionTTC(("car", "spaceship"), _FakeProvider(road))
+        CollisionTTC(
+            ("car", "spaceship"), _FakeProvider(road), kinds={"car": "wheeled"}, vru_speeds={}
+        )
     except ValueError:
         pass
     else:
@@ -112,6 +134,7 @@ def test_adapter_rejects_vru_class_without_run_speed() -> None:
             ("car", "wheelchair"),
             _FakeProvider(road),
             kinds={"car": "wheeled", "wheelchair": "vru"},
+            vru_speeds={},
         )
     except ValueError as error:
         assert "wheelchair" in str(error)
@@ -122,7 +145,7 @@ def test_adapter_rejects_vru_class_without_run_speed() -> None:
 def test_adapter_rejects_unknown_kind_value() -> None:
     road = box(-10.0, -10.0, 10.0, 10.0)
     try:
-        CollisionTTC(("car",), _FakeProvider(road), kinds={"car": "hovercraft"})
+        CollisionTTC(("car",), _FakeProvider(road), kinds={"car": "hovercraft"}, vru_speeds={})
     except ValueError as error:
         assert "hovercraft" in str(error)
     else:

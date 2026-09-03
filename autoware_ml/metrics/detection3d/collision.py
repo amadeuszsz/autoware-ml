@@ -43,25 +43,6 @@ from autoware_ml.metrics.geometry.reachability import (
     ReachabilityParams,
 )
 
-# Final det class to reachable-set kind.
-DEFAULT_KINDS: dict[str, str] = {
-    "car": WHEELED,
-    "truck": WHEELED,
-    "bus": WHEELED,
-    "train": WHEELED,
-    "motorcycle": WHEELED,
-    "pedestrian": VRU,
-    "animal": VRU,
-    "bicycle": VRU,
-    "barrier": STATIC,
-    "traffic_cone": STATIC,
-    "debris": STATIC,
-    "bicycle_rack": STATIC,
-    "vehicle_extension": STATIC,
-}
-# VRU "reasonable run" speeds (m/s). Wheeled speed comes from the lanelet map.
-DEFAULT_VRU_SPEEDS: dict[str, float] = {"pedestrian": 3.0, "animal": 4.0, "bicycle": 6.0}
-
 _VALID_KINDS = frozenset({WHEELED, VRU, STATIC})
 
 
@@ -71,10 +52,11 @@ class CollisionTTC:
     Args:
         class_names: Ordered final class names (label index to name).
         map_provider: Resolves a ``scene_token`` to its lanelet map.
+        kinds: Class name to reachable-set kind, one entry per class name. The detection
+            taxonomy of the database carries this table.
+        vru_speeds: VRU class name to run speed in m/s, one entry per VRU class.
         region: Drivable region tokens the wheeled fronts are clipped to.
         params: Reachability parameters (horizon, dt, curvature bound).
-        kinds: Class name to reachable-set kind, defaults to the built-in taxonomy mapping.
-        vru_speeds: VRU class name to run speed in m/s, defaults to the built-in speeds.
         max_speed_mps: Off-map fallback speed for ego and wheeled agents. On the
             map they take the ``speed_limit`` of the lanelet they are in.
         ego_body_radius_m: Ego collision half-extent (ego has no detection box).
@@ -86,10 +68,10 @@ class CollisionTTC:
         class_names: tuple[str, ...] | list[str],
         map_provider: LaneletMapProvider,
         *,
+        kinds: dict[str, str],
+        vru_speeds: dict[str, float],
         region: tuple[str, ...] = ("road", "road_shoulder", "crosswalk"),
         params: ReachabilityParams | None = None,
-        kinds: dict[str, str] | None = None,
-        vru_speeds: dict[str, float] | None = None,
         max_speed_mps: float = 16.7,
         ego_body_radius_m: float = 1.0,
     ) -> None:
@@ -98,8 +80,8 @@ class CollisionTTC:
         self.map_provider = map_provider
         self.region = tuple(region)
         self.params = params or ReachabilityParams()
-        self.kinds = dict(kinds or DEFAULT_KINDS)
-        self.vru_speeds = dict(vru_speeds or DEFAULT_VRU_SPEEDS)
+        self.kinds = dict(kinds)
+        self.vru_speeds = dict(vru_speeds)
         self.max_speed_mps = float(max_speed_mps)
         self.ego_body_radius_m = float(ego_body_radius_m)
         unknown_kinds = sorted({kind for kind in self.kinds.values()} - _VALID_KINDS)

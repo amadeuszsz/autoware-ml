@@ -10,8 +10,47 @@ defaults:
   - _self_
 
 detection3d:
-  _target_: autoware_ml.databases.taxonomy.LabelTaxonomy
+  _target_: autoware_ml.databases.taxonomy.DetectionTaxonomy
   ignore_index: -1
+  class_groups:
+    grouped_vehicle: [car, truck, bus, train, vehicle_extension]
+    grouped_two_wheeler: [motorcycle, bicycle]
+    grouped_pedestrian_animal: [pedestrian, animal]
+    grouped_static_obstacle: [barrier, traffic_cone]
+    grouped_debris: [debris]
+    grouped_structure: [bicycle_rack]
+  eval_range:
+    car: 121.0
+    truck: 121.0
+    bus: 121.0
+    train: 121.0
+    motorcycle: 121.0
+    bicycle: 121.0
+    pedestrian: 121.0
+    animal: 121.0
+    barrier: 121.0
+    traffic_cone: 121.0
+    debris: 121.0
+    bicycle_rack: 121.0
+    vehicle_extension: 121.0
+  collision_kinds:
+    car: wheeled
+    truck: wheeled
+    bus: wheeled
+    train: wheeled
+    motorcycle: wheeled
+    bicycle: vru
+    pedestrian: vru
+    animal: vru
+    barrier: static
+    traffic_cone: static
+    debris: static
+    bicycle_rack: static
+    vehicle_extension: static
+  vru_speeds:
+    pedestrian: 3.0
+    animal: 4.0
+    bicycle: 6.0
   class_names:
     - car
     - truck
@@ -53,8 +92,19 @@ detection3d:
     vehicle_protruding_object: vehicle_extension
 
 segmentation3d:
-  _target_: autoware_ml.databases.taxonomy.LabelTaxonomy
+  _target_: autoware_ml.databases.taxonomy.SegmentationTaxonomy
   ignore_index: -1
+  class_groups:
+    grouped_vehicle: [car, truck, bus, train, vehicle_extension]
+    grouped_two_wheeler: [motorcycle, bicycle]
+    grouped_pedestrian_animal: [pedestrian, animal]
+    grouped_static_obstacle: [barrier, traffic_cone]
+    grouped_debris: [debris]
+    grouped_static_clutter: [static_clutter]
+    grouped_flat: [drivable_flat, non_drivable_flat]
+    grouped_vegetation: [vegetation]
+    grouped_structure: [building, vertical_thin, bicycle_rack]
+    grouped_noise: [noise]
   # The detection classes come first, in the same order, so a detection class and its
   # segmentation class share one index
   class_names:

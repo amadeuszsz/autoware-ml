@@ -21,20 +21,9 @@ filter_attributes:
   - [motorcycle, motorcycle_state.without_rider]
 train_min_points_near: 3
 train_min_points_far: 2
-eval_class_range:
-  car: 121.0
-  truck: 121.0
-  bus: 121.0
-  train: 121.0
-  motorcycle: 121.0
-  bicycle: 121.0
-  pedestrian: 121.0
-  animal: 121.0
-  barrier: 121.0
-  traffic_cone: 121.0
-  debris: 121.0
-  bicycle_rack: 121.0
-  vehicle_extension: 121.0
+# The class keyed evaluation tables come from the detection taxonomy the database is bound to
+eval_class_range: ${database.taxonomy.detection3d.eval_range}
+class_groups: ${database.taxonomy.detection3d.class_groups}
 metric_ranges:
   - { _target_: autoware_ml.metrics.base.MetricRange, name: 0-50m, min_distance: 0.0, max_distance: 50.0 }
   - { _target_: autoware_ml.metrics.base.MetricRange, name: 50-90m, min_distance: 50.0, max_distance: 90.0 }
@@ -72,6 +61,8 @@ collision_filter:
 collision:
   _target_: autoware_ml.metrics.detection3d.collision.CollisionTTC
   class_names: ${t4dataset.detection3d.class_names}
+  kinds: ${database.taxonomy.detection3d.collision_kinds}
+  vru_speeds: ${database.taxonomy.detection3d.vru_speeds}
   map_provider: ${t4dataset.detection3d.map_provider}
   region: [road, road_shoulder, crosswalk, drivable_area, intersection_area, crosswalk_polygon]
   max_speed_mps: 16.7
@@ -80,13 +71,6 @@ collision:
     horizon_s: 4.0
     dt_s: 0.1
     max_lateral_accel_mps2: 3.0
-class_groups:
-  grouped_vehicle: [car, truck, bus, train, vehicle_extension]
-  grouped_two_wheeler: [motorcycle, bicycle]
-  grouped_pedestrian_animal: [pedestrian, animal]
-  grouped_static_obstacle: [barrier, traffic_cone]
-  grouped_debris: [debris]
-  grouped_structure: [bicycle_rack]
 detection_components:
   # Whole-scene.
   - { _target_: autoware_ml.metrics.detection3d.mean_ap.MeanAP, stages: [val, test] }

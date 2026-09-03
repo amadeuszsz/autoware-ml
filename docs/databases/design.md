@@ -127,12 +127,18 @@ The database owns the label spaces of its corpus. A `LabelVocabulary` maps every
 name of the dataset family onto a fine label name, the finest distinction the corpus supports.
 A `LabelTaxonomy` selects the classes trained at one level of granularity and folds every fine
 name onto one of them or drops it, so a level is a strict coarsening of the vocabulary and
-two levels never drift apart in how they read the raw labels. A `DatabaseTaxonomy` pairs the
-detection and the segmentation taxonomy of one level. Levels are config groups under
+two levels never drift apart in how they read the raw labels. A `DetectionTaxonomy` and a
+`SegmentationTaxonomy` extend it with the tables the metrics key by class: the behaviour
+groups of both label spaces, and for detection the evaluation range of every class, the
+reachable set kind of every class in the collision model and the run speed of every
+vulnerable road user class. The tables are validated against the class list of the level and
+stay out of the string form, so they do not enter the database hash. A `DatabaseTaxonomy`
+pairs the detection and the segmentation taxonomy of one level. Levels are config groups under
 `configs/database/<family>/taxonomy/`, a database config binds one of them and a task
 overrides the binding when it trains another level. The dataset packages read their class
-lists from the bound taxonomy, so the metrics, the models, the record table and the mask
-loading share one definition.
+lists and the class keyed tables from the bound taxonomy, so the metrics, the models, the
+record table and the mask loading share one definition and a level switch carries its
+evaluation tables along.
 
 Box labels are baked when the records are generated. The `Box3DLabelResolver` resolves the
 raw name of every box to its fine name, runs the box pipelines on the fine names, and assigns

@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from typing import Mapping, Sequence
 
+from autoware_ml.types.collision import CollisionKind
+
 
 class LabelVocabulary:
     """Raw label names of a dataset family mapped onto fine label names."""
@@ -100,6 +102,7 @@ class LabelTaxonomy:
         class_names: Sequence[str],
         coarsening: Mapping[str, str | None],
         ignore_index: int,
+        class_groups: Mapping[str, Sequence[str]],
     ) -> None:
         """
         Initialize the taxonomy.
@@ -111,6 +114,8 @@ class LabelTaxonomy:
             Every fine name of the vocabulary needs an entry. A class no fine label coarsens
             to is a placeholder the level trains without data.
           ignore_index: Label index of a label outside the classes of the level.
+          class_groups: Behaviour groups the metrics report besides the classes, group name to
+            its classes. Every class belongs to exactly one group.
         """
 
         if not len(class_names):
@@ -141,12 +146,39 @@ class LabelTaxonomy:
                     f"Fine label {fine_name!r} coarsens to {class_name!r}, which is not a class "
                     f"of the level {list(class_names)}."
                 )
+        grouped = [name for members in class_groups.values() for name in members]
+        if sorted(grouped) != sorted(class_names):
+            raise ValueError(
+                "Every class must belong to exactly one class group, the groups list "
+                f"{sorted(grouped)} for the classes {sorted(class_names)}."
+            )
 
         self._vocabulary = vocabulary
         self._class_names = tuple(class_names)
         self._coarsening = dict(coarsening)
         self._ignore_index = ignore_index
+        self._class_groups = {name: tuple(members) for name, members in class_groups.items()}
         self._class_indices = {name: index for index, name in enumerate(self._class_names)}
+
+    @staticmethod
+    def _validate_class_table(
+        table: Mapping[str, object], class_names: Sequence[str], table_name: str
+    ) -> None:
+        """
+        Check that a class keyed table has exactly one entry per class of the level.
+
+        Args:
+          table: Class name to value.
+          class_names: Classes of the level.
+          table_name: Name of the table for the error message.
+        """
+
+        if set(table) != set(class_names):
+            raise ValueError(
+                f"{table_name} must have one entry per class, missing "
+                f"{sorted(set(class_names) - set(table))}, unknown "
+                f"{sorted(set(table) - set(class_names))}."
+            )
 
     @property
     def vocabulary(self) -> LabelVocabulary:
@@ -172,6 +204,11 @@ class LabelTaxonomy:
     def coarsening(self) -> Mapping[str, str | None]:
         """Fine label name to class name, None for a dropped fine label."""
         return self._coarsening
+
+    @property
+    def class_groups(self) -> Mapping[str, tuple[str, ...]]:
+        """Behaviour groups the metrics report, group name to its classes."""
+        return self._class_groups
 
     def fine_name(self, raw_name: str) -> str:
         """
@@ -249,10 +286,86 @@ class LabelTaxonomy:
         return hash(str(self))
 
 
+class DetectionTaxonomy(LabelTaxonomy):
+    """
+    Detection classes of one level together with the class keyed evaluation tables of the
+    detection metrics. The tables are validated against the class list here and read by the
+    dataset configs, they do not enter the database hash because they do not change the table.
+    """
+
+    def __init__(
+        self,
+        vocabulary: LabelVocabulary,
+        class_names: Sequence[str],
+        coarsening: Mapping[str, str | None],
+        ignore_index: int,
+        class_groups: Mapping[str, Sequence[str]],
+        eval_range: Mapping[str, float],
+        collision_kinds: Mapping[str, str],
+        vru_speeds: Mapping[str, float],
+    ) -> None:
+        """
+        Initialize the detection taxonomy.
+
+        Args:
+          vocabulary: Raw label names mapped onto fine label names.
+          class_names: Classes of the level, in index order.
+          coarsening: Fine label name to class name, null for a dropped fine label.
+          ignore_index: Label index of a label outside the classes of the level.
+          class_groups: Behaviour groups the metrics report, group name to its classes.
+          eval_range: Range in meters up to which every class is evaluated.
+          collision_kinds: Reachable set kind of every class in the collision metrics.
+          vru_speeds: Run speed in meters per second of every vulnerable road user class.
+        """
+
+        super().__init__(vocabulary, class_names, coarsening, ignore_index, class_groups)
+        self._validate_class_table(eval_range, class_names, "eval_range")
+        self._validate_class_table(collision_kinds, class_names, "collision_kinds")
+        unknown_kinds = sorted(set(collision_kinds.values()) - set(CollisionKind))
+        if unknown_kinds:
+            raise ValueError(
+                f"Unknown collision kinds {unknown_kinds}, valid kinds are "
+                f"{[kind.value for kind in CollisionKind]}."
+            )
+        vru_classes = {name for name, kind in collision_kinds.items() if kind == CollisionKind.VRU}
+        if set(vru_speeds) != vru_classes:
+            raise ValueError(
+                "vru_speeds must list exactly the vulnerable road user classes, missing "
+                f"{sorted(vru_classes - set(vru_speeds))}, unknown "
+                f"{sorted(set(vru_speeds) - vru_classes)}."
+            )
+        self._eval_range = {name: float(value) for name, value in eval_range.items()}
+        self._collision_kinds = {
+            name: CollisionKind(kind) for name, kind in collision_kinds.items()
+        }
+        self._vru_speeds = {name: float(speed) for name, speed in vru_speeds.items()}
+
+    @property
+    def eval_range(self) -> Mapping[str, float]:
+        """Range in meters up to which every class is evaluated."""
+        return self._eval_range
+
+    @property
+    def collision_kinds(self) -> Mapping[str, CollisionKind]:
+        """Reachable set kind of every class in the collision metrics."""
+        return self._collision_kinds
+
+    @property
+    def vru_speeds(self) -> Mapping[str, float]:
+        """Run speed in meters per second of every vulnerable road user class."""
+        return self._vru_speeds
+
+
+class SegmentationTaxonomy(LabelTaxonomy):
+    """Segmentation classes of one level together with the behaviour groups of the metrics."""
+
+
 class DatabaseTaxonomy:
     """Taxonomies of the label spaces a database describes."""
 
-    def __init__(self, detection3d: LabelTaxonomy, segmentation3d: LabelTaxonomy) -> None:
+    def __init__(
+        self, detection3d: DetectionTaxonomy, segmentation3d: SegmentationTaxonomy
+    ) -> None:
         """
         Initialize the database taxonomy.
 
@@ -261,16 +374,25 @@ class DatabaseTaxonomy:
           segmentation3d: Taxonomy the semantic mask categories are resolved with.
         """
 
+        if not isinstance(detection3d, DetectionTaxonomy):
+            raise TypeError(
+                f"detection3d must be a DetectionTaxonomy, got {type(detection3d).__name__}."
+            )
+        if not isinstance(segmentation3d, SegmentationTaxonomy):
+            raise TypeError(
+                "segmentation3d must be a SegmentationTaxonomy, got "
+                f"{type(segmentation3d).__name__}."
+            )
         self._detection3d = detection3d
         self._segmentation3d = segmentation3d
 
     @property
-    def detection3d(self) -> LabelTaxonomy:
+    def detection3d(self) -> DetectionTaxonomy:
         """Taxonomy the box labels are baked with."""
         return self._detection3d
 
     @property
-    def segmentation3d(self) -> LabelTaxonomy:
+    def segmentation3d(self) -> SegmentationTaxonomy:
         """Taxonomy the semantic mask categories are resolved with."""
         return self._segmentation3d
 

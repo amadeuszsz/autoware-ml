@@ -18,7 +18,14 @@ from __future__ import annotations
 
 import pytest
 
-from autoware_ml.databases.taxonomy import DatabaseTaxonomy, LabelTaxonomy, LabelVocabulary
+from autoware_ml.databases.taxonomy import (
+    DatabaseTaxonomy,
+    DetectionTaxonomy,
+    LabelTaxonomy,
+    LabelVocabulary,
+    SegmentationTaxonomy,
+)
+from autoware_ml.types.collision import CollisionKind
 
 VOCABULARY = LabelVocabulary(
     {
@@ -30,24 +37,46 @@ VOCABULARY = LabelVocabulary(
         "semi_trailer": "trailer",
     }
 )
+ONLINE_CLASSES = ["car", "truck"]
+ONLINE_COARSENING = {"car": "car", "emergency_vehicle": "car", "truck": "truck", "trailer": None}
+ONLINE_GROUPS = {"grouped_vehicle": ["car", "truck"]}
+OFFLINE_CLASSES = ["car", "emergency_vehicle", "truck", "trailer"]
+OFFLINE_COARSENING = {name: name for name in VOCABULARY.fine_names}
+OFFLINE_GROUPS = {
+    "grouped_car": ["car", "emergency_vehicle"],
+    "grouped_truck": ["truck", "trailer"],
+}
 
 
 def _online() -> LabelTaxonomy:
-    return LabelTaxonomy(
-        vocabulary=VOCABULARY,
-        class_names=["car", "truck"],
-        coarsening={"car": "car", "emergency_vehicle": "car", "truck": "truck", "trailer": None},
-        ignore_index=-1,
-    )
+    return LabelTaxonomy(VOCABULARY, ONLINE_CLASSES, ONLINE_COARSENING, -1, ONLINE_GROUPS)
 
 
 def _offline() -> LabelTaxonomy:
-    return LabelTaxonomy(
-        vocabulary=VOCABULARY,
-        class_names=["car", "emergency_vehicle", "truck", "trailer"],
-        coarsening={name: name for name in VOCABULARY.fine_names},
-        ignore_index=-1,
+    return LabelTaxonomy(VOCABULARY, OFFLINE_CLASSES, OFFLINE_COARSENING, -1, OFFLINE_GROUPS)
+
+
+def _detection(
+    eval_range: dict[str, float] | None = None,
+    collision_kinds: dict[str, str] | None = None,
+    vru_speeds: dict[str, float] | None = None,
+) -> DetectionTaxonomy:
+    return DetectionTaxonomy(
+        VOCABULARY,
+        ONLINE_CLASSES,
+        ONLINE_COARSENING,
+        -1,
+        ONLINE_GROUPS,
+        eval_range={"car": 121.0, "truck": 121.0} if eval_range is None else eval_range,
+        collision_kinds=(
+            {"car": "wheeled", "truck": "vru"} if collision_kinds is None else collision_kinds
+        ),
+        vru_speeds={"truck": 6.0} if vru_speeds is None else vru_speeds,
     )
+
+
+def _segmentation() -> SegmentationTaxonomy:
+    return SegmentationTaxonomy(VOCABULARY, OFFLINE_CLASSES, OFFLINE_COARSENING, -1, OFFLINE_GROUPS)
 
 
 def test_vocabulary_resolves_fine_names_and_keeps_unknown_raw_names() -> None:
@@ -80,6 +109,7 @@ def test_online_level_coarsens_fine_names_and_drops_the_rest() -> None:
     assert taxonomy.resolve_index("drainage") == -1
     assert taxonomy.class_name("trailer") is None
     assert taxonomy.class_index("truck") == 1
+    assert taxonomy.class_groups == {"grouped_vehicle": ("car", "truck")}
 
 
 def test_offline_level_trains_every_fine_name() -> None:
@@ -97,37 +127,39 @@ def test_levels_differ_in_their_string_form() -> None:
 
 def test_taxonomy_rejects_inconsistent_definitions() -> None:
     with pytest.raises(ValueError, match="at least one class name"):
-        LabelTaxonomy(VOCABULARY, [], {}, -1)
+        LabelTaxonomy(VOCABULARY, [], {}, -1, {})
     with pytest.raises(ValueError, match="unique"):
-        LabelTaxonomy(VOCABULARY, ["car", "car"], {}, -1)
+        LabelTaxonomy(VOCABULARY, ["car", "car"], {}, -1, {})
     with pytest.raises(ValueError, match="ignore index 1 collides"):
-        LabelTaxonomy(VOCABULARY, ["car", "truck"], {}, 1)
+        LabelTaxonomy(VOCABULARY, ONLINE_CLASSES, {}, 1, ONLINE_GROUPS)
     with pytest.raises(ValueError, match="missing \\['trailer'\\]"):
         LabelTaxonomy(
             VOCABULARY,
-            ["car", "truck"],
+            ONLINE_CLASSES,
             {"car": "car", "emergency_vehicle": "car", "truck": "truck"},
             -1,
+            ONLINE_GROUPS,
         )
     with pytest.raises(ValueError, match="unknown \\['bus'\\]"):
         LabelTaxonomy(
-            VOCABULARY,
-            ["car", "truck"],
-            {
-                "car": "car",
-                "emergency_vehicle": "car",
-                "truck": "truck",
-                "trailer": None,
-                "bus": None,
-            },
-            -1,
+            VOCABULARY, ONLINE_CLASSES, {**ONLINE_COARSENING, "bus": None}, -1, ONLINE_GROUPS
         )
     with pytest.raises(ValueError, match="not a class of the level"):
         LabelTaxonomy(
+            VOCABULARY, ONLINE_CLASSES, {**ONLINE_COARSENING, "trailer": "bus"}, -1, ONLINE_GROUPS
+        )
+
+
+def test_taxonomy_rejects_class_groups_that_do_not_partition_the_classes() -> None:
+    with pytest.raises(ValueError, match="exactly one class group"):
+        LabelTaxonomy(VOCABULARY, ONLINE_CLASSES, ONLINE_COARSENING, -1, {"grouped_car": ["car"]})
+    with pytest.raises(ValueError, match="exactly one class group"):
+        LabelTaxonomy(
             VOCABULARY,
-            ["car", "truck"],
-            {"car": "car", "emergency_vehicle": "car", "truck": "truck", "trailer": "bus"},
+            ONLINE_CLASSES,
+            ONLINE_COARSENING,
             -1,
+            {"grouped_car": ["car"], "grouped_vehicle": ["car", "truck"]},
         )
 
 
@@ -135,19 +167,60 @@ def test_a_class_without_fine_labels_is_a_placeholder() -> None:
     taxonomy = LabelTaxonomy(
         VOCABULARY,
         ["car", "truck", "vertical_thin"],
-        {"car": "car", "emergency_vehicle": "car", "truck": "truck", "trailer": None},
+        ONLINE_COARSENING,
         -1,
+        {"grouped_vehicle": ["car", "truck"], "grouped_structure": ["vertical_thin"]},
     )
 
     assert taxonomy.num_classes == 3
     assert taxonomy.class_index("vertical_thin") == -1
 
 
+def test_detection_taxonomy_carries_typed_evaluation_tables() -> None:
+    taxonomy = _detection()
+
+    assert taxonomy.eval_range == {"car": 121.0, "truck": 121.0}
+    assert taxonomy.collision_kinds == {"car": CollisionKind.WHEELED, "truck": CollisionKind.VRU}
+    assert taxonomy.vru_speeds == {"truck": 6.0}
+
+
+def test_detection_taxonomy_rejects_tables_that_do_not_match_the_classes() -> None:
+    with pytest.raises(ValueError, match="eval_range must have one entry per class"):
+        _detection(eval_range={"car": 121.0})
+    with pytest.raises(ValueError, match="collision_kinds must have one entry per class"):
+        _detection(collision_kinds={"car": "wheeled", "truck": "wheeled", "bus": "wheeled"})
+    with pytest.raises(ValueError, match="Unknown collision kinds \\['hovercraft'\\]"):
+        _detection(collision_kinds={"car": "hovercraft", "truck": "vru"})
+    with pytest.raises(ValueError, match="missing \\['truck'\\]"):
+        _detection(vru_speeds={})
+    with pytest.raises(ValueError, match="unknown \\['car'\\]"):
+        _detection(vru_speeds={"car": 3.0, "truck": 6.0})
+
+
+def test_evaluation_tables_stay_out_of_the_string_form() -> None:
+    assert _detection() == _detection(eval_range={"car": 50.0, "truck": 50.0})
+    assert str(_detection()) == str(
+        _detection(collision_kinds={"car": "static", "truck": "static"}, vru_speeds={})
+    )
+
+
 def test_database_taxonomy_compares_both_levels() -> None:
-    first = DatabaseTaxonomy(detection3d=_online(), segmentation3d=_offline())
-    second = DatabaseTaxonomy(detection3d=_online(), segmentation3d=_offline())
-    other = DatabaseTaxonomy(detection3d=_offline(), segmentation3d=_offline())
+    first = DatabaseTaxonomy(detection3d=_detection(), segmentation3d=_segmentation())
+    second = DatabaseTaxonomy(detection3d=_detection(), segmentation3d=_segmentation())
+    other = DatabaseTaxonomy(
+        detection3d=_detection(),
+        segmentation3d=SegmentationTaxonomy(
+            VOCABULARY, ONLINE_CLASSES, ONLINE_COARSENING, -1, ONLINE_GROUPS
+        ),
+    )
 
     assert first == second
     assert first != other
-    assert str(first).startswith("DatabaseTaxonomy(detection3d=LabelTaxonomy(")
+    assert str(first).startswith("DatabaseTaxonomy(detection3d=DetectionTaxonomy(")
+
+
+def test_database_taxonomy_rejects_untyped_levels() -> None:
+    with pytest.raises(TypeError, match="detection3d must be a DetectionTaxonomy"):
+        DatabaseTaxonomy(detection3d=_online(), segmentation3d=_segmentation())
+    with pytest.raises(TypeError, match="segmentation3d must be a SegmentationTaxonomy"):
+        DatabaseTaxonomy(detection3d=_detection(), segmentation3d=_detection())

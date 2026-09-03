@@ -26,7 +26,12 @@ from autoware_ml.databases.schemas.camera_frames import CameraFrameDataModel
 from autoware_ml.databases.schemas.category_mapping import CategoryMappingDataModel
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord
 from autoware_ml.databases.schemas.lidar_frames import LidarFrameDataModel
-from autoware_ml.databases.taxonomy import DatabaseTaxonomy, LabelTaxonomy, LabelVocabulary
+from autoware_ml.databases.taxonomy import (
+    DatabaseTaxonomy,
+    DetectionTaxonomy,
+    LabelVocabulary,
+    SegmentationTaxonomy,
+)
 from autoware_ml.datamodule.samples.boxes3d import Boxes3D
 from autoware_ml.datamodule.samples.meta import FrameMeta
 from autoware_ml.datamodule.samples.point_cloud import PointCloud
@@ -345,16 +350,35 @@ def make_sample(
     )
 
 
+def _taxonomy_parts(
+    class_names: Sequence[str],
+    name_mapping: Mapping[str, str] | None,
+    coarsening: Mapping[str, str | None] | None,
+) -> tuple[LabelVocabulary, Mapping[str, str | None], Mapping[str, Sequence[str]]]:
+    """
+    Build the vocabulary, the coarsening and one behaviour group per class of a taxonomy, the
+    identity over the class names unless a vocabulary or a coarsening is given.
+    """
+
+    vocabulary = LabelVocabulary(
+        name_mapping if name_mapping is not None else {name: name for name in class_names}
+    )
+    if coarsening is None:
+        coarsening = {name: name for name in vocabulary.fine_names}
+    class_groups = {f"grouped_{name}": [name] for name in class_names}
+    return vocabulary, coarsening, class_groups
+
+
 def make_label_taxonomy(
     class_names: Sequence[str] = ("car",),
     *,
     name_mapping: Mapping[str, str] | None = None,
     coarsening: Mapping[str, str | None] | None = None,
     ignore_index: int = -1,
-) -> LabelTaxonomy:
+) -> SegmentationTaxonomy:
     """
-    Build a label taxonomy, the identity over the class names unless a vocabulary or a
-    coarsening is given.
+    Build a segmentation taxonomy, the identity over the class names unless a vocabulary or a
+    coarsening is given, with one behaviour group per class.
 
     Args:
       class_names: Classes of the level, in index order.
@@ -364,19 +388,52 @@ def make_label_taxonomy(
       ignore_index: Label index of a label outside the level.
 
     Returns:
-      LabelTaxonomy: The taxonomy.
+      SegmentationTaxonomy: The taxonomy.
     """
 
-    vocabulary = LabelVocabulary(
-        name_mapping if name_mapping is not None else {name: name for name in class_names}
-    )
-    if coarsening is None:
-        coarsening = {name: name for name in vocabulary.fine_names}
-    return LabelTaxonomy(
+    vocabulary, coarsening, class_groups = _taxonomy_parts(class_names, name_mapping, coarsening)
+    return SegmentationTaxonomy(
         vocabulary=vocabulary,
         class_names=list(class_names),
         coarsening=coarsening,
         ignore_index=ignore_index,
+        class_groups=class_groups,
+    )
+
+
+def make_detection_taxonomy(
+    class_names: Sequence[str] = ("car",),
+    *,
+    name_mapping: Mapping[str, str] | None = None,
+    coarsening: Mapping[str, str | None] | None = None,
+    ignore_index: int = -1,
+) -> DetectionTaxonomy:
+    """
+    Build a detection taxonomy, the identity over the class names unless a vocabulary or a
+    coarsening is given, with one behaviour group per class, a 100 m evaluation range and the
+    static collision kind for every class.
+
+    Args:
+      class_names: Classes of the level, in index order.
+      name_mapping: Raw label name to fine label name, the identity over the class names by
+        default.
+      coarsening: Fine label name to class name, the identity over the fine names by default.
+      ignore_index: Label index of a label outside the level.
+
+    Returns:
+      DetectionTaxonomy: The taxonomy.
+    """
+
+    vocabulary, coarsening, class_groups = _taxonomy_parts(class_names, name_mapping, coarsening)
+    return DetectionTaxonomy(
+        vocabulary=vocabulary,
+        class_names=list(class_names),
+        coarsening=coarsening,
+        ignore_index=ignore_index,
+        class_groups=class_groups,
+        eval_range={name: 100.0 for name in class_names},
+        collision_kinds={name: "static" for name in class_names},
+        vru_speeds={},
     )
 
 
@@ -393,6 +450,6 @@ def make_database_taxonomy(class_names: Sequence[str] = ("car",)) -> DatabaseTax
     """
 
     return DatabaseTaxonomy(
-        detection3d=make_label_taxonomy(class_names),
+        detection3d=make_detection_taxonomy(class_names),
         segmentation3d=make_label_taxonomy(class_names),
     )
