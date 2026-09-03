@@ -3,7 +3,8 @@
 # Teacher variant of the segmentation model for pseudo labeling and distillation, never
 # deployed. The encoder and the decoder follow the PT-v3m3 architecture and the database is
 # bound to the offline taxonomy, so the head transfers into the pseudo and joint stages. The
-# train pipeline is restated to scale the jitter to the 5 cm grid.
+# train pipeline is restated to scale the jitter to the 6 cm grid, which tiles the range into
+# 4096 cells per axis.
 
 defaults:
   - /tasks/segmentation3d/ptv3/voxel012_122m_t4dataset_j6gen2
@@ -11,8 +12,8 @@ defaults:
   - override /database/t4dataset/box3d_pipelines@database.box3d_pipelines: trailer_class_box3d_pipelines
   - _self_
 
-grid_size: 0.05
-max_voxels: 1200000
+grid_size: 0.06
+max_voxels: 1048576
 
 batch_size: 2
 
@@ -74,8 +75,8 @@ datamodule:
         flip_ratio_bev_horizontal: 0.5
         flip_ratio_bev_vertical: 0.5
       - _target_: autoware_ml.transforms.point_cloud.perturbation.RandomJitter
-        sigma: 0.005
-        clip: 0.02
+        sigma: 0.006
+        clip: 0.024
       - _target_: autoware_ml.transforms.point_cloud.crop.PointsRangeFilter
         point_cloud_range: ${point_cloud_range}
       - _target_: autoware_ml.transforms.point_cloud.sampling.RandomDropout

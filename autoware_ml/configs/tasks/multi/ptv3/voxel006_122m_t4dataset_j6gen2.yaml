@@ -3,7 +3,8 @@
 # Teacher variant of the joint model for pseudo labeling and distillation, never deployed. The
 # encoder and the segmentation decoder follow the PT-v3m3 architecture, the database is bound
 # to the offline taxonomy with trailer as a class of its own, and the BEV head geometry is
-# scaled to the 5 cm grid. The train pipeline is restated to scale the jitter to the grid.
+# scaled to the 6 cm grid, half the deployed grid, so the range tiles into 4096 cells and a
+# 512 cell BEV canvas. The train pipeline is restated to scale the jitter to the grid.
 
 defaults:
   - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
@@ -11,9 +12,9 @@ defaults:
   - override /database/t4dataset/taxonomy@database.taxonomy: offline
   - _self_
 
-grid_size: 0.05
-max_voxels: 1200000
-head_voxel_size: [0.4, 0.4, 8.0]
+grid_size: 0.06
+max_voxels: 1048576
+head_voxel_size: [0.48, 0.48, 8.0]
 
 batch_size: 1
 
@@ -35,18 +36,19 @@ model:
       out_channels: 512
     bev_projector:
       out_channels: 256
-      output_shape: [615, 615]
+      output_shape: [512, 512]
     bev_encoder:
       hidden_channels: 256
       out_channels: 256
-      # Dilations scaled with the BEV cell so the receptive field keeps a 20 m radius
-      dilations: [2, 5, 12, 5]
+      # Dilations doubled with the halved BEV cell so the receptive field keeps its radius
+      dilations: [2, 4, 10, 4]
   bbox_head:
     in_channels: 256
     hidden_channel: 256
     feedforward_channels: 512
-    # Local maximum window scaled with the BEV cell to keep a 2.8 m window
-    nms_kernel_size: 7
+    # Local maximum window of 2.4 m at the halved BEV cell, the nearest odd kernel below the
+    # deployed 2.88 m
+    nms_kernel_size: 5
     # Heatmap pooling over the fine constituents of car, truck and bus
     dense_heatmap_pooling_classes:
       [car, truck, trailer, bus, construction_vehicle, emergency_vehicle,
@@ -137,8 +139,8 @@ datamodule:
         flip_ratio_bev_horizontal: 0.5
         flip_ratio_bev_vertical: 0.5
       - _target_: autoware_ml.transforms.point_cloud.perturbation.RandomJitter
-        sigma: 0.005
-        clip: 0.02
+        sigma: 0.006
+        clip: 0.024
       - _target_: autoware_ml.transforms.point_cloud.crop.PointsRangeFilter
         point_cloud_range: ${point_cloud_range}
       - _target_: autoware_ml.transforms.point_cloud.sampling.RandomDropout

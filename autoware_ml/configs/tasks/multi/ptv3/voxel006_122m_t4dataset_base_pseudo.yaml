@@ -1,17 +1,16 @@
 # @package _global_
 
-# Stage 3 of the voxel005 teacher pipeline: joint training on the j6gen2 base set, detection
+# Stage 2 of the voxel006 teacher pipeline: pretraining on the mixed ODD base set, detection
 # ground truth with pseudo segmentation, with the j6gen2 seg3d ground truth frames rehearsed
-# in. Architecture, precision and the offline taxonomy come from the j6gen2 joint voxel005
+# in. Architecture, precision and the offline taxonomy come from the j6gen2 joint voxel006
 # config, and the rehearsal database is bound to the same taxonomy level and pipelines.
-# Initialized from the stage 2 checkpoint, so the warmup and the schedule are shorter.
 
 defaults:
-  - /tasks/multi/ptv3/voxel005_122m_t4dataset_j6gen2
+  - /tasks/multi/ptv3/voxel006_122m_t4dataset_j6gen2
   - /database@rehearsal_database: t4dataset/t4dataset_j6gen2_semaseg
   - override /database/t4dataset/taxonomy@rehearsal_database.taxonomy: offline
   - override /database/t4dataset/box3d_pipelines@rehearsal_database.box3d_pipelines: trailer_class_box3d_pipelines
-  - override /database@database: t4dataset/t4dataset_j6gen2_base_pseudo
+  - override /database@database: t4dataset/t4dataset_base_pseudo
   - _self_
 
 datamodule:
@@ -39,14 +38,21 @@ datamodule:
   test_sources: ${datamodule.val_sources}
 
 model:
+  optimizer_group_overrides:
+    encoder_block:
+      lr: 0.00001
+    encoder_default:
+      lr: 0.000025
+    seg3d_head:
+      lr: 0.00005
   scheduler:
-    warmup_epochs: 4
-    decay_epochs: 36
+    warmup_epochs: 2
+    decay_epochs: 22
     max_lr_factor: 5.0
 
 trainer:
-  max_epochs: 40
+  max_epochs: 24
 
 callbacks:
   early_stopping:
-    patience: 40
+    patience: 8
