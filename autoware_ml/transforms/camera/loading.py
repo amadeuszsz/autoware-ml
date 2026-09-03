@@ -31,8 +31,6 @@ from autoware_ml.transforms.point_cloud.loading import (
     resolve_frame_path,
 )
 
-COLOR_TYPES = frozenset({"rgb", "bgr"})
-
 
 def camera_frame_by_channel(sample: Sample, channel_name: str) -> CameraFrameDataModel:
     """Get the camera frame of one channel from the sample record.
@@ -84,22 +82,12 @@ class LoadImageFromFile(BaseTransform):
     """Load the image of the calibration camera into the calibration state.
 
     The transform reads the camera frame of the record whose channel matches the camera name of
-    the calibration state and loads its image.
+    the calibration state and loads its image. The image keeps the BGR channel order of OpenCV,
+    the order the photometric distortion, the fusion preview and the fused image of the
+    calibration model work in.
     """
 
     _required_fields = ["calibration"]
-
-    def __init__(self, *, color_type: str = "rgb") -> None:
-        """Initialize the LoadImageFromFile transform.
-
-        Args:
-            color_type: Output color format, "rgb" or "bgr".
-        """
-        if color_type.lower() not in COLOR_TYPES:
-            raise ValueError(
-                f"color_type must be one of {sorted(COLOR_TYPES)}, got {color_type!r}."
-            )
-        self.color_type = color_type.lower()
 
     def transform(self, sample: Sample) -> Sample:
         """Load the image of the calibration camera.
@@ -112,8 +100,6 @@ class LoadImageFromFile(BaseTransform):
         """
         camera_frame = camera_frame_by_channel(sample, sample.calibration.camera_name)
         image = load_frame_image(sample.data_root, camera_frame)
-        if self.color_type == "rgb":
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         calibration = sample.calibration.model_copy(update={"image": image.astype(np.float32)})
         return sample.replace(calibration=calibration)
 

@@ -163,15 +163,8 @@ class TestLoadImageFromFile:
         assert image is not None
         assert image.shape == (8, 16, 3)
         assert image.dtype == np.float32
-        # The left image was written as BGR (40, 50, 60) and is loaded as RGB by default
-        assert np.allclose(image[0, 0], [60.0, 50.0, 40.0])
-
-    def test_bgr_color_type_keeps_the_stored_order(self, tmp_path: Path) -> None:
-        sample = _make_calibration_sample(tmp_path, camera_name="CAM_LEFT")
-
-        output = LoadImageFromFile(color_type="bgr")(sample)
-
-        assert np.allclose(output.calibration.image[0, 0], [40.0, 50.0, 60.0])
+        # The left image was written as BGR (40, 50, 60) and keeps that order
+        assert np.allclose(image[0, 0], [40.0, 50.0, 60.0])
 
     def test_missing_channel_raises(self, tmp_path: Path) -> None:
         sample = _make_calibration_sample(tmp_path, camera_name="CAM_BACK")

@@ -26,8 +26,8 @@ from autoware_ml.transforms.base import BaseTransform
 class PhotometricDistortion(BaseTransform):
     """Apply random brightness, contrast, saturation, and hue to the calibration image.
 
-    The distortions run in HSV space on the color channels of the calibration image, before the
-    lidar fusion appends the depth and intensity channels.
+    The distortions run in HSV space on the BGR colour channels of the calibration image, before
+    the lidar fusion appends the depth and intensity channels.
     """
 
     _required_fields = ["calibration"]
