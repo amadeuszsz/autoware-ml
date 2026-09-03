@@ -13,6 +13,7 @@ name_mapping:
   other_vehicle: other_vehicle
   police_car: emergency_vehicle
   vehicle.police: emergency_vehicle
+  vehicle.police_car: emergency_vehicle
   ambulance: emergency_vehicle
   vehicle.ambulance: emergency_vehicle
   "vehicle.emergency (ambulance & police)": emergency_vehicle
@@ -22,6 +23,7 @@ name_mapping:
   truck: truck
   vehicle.truck: truck
   tractor_unit: truck
+  tractor: truck
   fire_truck: truck
   vehicle.fire: truck
   construction_vehicle: construction_vehicle
@@ -60,6 +62,7 @@ name_mapping:
   barrier: barrier
   movable_object.barrier: barrier
   construction_sign: construction_sign
+  "construction sign": construction_sign
   traffic_cone: traffic_cone
   trafficcone: traffic_cone
   movable_object.traffic_cone: traffic_cone
@@ -69,6 +72,10 @@ name_mapping:
   pushable_pullable: pushable_pullable
   movable_object.pushable_pullable: pushable_pullable
   bicycle_rack: bicycle_rack
+  static_object.bicycle_rack: bicycle_rack
+  "static_object.bicycle rack": bicycle_rack
+  # bollard boxes are outside every detection level
+  static_object.bollard: null
   # parts protruding from a vehicle
   open_door: open_door
   vehicle_protruding_object: vehicle_protruding_object
