@@ -14,12 +14,14 @@ detection3d:
   _target_: autoware_ml.databases.taxonomy.DetectionTaxonomy
   ignore_index: -1
   class_groups:
-    grouped_large_vehicle: [truck.common, truck.emergency, truck.trailer, truck.construction, bus, train]
-    grouped_vehicle: [car.common, car.emergency, car.special]
+    grouped_vehicle:
+      [car.common, car.emergency, car.special, truck.common, truck.emergency, truck.trailer,
+       truck.construction, bus, train]
     grouped_two_wheeler: [motorcycle, bicycle]
-    grouped_vulnerable_dynamic: [pedestrian.common, pedestrian.personal_mobility, pedestrian.stroller, animal]
-    grouped_traffic_control: [barrier.movable, barrier.construction_sign, traffic_cone]
-    grouped_small_obstacle: [debris.unclassified, debris.pushable_pullable]
+    grouped_living: [pedestrian.common, pedestrian.personal_mobility, pedestrian.stroller, animal]
+    grouped_obstacle:
+      [barrier.movable, barrier.construction_sign, traffic_cone, debris.unclassified,
+       debris.pushable_pullable]
   eval_range:
     car.common: 121.0
     car.emergency: 121.0
@@ -128,15 +130,18 @@ segmentation3d:
   _target_: autoware_ml.databases.taxonomy.SegmentationTaxonomy
   ignore_index: -1
   class_groups:
-    grouped_large_vehicle: [truck.common, truck.emergency, truck.trailer, truck.construction, bus, train]
-    grouped_vehicle: [car.common, car.emergency, car.special]
+    grouped_vehicle:
+      [car.common, car.emergency, car.special, truck.common, truck.emergency, truck.trailer,
+       truck.construction, bus, train]
     grouped_two_wheeler: [motorcycle, bicycle]
-    grouped_vulnerable_dynamic: [pedestrian.common, pedestrian.personal_mobility, pedestrian.stroller, animal]
-    grouped_traffic_control: [barrier.movable, barrier.construction_sign, traffic_cone]
-    grouped_small_obstacle: [debris.unclassified, debris.pushable_pullable]
+    grouped_living: [pedestrian.common, pedestrian.personal_mobility, pedestrian.stroller, animal]
+    grouped_obstacle:
+      [barrier.movable, barrier.construction_sign, traffic_cone, debris.unclassified,
+       debris.pushable_pullable]
     grouped_static_structure: [manmade.building, manmade.solid_stuff, manmade.special, vertical_thin, vegetation]
-    grouped_drivable_ground: [driveable_flat]
-    grouped_non_drivable_ground: [non_driveable_flat.sidewalk, non_driveable_flat.other_flat_surface, curb.low_curb, curb.high_curb]
+    grouped_flat_surface:
+      [driveable_flat, non_driveable_flat.sidewalk, non_driveable_flat.other_flat_surface,
+       curb.low_curb, curb.high_curb]
     grouped_non_physical: [noise.noise, noise.ghost_point]
     grouped_ego_vehicle: [ego_vehicle]
   # The detection classes come first, in the same order, so a detection class and its

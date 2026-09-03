@@ -14,12 +14,10 @@ detection3d:
   _target_: autoware_ml.databases.taxonomy.DetectionTaxonomy
   ignore_index: -1
   class_groups:
-    grouped_large_vehicle: [truck, bus, train]
-    grouped_vehicle: [car]
+    grouped_vehicle: [car, truck, bus, train]
     grouped_two_wheeler: [motorcycle, bicycle]
-    grouped_vulnerable_dynamic: [pedestrian, animal]
-    grouped_traffic_control: [barrier, traffic_cone]
-    grouped_small_obstacle: [debris]
+    grouped_living: [pedestrian, animal]
+    grouped_obstacle: [barrier, traffic_cone, debris]
   eval_range:
     car: 121.0
     truck: 121.0
@@ -98,15 +96,12 @@ segmentation3d:
   _target_: autoware_ml.databases.taxonomy.SegmentationTaxonomy
   ignore_index: -1
   class_groups:
-    grouped_large_vehicle: [truck, bus, train]
-    grouped_vehicle: [car]
+    grouped_vehicle: [car, truck, bus, train]
     grouped_two_wheeler: [motorcycle, bicycle]
-    grouped_vulnerable_dynamic: [pedestrian, animal]
-    grouped_traffic_control: [barrier, traffic_cone]
-    grouped_small_obstacle: [debris]
+    grouped_living: [pedestrian, animal]
+    grouped_obstacle: [barrier, traffic_cone, debris]
     grouped_static_structure: [manmade, vertical_thin, vegetation]
-    grouped_drivable_ground: [driveable_flat]
-    grouped_non_drivable_ground: [non_driveable_flat, curb]
+    grouped_flat_surface: [driveable_flat, non_driveable_flat, curb]
     grouped_non_physical: [noise]
   # The detection classes come first, in the same order, so a detection class and its
   # segmentation class share one index
