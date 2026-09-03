@@ -5,13 +5,8 @@
 # taxonomy starts with the detection taxonomy, which the partial detection score validates, so
 # a detection class and its segmentation class share one index.
 
-# Detection classes the partial detection score reports: the small objects where a few
-# correctly segmented points already matter.
-class_names:
-  - motorcycle
-  - bicycle
-  - pedestrian
-  - traffic_cone
+# The detection classes the partial detection score reports come from the detection taxonomy
+class_names: ${database.taxonomy.detection3d.partial_detection_classes}
 point_components:
   # Whole-scene.
   - _target_: autoware_ml.metrics.segmentation3d.partial_detection.PartialDetectionScore

@@ -1,7 +1,7 @@
-# Offline taxonomy of T4dataset: the fine labels of the vocabularies trained as classes of
-# their own by the teacher models used for pseudo labeling and distillation, never deployed.
-# The coarsening is the identity, so every table baked with it keeps a trailer as a box of its
-# own and the databases bind it together with the pipelines that do not merge trailers.
+# Offline taxonomy of T4dataset, the L1 layer of the pseudo labeling taxonomy: every online class
+# splits into named subtypes trained by the teacher models used for pseudo labeling and
+# distillation, never deployed. A trailer keeps a box of its own, so the databases bind it
+# together with the pipelines that do not merge trailers.
 _target_: autoware_ml.databases.taxonomy.DatabaseTaxonomy
 _convert_: all
 
@@ -14,224 +14,209 @@ detection3d:
   _target_: autoware_ml.databases.taxonomy.DetectionTaxonomy
   ignore_index: -1
   class_groups:
-    grouped_vehicle:
-      [car, truck, trailer, bus, train, construction_vehicle, emergency_vehicle, forklift,
-       other_vehicle, open_door, vehicle_protruding_object]
+    grouped_large_vehicle: [truck.common, truck.emergency, truck.trailer, truck.construction, bus, train]
+    grouped_vehicle: [car.common, car.emergency, car.special]
     grouped_two_wheeler: [motorcycle, bicycle]
-    grouped_pedestrian_animal: [pedestrian, personal_mobility, animal]
-    grouped_static_obstacle: [barrier, construction_sign, traffic_cone]
-    grouped_debris: [debris, pushable_pullable]
-    grouped_structure: [bicycle_rack]
+    grouped_vulnerable_dynamic: [pedestrian.common, pedestrian.personal_mobility, pedestrian.stroller, animal]
+    grouped_traffic_control: [barrier.movable, barrier.construction_sign, traffic_cone]
+    grouped_small_obstacle: [debris.unclassified, debris.pushable_pullable]
   eval_range:
-    car: 121.0
-    truck: 121.0
-    trailer: 121.0
+    car.common: 121.0
+    car.emergency: 121.0
+    car.special: 121.0
+    truck.common: 121.0
+    truck.emergency: 121.0
+    truck.trailer: 121.0
+    truck.construction: 121.0
     bus: 121.0
     train: 121.0
-    construction_vehicle: 121.0
-    emergency_vehicle: 121.0
-    forklift: 121.0
-    other_vehicle: 121.0
     motorcycle: 121.0
     bicycle: 121.0
-    pedestrian: 121.0
-    personal_mobility: 121.0
+    pedestrian.common: 121.0
+    pedestrian.personal_mobility: 121.0
+    pedestrian.stroller: 121.0
     animal: 121.0
-    barrier: 121.0
-    construction_sign: 121.0
+    barrier.movable: 121.0
+    barrier.construction_sign: 121.0
     traffic_cone: 121.0
-    debris: 121.0
-    pushable_pullable: 121.0
-    bicycle_rack: 121.0
-    open_door: 121.0
-    vehicle_protruding_object: 121.0
+    debris.unclassified: 121.0
+    debris.pushable_pullable: 121.0
   collision_kinds:
-    car: wheeled
-    truck: wheeled
-    trailer: wheeled
+    car.common: wheeled
+    car.emergency: wheeled
+    car.special: wheeled
+    truck.common: wheeled
+    truck.emergency: wheeled
+    truck.trailer: wheeled
+    truck.construction: wheeled
     bus: wheeled
     train: wheeled
-    construction_vehicle: wheeled
-    emergency_vehicle: wheeled
-    forklift: wheeled
-    other_vehicle: wheeled
     motorcycle: wheeled
     bicycle: vru
-    pedestrian: vru
-    personal_mobility: vru
+    pedestrian.common: vru
+    pedestrian.personal_mobility: vru
+    pedestrian.stroller: vru
     animal: vru
-    barrier: static
-    construction_sign: static
+    barrier.movable: static
+    barrier.construction_sign: static
     traffic_cone: static
-    debris: static
-    pushable_pullable: static
-    bicycle_rack: static
-    open_door: static
-    vehicle_protruding_object: static
+    debris.unclassified: static
+    debris.pushable_pullable: static
   vru_speeds:
-    pedestrian: 3.0
-    animal: 4.0
     bicycle: 6.0
-    personal_mobility: 6.0
+    pedestrian.common: 3.0
+    pedestrian.personal_mobility: 6.0
+    pedestrian.stroller: 3.0
+    animal: 4.0
+  partial_detection_classes:
+    [motorcycle, bicycle, pedestrian.common, pedestrian.personal_mobility, pedestrian.stroller,
+     traffic_cone]
   class_names:
-    - car
-    - truck
-    - trailer
+    - car.common
+    - car.emergency
+    - car.special
+    - truck.common
+    - truck.emergency
+    - truck.trailer
+    - truck.construction
     - bus
     - train
-    - construction_vehicle
-    - emergency_vehicle
-    - forklift
-    - other_vehicle
     - motorcycle
     - bicycle
-    - pedestrian
-    - personal_mobility
+    - pedestrian.common
+    - pedestrian.personal_mobility
+    - pedestrian.stroller
     - animal
-    - barrier
-    - construction_sign
+    - barrier.movable
+    - barrier.construction_sign
     - traffic_cone
-    - debris
-    - pushable_pullable
-    - bicycle_rack
-    - open_door
-    - vehicle_protruding_object
+    - debris.unclassified
+    - debris.pushable_pullable
   coarsening:
-    car: car
-    truck: truck
-    trailer: trailer
+    car: car.common
+    kart: car.special
+    other_vehicle: car.special
+    police_car: car.emergency
+    ambulance: car.emergency
+    emergency_vehicle: car.emergency
+    forklift: truck.construction
+    truck: truck.common
+    fire_truck: truck.emergency
+    construction_vehicle: truck.construction
+    trailer: truck.trailer
     bus: bus
     train: train
-    construction_vehicle: construction_vehicle
-    emergency_vehicle: emergency_vehicle
-    forklift: forklift
-    other_vehicle: other_vehicle
     motorcycle: motorcycle
     bicycle: bicycle
-    pedestrian: pedestrian
-    personal_mobility: personal_mobility
+    pedestrian: pedestrian.common
+    stroller: pedestrian.stroller
+    personal_mobility: pedestrian.personal_mobility
     animal: animal
-    barrier: barrier
-    construction_sign: construction_sign
+    barrier: barrier.movable
+    construction_sign: barrier.construction_sign
     traffic_cone: traffic_cone
-    debris: debris
-    pushable_pullable: pushable_pullable
-    bicycle_rack: bicycle_rack
-    open_door: open_door
-    vehicle_protruding_object: vehicle_protruding_object
+    debris: debris.unclassified
+    pushable_pullable: debris.pushable_pullable
+    bicycle_rack: null
+    open_door: null
+    vehicle_protruding_object: null
 
 segmentation3d:
   _target_: autoware_ml.databases.taxonomy.SegmentationTaxonomy
   ignore_index: -1
   class_groups:
-    grouped_vehicle:
-      [car, truck, trailer, bus, train, construction_vehicle, fire_truck, ambulance, police_car,
-       emergency_vehicle, forklift, kart, other_vehicle, open_door, vehicle_protruding_object]
+    grouped_large_vehicle: [truck.common, truck.emergency, truck.trailer, truck.construction, bus, train]
+    grouped_vehicle: [car.common, car.emergency, car.special]
     grouped_two_wheeler: [motorcycle, bicycle]
-    grouped_pedestrian_animal: [pedestrian, personal_mobility, stroller, animal]
-    grouped_static_obstacle: [barrier, construction_sign, traffic_cone]
-    grouped_debris: [debris, pushable_pullable]
-    grouped_static_clutter: [solid_stuff, other_stuff]
-    grouped_flat: [drivable_surface, drainage, sidewalk, other_flat_surface, high_curb, low_curb]
-    grouped_vegetation: [vegetation]
-    grouped_structure: [building, pole, bollard, traffic_light, traffic_sign, flag, bicycle_rack]
-    grouped_noise: [noise, ghost_point]
-    grouped_marker: [background, ego_vehicle, out_of_sync]
+    grouped_vulnerable_dynamic: [pedestrian.common, pedestrian.personal_mobility, pedestrian.stroller, animal]
+    grouped_traffic_control: [barrier.movable, barrier.construction_sign, traffic_cone]
+    grouped_small_obstacle: [debris.unclassified, debris.pushable_pullable]
+    grouped_static_structure: [manmade.building, manmade.solid_stuff, manmade.special, vertical_thin, vegetation]
+    grouped_drivable_ground: [driveable_flat]
+    grouped_non_drivable_ground: [non_driveable_flat.sidewalk, non_driveable_flat.other_flat_surface, curb.low_curb, curb.high_curb]
+    grouped_non_physical: [noise.noise, noise.ghost_point]
+    grouped_ego_vehicle: [ego_vehicle]
   # The detection classes come first, in the same order, so a detection class and its
-  # segmentation class share one index. The annotation markers are trained as they are.
+  # segmentation class share one index. The ego vehicle is an output of this level only.
   class_names:
-    - car
-    - truck
-    - trailer
+    - car.common
+    - car.emergency
+    - car.special
+    - truck.common
+    - truck.emergency
+    - truck.trailer
+    - truck.construction
     - bus
     - train
-    - construction_vehicle
-    - emergency_vehicle
-    - forklift
-    - other_vehicle
     - motorcycle
     - bicycle
-    - pedestrian
-    - personal_mobility
+    - pedestrian.common
+    - pedestrian.personal_mobility
+    - pedestrian.stroller
     - animal
-    - barrier
-    - construction_sign
+    - barrier.movable
+    - barrier.construction_sign
     - traffic_cone
-    - debris
-    - pushable_pullable
-    - bicycle_rack
-    - open_door
-    - vehicle_protruding_object
-    - fire_truck
-    - ambulance
-    - police_car
-    - kart
-    - stroller
-    - solid_stuff
-    - other_stuff
-    - drivable_surface
-    - drainage
-    - sidewalk
-    - other_flat_surface
-    - high_curb
-    - low_curb
+    - debris.unclassified
+    - debris.pushable_pullable
     - vegetation
-    - building
-    - pole
-    - bollard
-    - traffic_light
-    - traffic_sign
-    - flag
-    - noise
-    - ghost_point
-    - background
+    - manmade.building
+    - manmade.solid_stuff
+    - manmade.special
+    - vertical_thin
+    - driveable_flat
+    - non_driveable_flat.sidewalk
+    - non_driveable_flat.other_flat_surface
+    - curb.low_curb
+    - curb.high_curb
+    - noise.noise
+    - noise.ghost_point
     - ego_vehicle
-    - out_of_sync
   coarsening:
-    car: car
-    truck: truck
-    trailer: trailer
+    car: car.common
+    emergency_vehicle: car.emergency
+    forklift: truck.construction
+    other_vehicle: car.special
+    fire_truck: truck.emergency
+    ambulance: car.emergency
+    police_car: car.emergency
+    kart: car.special
+    truck: truck.common
+    construction_vehicle: truck.construction
+    trailer: truck.trailer
     bus: bus
     train: train
-    construction_vehicle: construction_vehicle
-    emergency_vehicle: emergency_vehicle
-    forklift: forklift
-    other_vehicle: other_vehicle
     motorcycle: motorcycle
     bicycle: bicycle
-    pedestrian: pedestrian
-    personal_mobility: personal_mobility
+    pedestrian: pedestrian.common
+    personal_mobility: pedestrian.personal_mobility
+    stroller: pedestrian.stroller
     animal: animal
-    barrier: barrier
-    construction_sign: construction_sign
+    barrier: barrier.movable
+    construction_sign: barrier.construction_sign
     traffic_cone: traffic_cone
-    debris: debris
-    pushable_pullable: pushable_pullable
-    bicycle_rack: bicycle_rack
-    open_door: open_door
-    vehicle_protruding_object: vehicle_protruding_object
-    fire_truck: fire_truck
-    ambulance: ambulance
-    police_car: police_car
-    kart: kart
-    stroller: stroller
-    solid_stuff: solid_stuff
-    other_stuff: other_stuff
-    drivable_surface: drivable_surface
-    drainage: drainage
-    sidewalk: sidewalk
-    other_flat_surface: other_flat_surface
-    high_curb: high_curb
-    low_curb: low_curb
+    debris: debris.unclassified
+    pushable_pullable: debris.pushable_pullable
+    bicycle_rack: manmade.special
+    open_door: null
+    vehicle_protruding_object: null
+    solid_stuff: manmade.solid_stuff
+    other_stuff: manmade.special
+    drivable_surface: driveable_flat
+    drainage: driveable_flat
+    sidewalk: non_driveable_flat.sidewalk
+    other_flat_surface: non_driveable_flat.other_flat_surface
+    high_curb: curb.high_curb
+    low_curb: curb.low_curb
     vegetation: vegetation
-    building: building
-    pole: pole
-    bollard: bollard
-    traffic_light: traffic_light
-    traffic_sign: traffic_sign
-    flag: flag
-    noise: noise
-    ghost_point: ghost_point
-    background: background
+    building: manmade.building
+    pole: vertical_thin
+    bollard: vertical_thin
+    traffic_light: vertical_thin
+    traffic_sign: vertical_thin
+    flag: vertical_thin
+    noise: noise.noise
+    ghost_point: noise.ghost_point
+    background: null
     ego_vehicle: ego_vehicle
-    out_of_sync: out_of_sync
+    out_of_sync: null

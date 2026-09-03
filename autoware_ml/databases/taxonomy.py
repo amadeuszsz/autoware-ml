@@ -328,6 +328,7 @@ class DetectionTaxonomy(LabelTaxonomy):
         eval_range: Mapping[str, float],
         collision_kinds: Mapping[str, str],
         vru_speeds: Mapping[str, float],
+        partial_detection_classes: Sequence[str],
     ) -> None:
         """
         Initialize the detection taxonomy.
@@ -341,9 +342,17 @@ class DetectionTaxonomy(LabelTaxonomy):
           eval_range: Range in meters up to which every class is evaluated.
           collision_kinds: Reachable set kind of every class in the collision metrics.
           vru_speeds: Run speed in meters per second of every vulnerable road user class.
+          partial_detection_classes: Classes the partial detection score of the joint metrics
+            reports, the small objects where a few correctly segmented points already matter.
         """
 
         super().__init__(vocabulary, class_names, coarsening, ignore_index, class_groups)
+        unknown_partial = sorted(set(partial_detection_classes) - set(class_names))
+        if unknown_partial or not len(partial_detection_classes):
+            raise ValueError(
+                "partial_detection_classes must name at least one class of the level, unknown "
+                f"{unknown_partial}."
+            )
         self._validate_class_table(eval_range, class_names, "eval_range")
         self._validate_class_table(collision_kinds, class_names, "collision_kinds")
         unknown_kinds = sorted(set(collision_kinds.values()) - set(CollisionKind))
@@ -364,6 +373,12 @@ class DetectionTaxonomy(LabelTaxonomy):
             name: CollisionKind(kind) for name, kind in collision_kinds.items()
         }
         self._vru_speeds = {name: float(speed) for name, speed in vru_speeds.items()}
+        self._partial_detection_classes = tuple(partial_detection_classes)
+
+    @property
+    def partial_detection_classes(self) -> tuple[str, ...]:
+        """Classes the partial detection score of the joint metrics reports."""
+        return self._partial_detection_classes
 
     @property
     def eval_range(self) -> Mapping[str, float]:

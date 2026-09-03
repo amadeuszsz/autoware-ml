@@ -434,6 +434,7 @@ def make_detection_taxonomy(
         eval_range={name: 100.0 for name in class_names},
         collision_kinds={name: "static" for name in class_names},
         vru_speeds={},
+        partial_detection_classes=list(class_names),
     )
 
 

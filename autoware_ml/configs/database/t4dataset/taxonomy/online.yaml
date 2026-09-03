@@ -1,6 +1,7 @@
-# Online taxonomy of T4dataset: the classes the deployed models train. Every fine label of the
-# vocabularies folds onto one class or is dropped with null. Boxes are baked with these class
-# indices and the fine name, masks are resolved through the same tables when they are loaded.
+# Online taxonomy of T4dataset, the L2 layer of the pseudo labeling taxonomy: the classes the
+# deployed models train. Every fine label of the vocabularies folds onto one class or is dropped
+# with null. Boxes are baked with these class indices and the fine name, masks are resolved
+# through the same tables when they are loaded.
 _target_: autoware_ml.databases.taxonomy.DatabaseTaxonomy
 _convert_: all
 
@@ -13,12 +14,12 @@ detection3d:
   _target_: autoware_ml.databases.taxonomy.DetectionTaxonomy
   ignore_index: -1
   class_groups:
-    grouped_vehicle: [car, truck, bus, train, vehicle_extension]
+    grouped_large_vehicle: [truck, bus, train]
+    grouped_vehicle: [car]
     grouped_two_wheeler: [motorcycle, bicycle]
-    grouped_pedestrian_animal: [pedestrian, animal]
-    grouped_static_obstacle: [barrier, traffic_cone]
-    grouped_debris: [debris]
-    grouped_structure: [bicycle_rack]
+    grouped_vulnerable_dynamic: [pedestrian, animal]
+    grouped_traffic_control: [barrier, traffic_cone]
+    grouped_small_obstacle: [debris]
   eval_range:
     car: 121.0
     truck: 121.0
@@ -31,8 +32,6 @@ detection3d:
     barrier: 121.0
     traffic_cone: 121.0
     debris: 121.0
-    bicycle_rack: 121.0
-    vehicle_extension: 121.0
   collision_kinds:
     car: wheeled
     truck: wheeled
@@ -45,12 +44,11 @@ detection3d:
     barrier: static
     traffic_cone: static
     debris: static
-    bicycle_rack: static
-    vehicle_extension: static
   vru_speeds:
     pedestrian: 3.0
     animal: 4.0
     bicycle: 6.0
+  partial_detection_classes: [motorcycle, bicycle, pedestrian, traffic_cone]
   class_names:
     - car
     - truck
@@ -63,23 +61,27 @@ detection3d:
     - barrier
     - traffic_cone
     - debris
-    - bicycle_rack
-    - vehicle_extension
   coarsening:
-    car: car
-    other_vehicle: car
-    emergency_vehicle: car
-    forklift: car
-    truck: truck
-    construction_vehicle: truck
     # A trailer attached to a truck is merged into the truck box by the pipelines, a trailer
-    # on its own is an obstacle the size of a truck and trains as one
+    # on its own is an obstacle the size of a truck and trains as one. Protruding parts of a
+    # vehicle wait for the post process that assigns them to the parent vehicle.
+    car: car
+    kart: car
+    other_vehicle: car
+    police_car: car
+    ambulance: car
+    emergency_vehicle: car
+    forklift: truck
+    truck: truck
+    fire_truck: truck
+    construction_vehicle: truck
     trailer: truck
     bus: bus
     train: train
     motorcycle: motorcycle
     bicycle: bicycle
     pedestrian: pedestrian
+    stroller: pedestrian
     personal_mobility: pedestrian
     animal: animal
     barrier: barrier
@@ -87,24 +89,24 @@ detection3d:
     traffic_cone: traffic_cone
     debris: debris
     pushable_pullable: debris
-    bicycle_rack: bicycle_rack
-    open_door: vehicle_extension
-    vehicle_protruding_object: vehicle_extension
+    bicycle_rack: null
+    open_door: null
+    vehicle_protruding_object: null
 
 segmentation3d:
   _target_: autoware_ml.databases.taxonomy.SegmentationTaxonomy
   ignore_index: -1
   class_groups:
-    grouped_vehicle: [car, truck, bus, train, vehicle_extension]
+    grouped_large_vehicle: [truck, bus, train]
+    grouped_vehicle: [car]
     grouped_two_wheeler: [motorcycle, bicycle]
-    grouped_pedestrian_animal: [pedestrian, animal]
-    grouped_static_obstacle: [barrier, traffic_cone]
-    grouped_debris: [debris]
-    grouped_static_clutter: [static_clutter]
-    grouped_flat: [drivable_flat, non_drivable_flat]
-    grouped_vegetation: [vegetation]
-    grouped_structure: [building, vertical_thin, bicycle_rack]
-    grouped_noise: [noise]
+    grouped_vulnerable_dynamic: [pedestrian, animal]
+    grouped_traffic_control: [barrier, traffic_cone]
+    grouped_small_obstacle: [debris]
+    grouped_static_structure: [manmade, vertical_thin, vegetation]
+    grouped_drivable_ground: [driveable_flat]
+    grouped_non_drivable_ground: [non_driveable_flat, curb]
+    grouped_non_physical: [noise]
   # The detection classes come first, in the same order, so a detection class and its
   # segmentation class share one index
   class_names:
@@ -119,19 +121,17 @@ segmentation3d:
     - barrier
     - traffic_cone
     - debris
-    - bicycle_rack
-    - vehicle_extension
-    - drivable_flat
-    - non_drivable_flat
+    - driveable_flat
+    - non_driveable_flat
+    - curb
     - vegetation
-    - building
+    - manmade
     - vertical_thin
-    - static_clutter
     - noise
   coarsening:
     car: car
     emergency_vehicle: car
-    forklift: car
+    forklift: truck
     other_vehicle: car
     fire_truck: truck
     ambulance: car
@@ -153,19 +153,19 @@ segmentation3d:
     traffic_cone: traffic_cone
     debris: debris
     pushable_pullable: debris
-    bicycle_rack: bicycle_rack
-    open_door: vehicle_extension
-    vehicle_protruding_object: vehicle_extension
-    solid_stuff: static_clutter
-    other_stuff: static_clutter
-    drivable_surface: drivable_flat
-    drainage: drivable_flat
-    sidewalk: non_drivable_flat
-    other_flat_surface: non_drivable_flat
-    high_curb: non_drivable_flat
-    low_curb: non_drivable_flat
+    bicycle_rack: manmade
+    open_door: null
+    vehicle_protruding_object: null
+    solid_stuff: manmade
+    other_stuff: manmade
+    drivable_surface: driveable_flat
+    drainage: driveable_flat
+    sidewalk: non_driveable_flat
+    other_flat_surface: non_driveable_flat
+    high_curb: curb
+    low_curb: curb
     vegetation: vegetation
-    building: building
+    building: manmade
     pole: vertical_thin
     bollard: vertical_thin
     traffic_light: vertical_thin

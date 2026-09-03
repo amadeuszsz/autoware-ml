@@ -9,13 +9,14 @@ name_mapping:
   # cars
   car: car
   vehicle.car: car
-  kart: other_vehicle
+  kart: kart
   other_vehicle: other_vehicle
-  police_car: emergency_vehicle
-  vehicle.police: emergency_vehicle
-  vehicle.police_car: emergency_vehicle
-  ambulance: emergency_vehicle
-  vehicle.ambulance: emergency_vehicle
+  police_car: police_car
+  vehicle.police: police_car
+  vehicle.police_car: police_car
+  ambulance: ambulance
+  vehicle.ambulance: ambulance
+  # the generic emergency label of the older corpora, the vehicle kind is not recorded
   "vehicle.emergency (ambulance & police)": emergency_vehicle
   emergency_vehicle: emergency_vehicle
   forklift: forklift
@@ -24,8 +25,8 @@ name_mapping:
   vehicle.truck: truck
   tractor_unit: truck
   tractor: truck
-  fire_truck: truck
-  vehicle.fire: truck
+  fire_truck: fire_truck
+  vehicle.fire: fire_truck
   construction_vehicle: construction_vehicle
   vehicle.construction: construction_vehicle
   trailer: trailer
@@ -51,8 +52,8 @@ name_mapping:
   pedestrian.police_officer: pedestrian
   construction_worker: pedestrian
   pedestrian.construction_worker: pedestrian
-  stroller: pedestrian
-  pedestrian.stroller: pedestrian
+  stroller: stroller
+  pedestrian.stroller: stroller
   personal_mobility: personal_mobility
   pedestrian.personal_mobility: personal_mobility
   wheelchair: personal_mobility
@@ -76,7 +77,7 @@ name_mapping:
   "static_object.bicycle rack": bicycle_rack
   # bollard boxes are outside every detection level
   static_object.bollard: null
-  # parts protruding from a vehicle
+  # parts protruding from a vehicle, a post process resolves them to the parent vehicle
   open_door: open_door
   vehicle_protruding_object: vehicle_protruding_object
   vehicle_extension: vehicle_protruding_object

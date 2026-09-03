@@ -73,6 +73,7 @@ def _detection(
             {"car": "wheeled", "truck": "vru"} if collision_kinds is None else collision_kinds
         ),
         vru_speeds={"truck": 6.0} if vru_speeds is None else vru_speeds,
+        partial_detection_classes=["car"],
     )
 
 
@@ -193,6 +194,7 @@ def test_detection_taxonomy_carries_typed_evaluation_tables() -> None:
     assert taxonomy.eval_range == {"car": 121.0, "truck": 121.0}
     assert taxonomy.collision_kinds == {"car": CollisionKind.WHEELED, "truck": CollisionKind.VRU}
     assert taxonomy.vru_speeds == {"truck": 6.0}
+    assert taxonomy.partial_detection_classes == ("car",)
 
 
 def test_detection_taxonomy_rejects_tables_that_do_not_match_the_classes() -> None:

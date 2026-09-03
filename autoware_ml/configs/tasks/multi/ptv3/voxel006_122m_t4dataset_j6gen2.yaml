@@ -49,15 +49,15 @@ model:
     # Local maximum window of 2.4 m at the halved BEV cell, the nearest odd kernel below the
     # deployed 2.88 m
     nms_kernel_size: 5
-    # Heatmap pooling over the fine constituents of car, truck and bus
+    # Heatmap pooling over the subtypes of car, truck and bus
     dense_heatmap_pooling_classes:
-      [car, truck, trailer, bus, construction_vehicle, emergency_vehicle,
-       forklift, other_vehicle]
+      [car.common, car.emergency, car.special, truck.common, truck.emergency, truck.trailer,
+       truck.construction, bus]
     # Large vehicles suppress each other, the remaining classes take per class top-k caps
     nms_groups:
       - class_names:
-          [car, truck, trailer, bus, train, construction_vehicle,
-           emergency_vehicle, forklift, other_vehicle]
+          [car.common, car.emergency, car.special, truck.common, truck.emergency, truck.trailer,
+           truck.construction, bus, train]
         nms_radius: 0.25
         post_max_size: 300
       - class_names: [motorcycle]
@@ -66,37 +66,31 @@ model:
       - class_names: [bicycle]
         nms_radius: 0.0
         post_max_size: 50
-      - class_names: [pedestrian]
+      - class_names: [pedestrian.common]
         nms_radius: 0.0
         post_max_size: 100
-      - class_names: [personal_mobility]
+      - class_names: [pedestrian.personal_mobility]
+        nms_radius: 0.0
+        post_max_size: 50
+      - class_names: [pedestrian.stroller]
         nms_radius: 0.0
         post_max_size: 50
       - class_names: [animal]
         nms_radius: 0.0
         post_max_size: 50
-      - class_names: [barrier]
+      - class_names: [barrier.movable]
         nms_radius: 0.0
         post_max_size: 50
-      - class_names: [construction_sign]
+      - class_names: [barrier.construction_sign]
         nms_radius: 0.0
         post_max_size: 50
       - class_names: [traffic_cone]
         nms_radius: 0.0
         post_max_size: 100
-      - class_names: [debris]
+      - class_names: [debris.unclassified]
         nms_radius: 0.0
         post_max_size: 50
-      - class_names: [pushable_pullable]
-        nms_radius: 0.0
-        post_max_size: 50
-      - class_names: [bicycle_rack]
-        nms_radius: 0.0
-        post_max_size: 50
-      - class_names: [open_door]
-        nms_radius: 0.0
-        post_max_size: 50
-      - class_names: [vehicle_protruding_object]
+      - class_names: [debris.pushable_pullable]
         nms_radius: 0.0
         post_max_size: 50
     bbox_coder:

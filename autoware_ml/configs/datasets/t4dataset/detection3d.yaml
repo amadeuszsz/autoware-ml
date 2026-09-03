@@ -10,15 +10,8 @@ class_names: ${database.taxonomy.detection3d.class_names}
 num_classes: ${list_length:${t4dataset.detection3d.class_names}}
 ignore_index: ${database.taxonomy.detection3d.ignore_index}
 # Class and attribute pairs dropped from the detection targets, keyed by the trained class.
-# Parked and rider-less two-wheelers are excluded under both the current and the older
-# attribute spellings.
-filter_attributes:
-  - [bicycle, vehicle_state.parked]
-  - [bicycle, two_wheel_vehicle_state.without_rider]
-  - [bicycle, cycle_state.without_rider]
-  - [motorcycle, vehicle_state.parked]
-  - [motorcycle, two_wheel_vehicle_state.without_rider]
-  - [motorcycle, motorcycle_state.without_rider]
+# Rider-less and parked two wheelers are targets, so nothing is dropped.
+filter_attributes: []
 train_min_points_near: 3
 train_min_points_far: 2
 # The class keyed evaluation tables come from the detection taxonomy the database is bound to

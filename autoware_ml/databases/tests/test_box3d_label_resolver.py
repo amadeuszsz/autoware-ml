@@ -99,8 +99,8 @@ def test_pipelines_run_on_fine_names_before_the_indices_are_assigned() -> None:
     assert merged[0].box3d_params[3] > 6.0
 
 
-def test_merger_rejects_a_level_that_trains_the_absorbed_label() -> None:
-    with pytest.raises(ValueError, match="absorbs \\['trailer'\\]"):
+def test_merger_rejects_a_level_that_trains_the_absorbed_label_apart() -> None:
+    with pytest.raises(ValueError, match="folds 'trailer' into 'truck', but the taxonomy trains"):
         Box3DLabelResolver(_offline(), [_merger()])
 
 

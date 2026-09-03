@@ -32,7 +32,7 @@ Reachable-at-``t`` set by class, in the map frame (metres):
   half-width.
 * VRU (pedestrian / animal / bicycle): the disc of radius ``v * t`` about the
   current position, free to move in any direction, over any surface.
-* static (barrier / traffic_cone / debris / bicycle_rack / vehicle_extension):
+* static (barrier / traffic_cone / debris):
   the fixed footprint, for every ``t``.
 
 The two steps match the metric's contract:

@@ -138,7 +138,10 @@ vulnerable road user class. The tables are validated against the class list of t
 stay out of the string form, so they do not enter the database hash. A `DatabaseTaxonomy`
 pairs the detection and the segmentation taxonomy of one level. Levels are config groups under
 `configs/database/<family>/taxonomy/`, a database config binds one of them and a task
-overrides the binding when it trains another level. The dataset packages read their class
+overrides the binding when it trains another level. T4dataset carries the two layers of the
+pseudo labeling taxonomy: `online` is the L2 layer the deployed models train, `offline` is the
+L1 layer whose classes are the named subtypes of the online classes, written as
+`<class>.<subtype>`, trained by the teacher models. The dataset packages read their class
 lists and the class keyed tables from the bound taxonomy, so the metrics, the models, the
 record table and the mask loading share one definition and a level switch carries its
 evaluation tables along.
@@ -150,7 +153,7 @@ level index in `box3d_label_index`, so the finest label stays available whatever
 table was baked for, a box outside the level takes the ignore index and a box outside every
 level is not stored. A pipeline whose
 behaviour depends on label names validates the taxonomy: the trailer merger rejects a level
-that trains trailer as a class of its own. Masks are not baked, the loading transform
+that trains an absorbed label apart from its target. Masks are not baked, the loading transform
 resolves the category names of the record through the segmentation taxonomy of the same
 database. Training reads the stored index as it is and only drops ignored boxes and the
 configured class and attribute exclusions. Every database of a datamodule must carry the same
