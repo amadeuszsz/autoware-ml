@@ -18,12 +18,19 @@ from __future__ import annotations
 
 import pytest
 
+from autoware_ml.databases.base_database import run_record_workers
 from autoware_ml.datamodule.tests.fakes import (
     FakeDatabase,
     make_database,
     make_scenarios,
     make_stored_record,
 )
+
+
+def _records_of(scenario_id: str):
+    if scenario_id == "broken":
+        raise ValueError(f"scenario {scenario_id} is broken")
+    return [make_stored_record(scenario_id=scenario_id, sample_id=f"{scenario_id}-0")]
 
 
 def _records():
@@ -114,3 +121,14 @@ def test_invalid_definitions_are_rejected(tmp_path) -> None:
         FakeDatabase(records=[], scenarios={}, root_path=tmp_path, cache_path=tmp_path)
     with pytest.raises(ValueError, match="at least one"):
         make_database(tmp_path, [], class_names=())
+
+
+def test_record_workers_keep_the_parameter_order_across_processes() -> None:
+    records = run_record_workers(_records_of, ["c", "a", "b"], num_workers=2)
+
+    assert [record.scenario_id for record in records] == ["c", "a", "b"]
+
+
+def test_record_workers_raise_the_first_failure() -> None:
+    with pytest.raises(ValueError, match="scenario broken is broken"):
+        run_record_workers(_records_of, ["a", "broken", "b"], num_workers=2)

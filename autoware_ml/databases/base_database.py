@@ -27,7 +27,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Mapping, Sequence, TypeVar
 
@@ -51,7 +51,9 @@ def run_record_workers(
     num_workers: int,
 ) -> list[DatasetRecord]:
     """
-    Run a record generation function over every parameter set and flatten the results.
+    Run a record generation function over every parameter set and flatten the results. With
+    several workers the first failure stops the run, the pending parameter sets are cancelled
+    and the error is raised at once instead of after the remaining sets finished.
 
     Args:
       function: Module level function generating the records of one parameter set.
@@ -64,9 +66,20 @@ def run_record_workers(
 
     records: list[DatasetRecord] = []
     if num_workers > 1:
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            for result in tqdm(executor.map(function, worker_params), total=len(worker_params)):
-                records.extend(result)
+        executor = ProcessPoolExecutor(max_workers=num_workers)
+        futures = {
+            executor.submit(function, params): index for index, params in enumerate(worker_params)
+        }
+        results: dict[int, Sequence[DatasetRecord]] = {}
+        for future in tqdm(as_completed(futures), total=len(futures)):
+            error = future.exception()
+            if error is not None:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise error
+            results[futures[future]] = future.result()
+        executor.shutdown()
+        for index in range(len(worker_params)):
+            records.extend(results[index])
         return records
     for params in tqdm(worker_params, total=len(worker_params)):
         records.extend(function(params))
