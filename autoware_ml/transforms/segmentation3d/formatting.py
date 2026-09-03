@@ -29,21 +29,25 @@ class PreparePointSegInput(BaseTransform):
 
     Labels exist only for the current frame, which the point loader places as the leading
     block of the cloud. Points appended from earlier sweeps receive ignore_index so they
-    contribute to the geometry but never to the loss or the metrics. Without loaded labels
-    every current frame point receives ignore_index, which keeps prediction pipelines
-    runnable. The transform reads the leading block size from the point cloud and verifies
-    it against the timestamp_difference feature when the cloud carries one.
+    contribute to the geometry but never to the loss or the metrics. A training or evaluation
+    pipeline requires loaded labels, a prediction pipeline declares that it runs without them
+    and every current frame point then receives ignore_index. The transform reads the leading
+    block size from the point cloud and verifies it against the timestamp_difference feature
+    when the cloud carries one.
     """
 
     _required_fields = ["points"]
 
-    def __init__(self, *, ignore_index: int) -> None:
+    def __init__(self, *, ignore_index: int, require_labels: bool) -> None:
         """Initialize the PreparePointSegInput transform.
 
         Args:
             ignore_index: Label assigned to points without supervision.
+            require_labels: Whether the sample must carry loaded segmentation labels. False only
+                for prediction pipelines, which run without ground truth.
         """
         self.ignore_index = int(ignore_index)
+        self.require_labels = require_labels
 
     def transform(self, sample: Sample) -> Sample:
         """Build the full length segmentation labels of the point cloud.
@@ -62,6 +66,12 @@ class PreparePointSegInput(BaseTransform):
                 "track its leading current frame block anymore."
             )
         num_points = len(points)
+        if sample.segment is None and self.require_labels:
+            raise ValueError(
+                "PreparePointSegInput requires loaded segmentation labels, run "
+                "LoadSeg3DAnnotations before it or declare a prediction pipeline with "
+                "require_labels false."
+            )
         if sample.segment is None:
             mask = np.full(num_current, self.ignore_index, dtype=np.int64)
         else:
