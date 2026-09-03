@@ -70,6 +70,10 @@ def test_process_writes_the_table_once_and_loading_round_trips(tmp_path) -> None
 
     assert database.generate_calls == 1
     assert database.cache_file_path.is_file()
+    # The table is written next to its final name and renamed, nothing partial stays behind
+    assert sorted(path.name for path in database.cache_file_path.parent.iterdir()) == [
+        database.cache_file_path.name
+    ]
     frame = database.load_polars_scenario_dataframe()
     assert frame.height == 2
     assert [record.sample_id for record in database.load_scenario_records()] == ["a-0", "b-0"]

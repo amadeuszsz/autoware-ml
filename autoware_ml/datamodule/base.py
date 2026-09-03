@@ -396,6 +396,9 @@ class DataModule(L.LightningDataModule):
                 None for uniform sampling.
         """
         super().__init__()
+        # The tables live below the workspace, which every node of a multi node run shares, so
+        # only the global rank zero generates them
+        self.prepare_data_per_node = False
 
         self.dataset_factory = dataset
         self.splitter = splitter
@@ -486,7 +489,8 @@ class DataModule(L.LightningDataModule):
     def prepare_data(self) -> None:
         """Generate the record table of every database that has none yet.
 
-        Lightning calls this on one process per node, so the tables are written once.
+        Lightning calls this on the global rank zero only, so the tables are written once even
+        when several nodes share the workspace.
         """
         for database in self.databases():
             database.process_scenario_records()

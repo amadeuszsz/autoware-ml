@@ -68,6 +68,13 @@ def test_prepare_data_generates_every_database_table_once(tmp_path) -> None:
     assert database.generate_calls == 1
 
 
+def test_tables_are_generated_by_the_global_rank_zero_only(tmp_path) -> None:
+    datamodule = _datamodule(tmp_path, prepare=False)
+
+    # Nodes share the workspace the tables live in, so per node generation would race
+    assert datamodule.prepare_data_per_node is False
+
+
 def test_setup_without_a_generated_table_fails(tmp_path) -> None:
     datamodule = _datamodule(tmp_path, prepare=False)
 

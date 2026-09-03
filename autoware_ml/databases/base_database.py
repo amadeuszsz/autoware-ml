@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
@@ -293,7 +294,11 @@ class BaseDatabase:
             [record.to_dictionary() for record in records], schema=self.get_polars_schema()
         )
         cache_file_path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(cache_file_path)
+        # Write next to the final file and rename, so a run that dies mid write never leaves a
+        # truncated table behind under the name a later run would trust
+        partial_file_path = cache_file_path.with_name(f"{cache_file_path.name}.{os.getpid()}.tmp")
+        frame.write_parquet(partial_file_path)
+        os.replace(partial_file_path, cache_file_path)
         elapsed = time.perf_counter() - start_time
         logger.info(
             f"Wrote {frame.height} records of {self._version} to {cache_file_path} "
