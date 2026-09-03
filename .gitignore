@@ -2,7 +2,6 @@
 data/
 mlruns/
 outputs/
-records/
 
 # Model files and artifacts
 *.bin
