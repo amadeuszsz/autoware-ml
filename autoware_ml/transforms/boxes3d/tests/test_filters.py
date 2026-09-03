@@ -53,13 +53,17 @@ def _point_cloud(
         PointFeatureName.INTENSITY,
     ]
     columns = [coord, intensity]
+    # The loader places the current frame first, every zero lag point belongs to it
+    num_current_points = coord.shape[0]
     if time_lags is not None:
-        columns.append(np.asarray(time_lags, dtype=np.float32).reshape(-1, 1))
+        lags = np.asarray(time_lags, dtype=np.float32)
+        columns.append(lags.reshape(-1, 1))
         feature_names.append(PointFeatureName.TIMESTAMP_DIFFERENCE)
+        num_current_points = int(np.sum(lags == 0))
     return PointCloud(
         features=np.concatenate(columns, axis=1),
         feature_names=tuple(feature_names),
-        num_current_points=None,
+        num_current_points=num_current_points,
     )
 
 

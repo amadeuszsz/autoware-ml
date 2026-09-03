@@ -21,7 +21,7 @@ import numpy as np
 from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.datamodule.samples.segmentation3d import SegmentationLabels
 from autoware_ml.transforms.base import BaseTransform
-from autoware_ml.transforms.point_cloud.time_lag import current_frame_mask
+from autoware_ml.types.geometry import PointFeatureName
 
 
 class PreparePointSegInput(BaseTransform):
@@ -81,16 +81,9 @@ class PreparePointSegInput(BaseTransform):
                 "PreparePointSegInput requires one semantic label per current-frame point: "
                 f"got {mask.shape[0]} labels for {num_current} points."
             )
-        current_mask = current_frame_mask(points)
-        if current_mask is None:
-            if num_current != num_points:
-                raise ValueError(
-                    "PreparePointSegInput found no timestamp_difference feature, so every "
-                    f"point must belong to the current frame: got {num_current} current "
-                    f"points for {num_points} points."
-                )
-        else:
-            if np.any(~current_mask[:num_current]) or np.any(current_mask[num_current:]):
+        if points.has_feature(PointFeatureName.TIMESTAMP_DIFFERENCE):
+            zero_lag = points.feature(PointFeatureName.TIMESTAMP_DIFFERENCE) == 0
+            if np.any(~zero_lag[:num_current]) or np.any(zero_lag[num_current:]):
                 raise ValueError(
                     "PreparePointSegInput requires the current frame (time lag 0) to be "
                     f"exactly the leading block of {num_current} points."

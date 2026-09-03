@@ -102,11 +102,13 @@ def test_supports_a_cloud_without_time_lag() -> None:
     assert np.array_equal(output.segment.labels, np.array([7, 8], dtype=np.int64))
 
 
-def test_rejects_sweep_points_without_a_time_lag_feature() -> None:
+def test_pads_sweep_points_of_a_cloud_without_a_time_lag_feature() -> None:
+    # The leading block count alone tells the current frame apart from the sweeps
     sample = _with_labels(_plain_cloud(2, num_current=1), [7])
 
-    with pytest.raises(ValueError, match="every point must belong to the current frame"):
-        PreparePointSegInput(ignore_index=-1, require_labels=True)(sample)
+    output = PreparePointSegInput(ignore_index=-1, require_labels=True)(sample)
+
+    assert np.array_equal(output.segment.labels, np.array([7, -1], dtype=np.int64))
 
 
 def test_rejects_an_untracked_current_frame_block() -> None:

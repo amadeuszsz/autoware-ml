@@ -13,13 +13,12 @@
 # limitations under the License.
 
 
-"""Per point time lag of a densified point cloud.
+"""Current frame selection of a densified point cloud.
 
-Point loaders place the current frame first and stamp every point with the seconds elapsed since
-it was captured, 0 for the current frame and positive for points appended from earlier sweeps.
-Any transform whose decision must concern the current frame alone selects its points with the
-mask built here. The point cloud is self describing, the timestamp_difference feature carries
-the lag.
+Point loaders place the current frame first and record its size as num_current_points, which
+every row preserving transform keeps up to date. Any transform whose decision must concern the
+current frame alone selects its points with the mask built here, whatever features the cloud
+carries.
 """
 
 from __future__ import annotations
@@ -28,20 +27,26 @@ import numpy as np
 from jaxtyping import Bool
 
 from autoware_ml.datamodule.samples.point_cloud import PointCloud
-from autoware_ml.types.geometry import PointFeatureName
 
 
-def current_frame_mask(point_cloud: PointCloud) -> Bool[np.ndarray, " num_points"] | None:
+def current_frame_mask(point_cloud: PointCloud) -> Bool[np.ndarray, " num_points"]:
     """Return the mask selecting the points captured in the current frame.
 
     Args:
         point_cloud: Point cloud of the sample.
 
     Returns:
-        Boolean mask of the current frame points, or None when the point cloud carries no
-        timestamp_difference feature, every point then belongs to the current frame and no
-        selection is needed.
+        Boolean mask of the leading current frame block.
+
+    Raises:
+        ValueError: If the point cloud no longer tracks its current frame block.
     """
-    if not point_cloud.has_feature(PointFeatureName.TIMESTAMP_DIFFERENCE):
-        return None
-    return point_cloud.feature(PointFeatureName.TIMESTAMP_DIFFERENCE) == 0
+    num_current_points = point_cloud.num_current_points
+    if num_current_points is None:
+        raise ValueError(
+            "The point cloud does not track its current frame block anymore, a transform "
+            "reordered its rows before the current frame was selected."
+        )
+    mask = np.zeros(len(point_cloud), dtype=bool)
+    mask[:num_current_points] = True
+    return mask

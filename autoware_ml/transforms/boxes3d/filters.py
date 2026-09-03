@@ -46,8 +46,7 @@ def _count_current_frame_points(
     Returns:
         Number of current frame points inside every box.
     """
-    mask = current_frame_mask(points)
-    coord = points.coord if mask is None else points.coord[mask]
+    coord = points.coord[current_frame_mask(points)]
     inside = points_in_boxes_3d(
         torch.from_numpy(np.ascontiguousarray(coord, dtype=np.float32)),
         torch.from_numpy(np.ascontiguousarray(boxes.params, dtype=np.float32)),
