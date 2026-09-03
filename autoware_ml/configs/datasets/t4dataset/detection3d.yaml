@@ -14,7 +14,8 @@ ignore_index: ${database.taxonomy.detection3d.ignore_index}
 filter_attributes: []
 train_min_points_near: 3
 train_min_points_far: 2
-# The class keyed evaluation tables come from the detection taxonomy the database is bound to
+# The class keyed tables come from the detection taxonomy the database is bound to
+heatmap_pooling_classes: ${database.taxonomy.detection3d.heatmap_pooling_classes}
 eval_class_range: ${database.taxonomy.detection3d.eval_range}
 class_groups: ${database.taxonomy.detection3d.class_groups}
 metric_ranges:

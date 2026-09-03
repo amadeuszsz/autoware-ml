@@ -329,6 +329,7 @@ class DetectionTaxonomy(LabelTaxonomy):
         collision_kinds: Mapping[str, str],
         vru_speeds: Mapping[str, float],
         partial_detection_classes: Sequence[str],
+        heatmap_pooling_classes: Sequence[str],
     ) -> None:
         """
         Initialize the detection taxonomy.
@@ -344,6 +345,8 @@ class DetectionTaxonomy(LabelTaxonomy):
           vru_speeds: Run speed in meters per second of every vulnerable road user class.
           partial_detection_classes: Classes the partial detection score of the joint metrics
             reports, the small objects where a few correctly segmented points already matter.
+          heatmap_pooling_classes: Classes whose dense heatmap the detection heads pool before
+            the proposal selection, the vehicles large enough to raise several peaks.
         """
 
         super().__init__(vocabulary, class_names, coarsening, ignore_index, class_groups)
@@ -374,11 +377,22 @@ class DetectionTaxonomy(LabelTaxonomy):
         }
         self._vru_speeds = {name: float(speed) for name, speed in vru_speeds.items()}
         self._partial_detection_classes = tuple(partial_detection_classes)
+        unknown_pooling = sorted(set(heatmap_pooling_classes) - set(class_names))
+        if unknown_pooling:
+            raise ValueError(
+                f"heatmap_pooling_classes must name classes of the level, unknown {unknown_pooling}."
+            )
+        self._heatmap_pooling_classes = tuple(heatmap_pooling_classes)
 
     @property
     def partial_detection_classes(self) -> tuple[str, ...]:
         """Classes the partial detection score of the joint metrics reports."""
         return self._partial_detection_classes
+
+    @property
+    def heatmap_pooling_classes(self) -> tuple[str, ...]:
+        """Classes whose dense heatmap the detection heads pool before the proposal selection."""
+        return self._heatmap_pooling_classes
 
     @property
     def eval_range(self) -> Mapping[str, float]:

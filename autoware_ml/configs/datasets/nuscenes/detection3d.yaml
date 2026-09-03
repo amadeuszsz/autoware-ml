@@ -10,7 +10,8 @@ class_names: ${database.taxonomy.detection3d.class_names}
 num_classes: ${list_length:${nuscenes.detection3d.class_names}}
 ignore_index: ${database.taxonomy.detection3d.ignore_index}
 filter_attributes: []
-# The class keyed evaluation tables come from the detection taxonomy the database is bound to
+# The class keyed tables come from the detection taxonomy the database is bound to
+heatmap_pooling_classes: ${database.taxonomy.detection3d.heatmap_pooling_classes}
 eval_class_range: ${database.taxonomy.detection3d.eval_range}
 metric_ranges:
   - { _target_: autoware_ml.metrics.base.MetricRange, name: 0-50m, min_distance: 0.0, max_distance: 50.0 }

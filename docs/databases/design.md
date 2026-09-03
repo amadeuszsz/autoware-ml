@@ -131,10 +131,11 @@ table generation and when a mask is loaded, so a new category of a corpus is dis
 instead of being ignored. A `LabelTaxonomy` selects the classes trained at one level of granularity and folds every fine
 name onto one of them or drops it, so a level is a strict coarsening of the vocabulary and
 two levels never drift apart in how they read the raw labels. A `DetectionTaxonomy` and a
-`SegmentationTaxonomy` extend it with the tables the metrics key by class: the behaviour
-groups of both label spaces, and for detection the evaluation range of every class, the
-reachable set kind of every class in the collision model and the run speed of every
-vulnerable road user class. The tables are validated against the class list of the level and
+`SegmentationTaxonomy` extend it with the tables keyed by class: the behaviour groups of both
+label spaces, and for detection the evaluation range of every class, the reachable set kind of
+every class in the collision model, the run speed of every vulnerable road user class, the
+classes the partial detection score reports and the classes whose heatmap the detection heads
+pool. The tables are validated against the class list of the level and
 stay out of the string form, so they do not enter the database hash. A `DatabaseTaxonomy`
 pairs the detection and the segmentation taxonomy of one level. Levels are config groups under
 `configs/database/<family>/taxonomy/`, a database config binds one of them and a task

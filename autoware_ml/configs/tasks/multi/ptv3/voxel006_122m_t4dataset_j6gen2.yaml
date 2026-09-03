@@ -49,10 +49,6 @@ model:
     # Local maximum window of 2.4 m at the halved BEV cell, the nearest odd kernel below the
     # deployed 2.88 m
     nms_kernel_size: 5
-    # Heatmap pooling over the large vehicles, the subtypes of car and truck, bus and train
-    dense_heatmap_pooling_classes:
-      [car.common, car.emergency, car.special, truck.common, truck.emergency, truck.trailer,
-       truck.construction, bus, train]
     # Large vehicles suppress each other, the remaining classes take per class top-k caps
     nms_groups:
       - class_names:

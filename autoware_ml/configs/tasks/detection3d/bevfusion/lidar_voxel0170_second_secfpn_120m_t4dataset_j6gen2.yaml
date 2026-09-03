@@ -107,7 +107,6 @@ model:
     num_proposals: 500
     class_names: ${dataset.detection3d.class_names}
     num_classes: ${dataset.detection3d.num_classes}
-    dense_heatmap_pooling_classes: [car, truck, bus]
     head_hidden_channels: 64
     norm_eps: 1.0e-5
     norm_momentum: 0.1

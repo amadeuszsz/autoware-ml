@@ -130,9 +130,10 @@ cache_path: ${cache_root_path}/t4dataset/
 
 The taxonomy is a config group under `configs/database/<family>/taxonomy/`, one file per level
 of granularity, each holding the detection and the segmentation classes of the level, how the
-fine labels of the family vocabulary fold onto them, and the tables the metrics key by class:
-the behaviour groups, the evaluation range per class, the collision kind per class and the run
-speed per vulnerable road user class. The dataset packages read their class lists and these
+fine labels of the family vocabulary fold onto them, and the tables keyed by class: the
+behaviour groups, the evaluation range per class, the collision kind per class, the run speed
+per vulnerable road user class, the partial detection classes and the heatmap pooling classes
+of the detection heads. The dataset packages read their class lists and these
 tables from the taxonomy of the database bound at `database`, while they keep the choice of
 metrics, ranges and filters, so a task selects a level with one override and every consumer
 follows:

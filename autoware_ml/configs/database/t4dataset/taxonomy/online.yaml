@@ -49,6 +49,7 @@ detection3d:
     animal: 4.0
     bicycle: 6.0
   partial_detection_classes: [motorcycle, bicycle, pedestrian, traffic_cone]
+  heatmap_pooling_classes: [car, truck, bus, train]
   class_names:
     - car
     - truck

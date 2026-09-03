@@ -81,6 +81,7 @@ model:
     in_channels: 512
     hidden_channel: 128
     num_classes: ${dataset.detection3d.num_classes}
+    dense_heatmap_pooling_classes: ${dataset.detection3d.heatmap_pooling_classes}
     num_decoder_layers: 1
     num_heads: 8
     feedforward_channels: 256

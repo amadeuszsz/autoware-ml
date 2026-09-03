@@ -435,6 +435,7 @@ def make_detection_taxonomy(
         collision_kinds={name: "static" for name in class_names},
         vru_speeds={},
         partial_detection_classes=list(class_names),
+        heatmap_pooling_classes=[],
     )
 
 

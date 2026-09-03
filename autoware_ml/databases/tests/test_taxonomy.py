@@ -74,6 +74,7 @@ def _detection(
         ),
         vru_speeds={"truck": 6.0} if vru_speeds is None else vru_speeds,
         partial_detection_classes=["car"],
+        heatmap_pooling_classes=["car", "truck"],
     )
 
 
@@ -195,6 +196,7 @@ def test_detection_taxonomy_carries_typed_evaluation_tables() -> None:
     assert taxonomy.collision_kinds == {"car": CollisionKind.WHEELED, "truck": CollisionKind.VRU}
     assert taxonomy.vru_speeds == {"truck": 6.0}
     assert taxonomy.partial_detection_classes == ("car",)
+    assert taxonomy.heatmap_pooling_classes == ("car", "truck")
 
 
 def test_detection_taxonomy_rejects_tables_that_do_not_match_the_classes() -> None:
