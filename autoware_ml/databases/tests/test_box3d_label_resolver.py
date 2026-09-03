@@ -28,6 +28,7 @@ NAME_MAPPING = {
     "tractor_unit": "truck",
     "trailer": "trailer",
     "semi_trailer": "trailer",
+    "drainage": None,
 }
 
 
@@ -62,21 +63,25 @@ def test_boxes_store_the_fine_name_and_the_class_index_of_the_level() -> None:
     boxes = [
         _raw_box("tractor_unit", (0.0, 0.0, 0.5, 6.0, 2.5, 3.0, 0.0, 0.0, 0.0, 0.0), "tractor"),
         _raw_box("semi_trailer", (40.0, 0.0, 0.5, 8.0, 2.5, 3.0, 0.0, 0.0, 0.0, 0.0), "trailer"),
-        _raw_box("drainage", (10.0, 5.0, 0.0, 1.0, 1.0, 0.2, 0.0, 0.0, 0.0, 0.0), "unknown"),
+        _raw_box("drainage", (10.0, 5.0, 0.0, 1.0, 1.0, 0.2, 0.0, 0.0, 0.0, 0.0), "outside"),
     ]
 
     online = Box3DLabelResolver(_online(), [])(boxes)
     offline = Box3DLabelResolver(_offline(), [])(boxes)
 
-    assert [box.box3d_label_name for box in online] == ["truck", "trailer", "drainage"]
-    assert [box.box3d_label_index for box in online] == [1, -1, -1]
-    assert [box.box3d_label_name for box in offline] == ["truck", "trailer", "drainage"]
-    assert [box.box3d_label_index for box in offline] == [1, 2, -1]
-    assert [box.box3d_dataset_label_name for box in online] == [
-        "tractor_unit",
-        "semi_trailer",
-        "drainage",
-    ]
+    # The drainage box is outside every level, so no table stores it
+    assert [box.box3d_label_name for box in online] == ["truck", "trailer"]
+    assert [box.box3d_label_index for box in online] == [1, -1]
+    assert [box.box3d_label_name for box in offline] == ["truck", "trailer"]
+    assert [box.box3d_label_index for box in offline] == [1, 2]
+    assert [box.box3d_dataset_label_name for box in online] == ["tractor_unit", "semi_trailer"]
+
+
+def test_an_unlisted_raw_name_is_an_error() -> None:
+    boxes = [_raw_box("spaceship", (0.0, 0.0, 0.5, 6.0, 2.5, 3.0, 0.0, 0.0, 0.0, 0.0), "ufo")]
+
+    with pytest.raises(KeyError, match="not listed in the vocabulary"):
+        Box3DLabelResolver(_online(), [])(boxes)
 
 
 def test_pipelines_run_on_fine_names_before_the_indices_are_assigned() -> None:

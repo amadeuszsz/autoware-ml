@@ -29,7 +29,8 @@ class Box3DLabelResolver:
     raw dataset name of every box into its fine name, the box pipelines run on the fine names,
     and the taxonomy assigns the class index of its level to every box that survives. The
     stored label name is the fine name, so every table keeps the finest label the corpus
-    supports whatever level it was baked for.
+    supports whatever level it was baked for. A box whose raw name the vocabulary places
+    outside every level is not stored, and a raw name the vocabulary does not list is an error.
     """
 
     def __init__(self, taxonomy: LabelTaxonomy, box3d_pipelines: Sequence[Box3DPipeline]) -> None:
@@ -67,12 +68,15 @@ class Box3DLabelResolver:
           list[Box3DDataModel]: Boxes carrying their fine label name and class index.
         """
 
+        fine_names = [
+            self._taxonomy.fine_name(box.box3d_dataset_label_name) for box in boxes3d_data_model
+        ]
         boxes = [
             box.create_new_data_model(
-                box3d_label_name=self._taxonomy.fine_name(box.box3d_dataset_label_name),
-                box3d_label_index=self._taxonomy.ignore_index,
+                box3d_label_name=fine_name, box3d_label_index=self._taxonomy.ignore_index
             )
-            for box in boxes3d_data_model
+            for box, fine_name in zip(boxes3d_data_model, fine_names)
+            if fine_name is not None
         ]
         for pipeline in self._box3d_pipelines:
             boxes = list(pipeline(boxes))

@@ -29,6 +29,7 @@ from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord
 from autoware_ml.databases.schemas.frame_basic_metadata import FrameBasicMetadata
 from autoware_ml.databases.schemas.lidar_frames import LidarFrameDataModel
 from autoware_ml.databases.schemas.lidar_sources import LidarSourceDataModel
+from autoware_ml.databases.taxonomy import LabelTaxonomy
 from autoware_ml.types.sensor import LidarChannel
 from autoware_ml.types.spatial import CoordinateSystem
 from autoware_ml.utils.dataset import convert_quaternion_to_matrix
@@ -60,6 +61,7 @@ class NuscenesRecordsGenerator:
         version: str,
         scenario_data: Sequence[ScenarioData],
         box3d_label_resolver: Box3DLabelResolver,
+        segmentation_taxonomy: LabelTaxonomy,
     ) -> None:
         """
         Initialize NuscenesRecordsGenerator.
@@ -70,12 +72,14 @@ class NuscenesRecordsGenerator:
           scenario_data: Scenario data of the scenes to process, one entry per scene.
           box3d_label_resolver: Resolver baking the label of every box through the taxonomy
             and the box pipelines.
+          segmentation_taxonomy: Taxonomy the lidarseg categories must be listed in.
         """
 
         self.database_root_path = database_root_path
         self.version = version
         self.scenario_data = scenario_data
         self.box3d_label_resolver = box3d_label_resolver
+        self.segmentation_taxonomy = segmentation_taxonomy
         self.nuscenes_dataset = NuScenes(
             version=version, dataroot=database_root_path, verbose=False
         )
@@ -530,6 +534,11 @@ class NuscenesRecordsGenerator:
         for category_record in self.nuscenes_dataset.category:
             category_names.append(category_record["name"])
             category_indices.append(category_record["index"])
+        unlisted = self.segmentation_taxonomy.vocabulary.unlisted(category_names)
+        if unlisted:
+            raise ValueError(
+                f"The segmentation vocabulary does not list the lidarseg categories {unlisted}."
+            )
         return CategoryMappingDataModel(
             category_names=category_names,
             category_indices=category_indices,

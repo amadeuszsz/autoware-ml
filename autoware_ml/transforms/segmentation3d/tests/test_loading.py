@@ -34,6 +34,7 @@ IGNORE = 255
 
 def _taxonomy():
     # Raw categories fold onto two classes, the raw vehicle.car spells a fine name of its own
+    # and the raw tree is outside every level
     return make_label_taxonomy(
         class_names=("car", "pedestrian"),
         name_mapping={
@@ -41,6 +42,7 @@ def _taxonomy():
             "vehicle.car": "car",
             "pedestrian": "pedestrian",
             "stroller": "personal_mobility",
+            "tree": None,
         },
         coarsening={"car": "car", "pedestrian": "pedestrian", "personal_mobility": "pedestrian"},
         ignore_index=IGNORE,
@@ -73,7 +75,7 @@ def test_categories_resolve_through_the_record_and_the_taxonomy(tmp_path) -> Non
     assert np.array_equal(output.segment.labels, np.array([0, 1, 1, IGNORE], dtype=np.int64))
 
 
-def test_categories_outside_the_taxonomy_take_the_ignore_index(tmp_path) -> None:
+def test_categories_outside_every_level_take_the_ignore_index(tmp_path) -> None:
     sample = _seg_sample(
         tmp_path,
         [2, 5],
@@ -84,6 +86,18 @@ def test_categories_outside_the_taxonomy_take_the_ignore_index(tmp_path) -> None
     output = LoadSeg3DAnnotations(taxonomy=_taxonomy())(sample)
 
     assert np.array_equal(output.segment.labels, np.array([0, IGNORE], dtype=np.int64))
+
+
+def test_categories_outside_the_vocabulary_raise(tmp_path) -> None:
+    sample = _seg_sample(
+        tmp_path,
+        [2, 5],
+        category_names=("car", "spaceship"),
+        category_indices=(2, 5),
+    )
+
+    with pytest.raises(KeyError, match="not listed in the vocabulary"):
+        LoadSeg3DAnnotations(taxonomy=_taxonomy())(sample)
 
 
 def test_an_empty_category_mapping_ignores_every_point(tmp_path) -> None:

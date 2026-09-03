@@ -28,7 +28,7 @@ from autoware_ml.databases.nuscenes.nuscenes_records_generator import NuscenesRe
 from autoware_ml.databases.nuscenes.nuscenes_scenarios import NuscenesScenarios
 from autoware_ml.databases.scenarios import ScenarioData
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord
-from autoware_ml.databases.taxonomy import DatabaseTaxonomy
+from autoware_ml.databases.taxonomy import DatabaseTaxonomy, LabelTaxonomy
 
 
 @dataclass(frozen=True)
@@ -41,12 +41,14 @@ class NuscenesRecordsGeneratorWorkerParams:
       nuscenes_version: Version of the nuScenes devkit tables.
       scenario_data: Scenario data of the scenes assigned to this worker.
       box3d_label_resolver: Resolver baking the label of every box.
+      segmentation_taxonomy: Taxonomy the lidarseg categories must be listed in.
     """
 
     database_root_path: str
     nuscenes_version: str
     scenario_data: Sequence[ScenarioData]
     box3d_label_resolver: Box3DLabelResolver
+    segmentation_taxonomy: LabelTaxonomy
 
 
 def _apply_nuscenes_records_generator(
@@ -67,6 +69,7 @@ def _apply_nuscenes_records_generator(
         version=worker_params.nuscenes_version,
         scenario_data=worker_params.scenario_data,
         box3d_label_resolver=worker_params.box3d_label_resolver,
+        segmentation_taxonomy=worker_params.segmentation_taxonomy,
     )
     return generator.generate_dataset_records()
 
@@ -157,6 +160,7 @@ class NuscenesDatabase(BaseDatabase):
                 nuscenes_version=self._nuscenes_version,
                 scenario_data=list(chunk),
                 box3d_label_resolver=self.box3d_label_resolver,
+                segmentation_taxonomy=self.taxonomy.segmentation3d,
             )
             for chunk in np.array_split(scenario_list, num_chunks)
         ]

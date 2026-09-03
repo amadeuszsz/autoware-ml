@@ -26,7 +26,7 @@ from autoware_ml.databases.scenarios import ScenarioData
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord
 from autoware_ml.databases.t4dataset.t4records_generator import T4RecordsGenerator
 from autoware_ml.databases.t4dataset.t4scenarios import T4Scenarios
-from autoware_ml.databases.taxonomy import DatabaseTaxonomy
+from autoware_ml.databases.taxonomy import DatabaseTaxonomy, LabelTaxonomy
 from autoware_ml.types.sensor import LidarChannel
 
 
@@ -40,6 +40,7 @@ class T4RecordsGeneratorWorkerParams:
       scenario_data: Scenario to extract.
       lidar_channel: Sensor channel of the lidar frame every sample is built around.
       box3d_label_resolver: Resolver baking the label of every box.
+      segmentation_taxonomy: Taxonomy the mask categories of the scene must be listed in.
       recompute_boxes3d_lidar_points_num: Whether to recount the lidar points inside every box.
     """
 
@@ -47,6 +48,7 @@ class T4RecordsGeneratorWorkerParams:
     scenario_data: ScenarioData
     lidar_channel: str
     box3d_label_resolver: Box3DLabelResolver
+    segmentation_taxonomy: LabelTaxonomy
     recompute_boxes3d_lidar_points_num: bool
 
 
@@ -68,6 +70,7 @@ def _apply_t4_records_generator(
         scenario_data=worker_params.scenario_data,
         lidar_channel=worker_params.lidar_channel,
         box3d_label_resolver=worker_params.box3d_label_resolver,
+        segmentation_taxonomy=worker_params.segmentation_taxonomy,
         recompute_boxes3d_lidar_points_num=worker_params.recompute_boxes3d_lidar_points_num,
     )
     return generator.generate_dataset_records()
@@ -151,6 +154,7 @@ class T4Database(BaseDatabase):
                 scenario_data=scenario,
                 lidar_channel=self._lidar_channel,
                 box3d_label_resolver=self.box3d_label_resolver,
+                segmentation_taxonomy=self.taxonomy.segmentation3d,
                 recompute_boxes3d_lidar_points_num=self._recompute_boxes3d_lidar_points_num,
             )
             for scenario in scenario_data.values()

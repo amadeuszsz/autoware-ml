@@ -15,16 +15,18 @@
 """Label taxonomies of a database.
 
 A vocabulary maps the raw label names of a dataset family onto fine label names, the finest
-distinction the corpus supports. A taxonomy selects the classes trained at one level of
-granularity and folds every fine name onto one of them or drops it. Boxes are baked with the
-fine name and the class index of the level when the record table is generated, and masks are
-resolved through the same objects when they are loaded, so one definition decides the labels
-of both heads.
+distinction the corpus supports, and names the raw labels that are outside every level. A raw
+label the vocabulary does not list is an error, so a new category of a corpus is discovered
+instead of being ignored. A taxonomy selects the classes trained at one level of granularity
+and folds every fine name onto one of them or drops it. Boxes are baked with the fine name and
+the class index of the level when the record table is generated, and masks are resolved
+through the same objects when they are loaded, so one definition decides the labels of both
+heads.
 """
 
 from __future__ import annotations
 
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from autoware_ml.types.collision import CollisionKind
 
@@ -32,27 +34,28 @@ from autoware_ml.types.collision import CollisionKind
 class LabelVocabulary:
     """Raw label names of a dataset family mapped onto fine label names."""
 
-    def __init__(self, name_mapping: Mapping[str, str]) -> None:
+    def __init__(self, name_mapping: Mapping[str, str | None]) -> None:
         """
         Initialize the vocabulary.
 
         Args:
-          name_mapping: Raw label name to fine label name. A raw label absent from the mapping
-            keeps its own name, so a raw label spelled like a fine name resolves like it.
+          name_mapping: Raw label name to fine label name, None for a raw label the corpora
+            carry that is outside every level. Every raw label of the corpora needs an entry.
         """
 
-        if not len(name_mapping):
-            raise ValueError("A label vocabulary requires at least one raw label name.")
         for raw_name, fine_name in name_mapping.items():
             if not isinstance(raw_name, str) or not raw_name:
                 raise ValueError(f"Raw label names must be non-empty strings, got {raw_name!r}.")
-            if not isinstance(fine_name, str) or not fine_name:
+            if fine_name is not None and (not isinstance(fine_name, str) or not fine_name):
                 raise ValueError(
-                    f"Fine label names must be non-empty strings, got {fine_name!r} for "
-                    f"raw label {raw_name!r}."
+                    f"Fine label names must be non-empty strings or None, got {fine_name!r} "
+                    f"for raw label {raw_name!r}."
                 )
+        fine_names = {fine_name for fine_name in name_mapping.values() if fine_name is not None}
+        if not fine_names:
+            raise ValueError("A label vocabulary requires at least one fine label name.")
         self._name_mapping = dict(name_mapping)
-        self._fine_names = tuple(sorted(set(self._name_mapping.values())))
+        self._fine_names = tuple(sorted(fine_names))
 
     @property
     def fine_names(self) -> tuple[str, ...]:
@@ -60,11 +63,24 @@ class LabelVocabulary:
         return self._fine_names
 
     @property
-    def name_mapping(self) -> Mapping[str, str]:
-        """Raw label name to fine label name."""
+    def name_mapping(self) -> Mapping[str, str | None]:
+        """Raw label name to fine label name, None for a raw label outside every level."""
         return self._name_mapping
 
-    def fine_name(self, raw_name: str) -> str:
+    def unlisted(self, raw_names: Iterable[str]) -> list[str]:
+        """
+        Raw label names the vocabulary does not list.
+
+        Args:
+          raw_names: Raw label names of a corpus.
+
+        Returns:
+          list[str]: The unlisted names, sorted.
+        """
+
+        return sorted(set(raw_names) - set(self._name_mapping))
+
+    def fine_name(self, raw_name: str) -> str | None:
         """
         Fine label name of a raw label name.
 
@@ -72,10 +88,15 @@ class LabelVocabulary:
           raw_name: Raw label name of the dataset.
 
         Returns:
-          str: The fine label name, the raw name itself when the vocabulary does not list it.
+          str | None: The fine label name, None for a raw label outside every level.
         """
 
-        return self._name_mapping.get(raw_name, raw_name)
+        if raw_name not in self._name_mapping:
+            raise KeyError(
+                f"Raw label name {raw_name!r} is not listed in the vocabulary. List it with "
+                "its fine label name, or with null when it is outside every level."
+            )
+        return self._name_mapping[raw_name]
 
     def __str__(self) -> str:
         """Canonical string form, the input of the database hash."""
@@ -210,41 +231,45 @@ class LabelTaxonomy:
         """Behaviour groups the metrics report, group name to its classes."""
         return self._class_groups
 
-    def fine_name(self, raw_name: str) -> str:
+    def fine_name(self, raw_name: str) -> str | None:
         """
         Fine label name of a raw label name.
 
         Args:
-          raw_name: Raw label name of the dataset.
+          raw_name: Raw label name of the dataset, listed in the vocabulary.
 
         Returns:
-          str: The fine label name.
+          str | None: The fine label name, None for a raw label outside every level.
         """
 
         return self._vocabulary.fine_name(raw_name)
 
-    def class_name(self, fine_name: str) -> str | None:
+    def class_name(self, fine_name: str | None) -> str | None:
         """
         Class of the level a fine label name coarsens to.
 
         Args:
-          fine_name: Fine label name, or any name the vocabulary does not know.
+          fine_name: Fine label name of the vocabulary, None for a label outside every level.
 
         Returns:
-          str | None: The class name, None for a dropped or unknown fine label.
+          str | None: The class name, None for a label the level drops.
         """
 
-        return self._coarsening.get(fine_name)
+        if fine_name is None:
+            return None
+        if fine_name not in self._coarsening:
+            raise KeyError(f"{fine_name!r} is not a fine label name of the vocabulary.")
+        return self._coarsening[fine_name]
 
-    def class_index(self, fine_name: str) -> int:
+    def class_index(self, fine_name: str | None) -> int:
         """
         Label index of a fine label name at the level.
 
         Args:
-          fine_name: Fine label name, or any name the vocabulary does not know.
+          fine_name: Fine label name of the vocabulary, None for a label outside every level.
 
         Returns:
-          int: The class index, the ignore index for a dropped or unknown fine label.
+          int: The class index, the ignore index for a label the level drops.
         """
 
         class_name = self.class_name(fine_name)
@@ -257,7 +282,7 @@ class LabelTaxonomy:
         Label index of a raw label name at the level.
 
         Args:
-          raw_name: Raw label name of the dataset.
+          raw_name: Raw label name of the dataset, listed in the vocabulary.
 
         Returns:
           int: The class index, the ignore index for a label outside the level.

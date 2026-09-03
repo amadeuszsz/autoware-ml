@@ -1,8 +1,8 @@
 # Segmentation vocabulary of T4dataset: every raw mask category the human labelled and the
 # pseudo labelled corpora carry, mapped onto the fine label names the levels coarsen. A raw
-# category absent from this list, such as the no-label markers unpainted and ignored, is
-# outside every level. A pseudo labelled corpus writes coarse category names, each folds onto
-# one fine member of its group.
+# category outside every level, such as the no-label markers, is listed with null, a raw
+# category missing from the list fails the table generation. A pseudo labelled corpus writes
+# coarse category names, each folds onto one fine member of its group.
 _target_: autoware_ml.databases.taxonomy.LabelVocabulary
 _convert_: all
 
@@ -75,3 +75,6 @@ name_mapping:
   background: background
   ego_vehicle: ego_vehicle
   out_of_sync: out_of_sync
+  # no-label markers
+  unpainted: null
+  ignored: null

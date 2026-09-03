@@ -35,6 +35,7 @@ VOCABULARY = LabelVocabulary(
         "truck": "truck",
         "trailer": "trailer",
         "semi_trailer": "trailer",
+        "unpainted": None,
     }
 )
 ONLINE_CLASSES = ["car", "truck"]
@@ -79,10 +80,13 @@ def _segmentation() -> SegmentationTaxonomy:
     return SegmentationTaxonomy(VOCABULARY, OFFLINE_CLASSES, OFFLINE_COARSENING, -1, OFFLINE_GROUPS)
 
 
-def test_vocabulary_resolves_fine_names_and_keeps_unknown_raw_names() -> None:
+def test_vocabulary_resolves_fine_names_and_rejects_unlisted_raw_names() -> None:
     assert VOCABULARY.fine_names == ("car", "emergency_vehicle", "trailer", "truck")
     assert VOCABULARY.fine_name("police_car") == "emergency_vehicle"
-    assert VOCABULARY.fine_name("drainage") == "drainage"
+    assert VOCABULARY.fine_name("unpainted") is None
+    assert VOCABULARY.unlisted(["car", "tree", "drainage", "unpainted"]) == ["drainage", "tree"]
+    with pytest.raises(KeyError, match="not listed in the vocabulary"):
+        VOCABULARY.fine_name("drainage")
 
 
 def test_vocabulary_string_form_is_canonical() -> None:
@@ -92,11 +96,13 @@ def test_vocabulary_string_form_is_canonical() -> None:
     assert reordered == VOCABULARY
 
 
-def test_vocabulary_rejects_empty_and_null_entries() -> None:
-    with pytest.raises(ValueError, match="at least one raw label name"):
+def test_vocabulary_rejects_empty_definitions() -> None:
+    with pytest.raises(ValueError, match="at least one fine label name"):
         LabelVocabulary({})
-    with pytest.raises(ValueError, match="Fine label names must be non-empty strings"):
+    with pytest.raises(ValueError, match="at least one fine label name"):
         LabelVocabulary({"background": None})
+    with pytest.raises(ValueError, match="non-empty strings or None"):
+        LabelVocabulary({"car": ""})
 
 
 def test_online_level_coarsens_fine_names_and_drops_the_rest() -> None:
@@ -106,10 +112,15 @@ def test_online_level_coarsens_fine_names_and_drops_the_rest() -> None:
     assert taxonomy.num_classes == 2
     assert taxonomy.resolve_index("police_car") == 0
     assert taxonomy.resolve_index("semi_trailer") == -1
-    assert taxonomy.resolve_index("drainage") == -1
+    assert taxonomy.resolve_index("unpainted") == -1
     assert taxonomy.class_name("trailer") is None
+    assert taxonomy.class_name(None) is None
     assert taxonomy.class_index("truck") == 1
     assert taxonomy.class_groups == {"grouped_vehicle": ("car", "truck")}
+    with pytest.raises(KeyError, match="not listed in the vocabulary"):
+        taxonomy.resolve_index("drainage")
+    with pytest.raises(KeyError, match="not a fine label name"):
+        taxonomy.class_index("drainage")
 
 
 def test_offline_level_trains_every_fine_name() -> None:
@@ -173,7 +184,7 @@ def test_a_class_without_fine_labels_is_a_placeholder() -> None:
     )
 
     assert taxonomy.num_classes == 3
-    assert taxonomy.class_index("vertical_thin") == -1
+    assert "vertical_thin" not in taxonomy.coarsening.values()
 
 
 def test_detection_taxonomy_carries_typed_evaluation_tables() -> None:

@@ -1,7 +1,7 @@
 # Detection vocabulary of T4dataset: every raw box category the corpora carry, mapped onto the
-# fine label names the levels coarsen. A raw category absent from this list keeps its own name
-# and is outside every level. Box records store the fine name whatever level they were baked
-# for.
+# fine label names the levels coarsen. A raw category outside every level is listed with null,
+# a raw category missing from the list fails the table generation. Box records store the fine
+# name whatever level they were baked for.
 _target_: autoware_ml.databases.taxonomy.LabelVocabulary
 _convert_: all
 

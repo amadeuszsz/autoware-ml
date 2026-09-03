@@ -124,8 +124,11 @@ object has a deterministic string form because the database hash is built from i
 ### Taxonomy
 
 The database owns the label spaces of its corpus. A `LabelVocabulary` maps every raw label
-name of the dataset family onto a fine label name, the finest distinction the corpus supports.
-A `LabelTaxonomy` selects the classes trained at one level of granularity and folds every fine
+name of the dataset family onto a fine label name, the finest distinction the corpus supports,
+and lists the raw names that are outside every level with null. A raw name the vocabulary does
+not list is an error, raised when the boxes and the mask categories of a scene are read at
+table generation and when a mask is loaded, so a new category of a corpus is discovered
+instead of being ignored. A `LabelTaxonomy` selects the classes trained at one level of granularity and folds every fine
 name onto one of them or drops it, so a level is a strict coarsening of the vocabulary and
 two levels never drift apart in how they read the raw labels. A `DetectionTaxonomy` and a
 `SegmentationTaxonomy` extend it with the tables the metrics key by class: the behaviour
@@ -144,7 +147,8 @@ Box labels are baked when the records are generated. The `Box3DLabelResolver` re
 raw name of every box to its fine name, runs the box pipelines on the fine names, and assigns
 the class index of the level. Every table stores the fine name in `box3d_label_name` and the
 level index in `box3d_label_index`, so the finest label stays available whatever level the
-table was baked for, and a box outside the level takes the ignore index. A pipeline whose
+table was baked for, a box outside the level takes the ignore index and a box outside every
+level is not stored. A pipeline whose
 behaviour depends on label names validates the taxonomy: the trailer merger rejects a level
 that trains trailer as a class of its own. Masks are not baked, the loading transform
 resolves the category names of the record through the segmentation taxonomy of the same

@@ -52,6 +52,7 @@ from autoware_ml.databases.schemas.category_mapping import CategoryMappingDataMo
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord
 from autoware_ml.databases.schemas.lidar_frames import LidarFrameDataModel
 from autoware_ml.databases.schemas.lidar_sources import LidarSourceDataModel
+from autoware_ml.databases.taxonomy import LabelTaxonomy
 from autoware_ml.geometry.utils import points_in_boxes_3d
 from autoware_ml.types.geometry import Box3DFieldIndex
 from autoware_ml.types.spatial import CoordinateSystem
@@ -73,6 +74,7 @@ class T4RecordsGenerator:
         scenario_data: ScenarioData,
         lidar_channel: str,
         box3d_label_resolver: Box3DLabelResolver,
+        segmentation_taxonomy: LabelTaxonomy,
         recompute_boxes3d_lidar_points_num: bool,
     ) -> None:
         """
@@ -84,6 +86,8 @@ class T4RecordsGenerator:
           lidar_channel: Sensor channel of the lidar frame every sample is built around.
           box3d_label_resolver: Resolver baking the label of every box through the taxonomy
             and the box pipelines.
+          segmentation_taxonomy: Taxonomy the mask categories of a scene with semantic masks
+            must be listed in.
           recompute_boxes3d_lidar_points_num: Whether to recount the lidar points inside every
             box from the point cloud, after the pipelines ran. This reads every point cloud
             and slows generation down considerably.
@@ -93,6 +97,7 @@ class T4RecordsGenerator:
         self.scenario_data = scenario_data
         self.lidar_channel = lidar_channel
         self.box3d_label_resolver = box3d_label_resolver
+        self.segmentation_taxonomy = segmentation_taxonomy
         self.recompute_boxes3d_lidar_points_num = recompute_boxes3d_lidar_points_num
         self.num_features = scenario_data.lidar_pointcloud_num_features
         if scenario_data.sample_steps < 1:
@@ -609,13 +614,23 @@ class T4RecordsGenerator:
 
     def _extract_category_mapping(self) -> CategoryMappingDataModel:
         """
-        Extract the segmentation category table of the scene.
+        Extract the segmentation category table of the scene. A scene with semantic masks
+        must name only categories the segmentation vocabulary lists, so a new category is
+        discovered when the table is generated.
 
         Returns:
           CategoryMappingDataModel: Category names and their label indices.
         """
 
+        category_names = [category.name for category in self.t4.category]
+        if self.scenario_data.semantic_masks:
+            unlisted = self.segmentation_taxonomy.vocabulary.unlisted(category_names)
+            if unlisted:
+                raise ValueError(
+                    f"{self.scene_dir}: the segmentation vocabulary does not list the mask "
+                    f"categories {unlisted}."
+                )
         return CategoryMappingDataModel(
-            category_names=[category.name for category in self.t4.category],
+            category_names=category_names,
             category_indices=[int(category.index) for category in self.t4.category],
         )

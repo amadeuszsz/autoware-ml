@@ -1,6 +1,6 @@
 # Segmentation vocabulary of nuScenes: the lidarseg categories named by the category table of
-# the records, mapped onto the trained class names. A category absent from this list, animal,
-# the bicycle rack and the ego vehicle, is outside every level.
+# the records, mapped onto the trained class names. A category outside every level, animal,
+# the bicycle rack and the ego vehicle, is listed with null.
 _target_: autoware_ml.databases.taxonomy.LabelVocabulary
 _convert_: all
 
@@ -34,3 +34,6 @@ name_mapping:
   static.manmade: manmade
   static.other: other_stuff
   static.vegetation: vegetation
+  animal: null
+  static_object.bicycle_rack: null
+  vehicle.ego: null
