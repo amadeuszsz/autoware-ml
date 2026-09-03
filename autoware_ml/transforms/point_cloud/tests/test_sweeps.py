@@ -129,6 +129,27 @@ def test_multi_sweeps_remove_close_removes_an_axis_aligned_box(tmp_path) -> None
     assert np.any(np.all(np.isclose(coord[:, :2], [0.0, -1.2]), axis=1))
 
 
+def test_a_sweep_flagged_as_keyframe_is_still_appended_as_a_sweep(tmp_path) -> None:
+    # Corpora annotated at every frame flag the stored sweeps as keyframes of other samples
+    _write_cloud(tmp_path, "s1.bin", np.full((1, 4), 10.0, dtype=np.float32))
+    frames = [
+        _keyframe(tmp_path, np.zeros((1, 4), dtype=np.float32)),
+        make_lidar_frame(
+            frame_id="s1.bin",
+            keyframe=True,
+            pointcloud_path="s1.bin",
+            timestamp_seconds=9.9,
+            num_features=4,
+        ),
+    ]
+
+    output = _load_with("nearest", [0.05, 0.25])(_sample(tmp_path, frames))
+
+    assert len(output.points) == 2
+    assert output.points.num_current_points == 1
+    assert np.isclose(output.points.feature(PointFeatureName.TIMESTAMP_DIFFERENCE)[1], 0.1)
+
+
 def test_nearest_selection_takes_the_most_recent_eligible_sweep(tmp_path) -> None:
     output = _load_with("nearest", [0.05, 0.25])(_aged_sample(tmp_path))
 

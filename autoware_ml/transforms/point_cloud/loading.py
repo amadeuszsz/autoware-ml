@@ -105,7 +105,10 @@ def select_raw_features(
 
 def keyframe_lidar_frame(sample: Sample) -> LidarFrameDataModel:
     """
-    Get the keyframe lidar frame of a sample record.
+    Get the keyframe lidar frame of a sample record. The first lidar frame of a record is the
+    frame of the sample and the following frames are its preceding sweeps. The keyframe flag
+    marks a frame the dataset annotates, so in a corpus annotated at every frame the sweeps
+    carry it as well and the position decides.
 
     Args:
       sample: Sample holding the dataset record.
@@ -116,12 +119,6 @@ def keyframe_lidar_frame(sample: Sample) -> LidarFrameDataModel:
 
     if not len(sample.record.lidar_frames):
         raise ValueError(f"The record of sample {sample.meta.sample_id} has no lidar frames.")
-    num_keyframes = sum(frame.lidar_keyframe for frame in sample.record.lidar_frames)
-    if num_keyframes != 1:
-        raise ValueError(
-            f"The record of sample {sample.meta.sample_id} carries {num_keyframes} keyframe "
-            "lidar frames, expected exactly one."
-        )
     keyframe = sample.record.lidar_frames[0]
     if not keyframe.lidar_keyframe:
         raise ValueError(

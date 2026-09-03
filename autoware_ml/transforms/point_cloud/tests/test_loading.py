@@ -41,11 +41,11 @@ def test_keyframe_lidar_frame_requires_a_leading_keyframe() -> None:
         keyframe_lidar_frame(sample)
 
 
-def test_keyframe_lidar_frame_rejects_a_second_keyframe() -> None:
+def test_stored_sweeps_may_be_keyframes_of_other_samples() -> None:
+    # A corpus annotated at every frame flags the preceding sweeps too, the position decides
     record = make_record(
         lidar_frames=[make_lidar_frame(), make_lidar_frame(frame_id="frame-1", keyframe=True)]
     )
     sample = make_sample(record=record)
 
-    with pytest.raises(ValueError, match="carries 2 keyframe lidar frames"):
-        keyframe_lidar_frame(sample)
+    assert keyframe_lidar_frame(sample).lidar_frame_id == "frame-0"

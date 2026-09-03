@@ -50,8 +50,9 @@ class LidarFrameDataModel(BaseModel, DataModelInterface):
 
     Attributes:
       lidar_frame_id: Lidar frame ID.
-      lidar_keyframe: Whether this lidar frame is a keyframe. Set to True if it's a keyframe,
-        otherwise, it is a sweep frame.
+      lidar_keyframe: Whether the dataset annotates this lidar frame. The first frame of a
+        record is the frame of the sample and the following frames are its preceding sweeps,
+        which carry the flag too when the dataset annotates every frame.
       lidar_sensor_id: Lidar sensor ID.
       lidar_sensor_channel_name: Lidar sensor channel name.
       lidar_timestamp_seconds: Lidar timestamp in seconds.
