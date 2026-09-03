@@ -116,6 +116,12 @@ def keyframe_lidar_frame(sample: Sample) -> LidarFrameDataModel:
 
     if not len(sample.record.lidar_frames):
         raise ValueError(f"The record of sample {sample.meta.sample_id} has no lidar frames.")
+    num_keyframes = sum(frame.lidar_keyframe for frame in sample.record.lidar_frames)
+    if num_keyframes != 1:
+        raise ValueError(
+            f"The record of sample {sample.meta.sample_id} carries {num_keyframes} keyframe "
+            "lidar frames, expected exactly one."
+        )
     keyframe = sample.record.lidar_frames[0]
     if not keyframe.lidar_keyframe:
         raise ValueError(

@@ -39,3 +39,13 @@ def test_keyframe_lidar_frame_requires_a_leading_keyframe() -> None:
 
     with pytest.raises(ValueError, match="keyframe"):
         keyframe_lidar_frame(sample)
+
+
+def test_keyframe_lidar_frame_rejects_a_second_keyframe() -> None:
+    record = make_record(
+        lidar_frames=[make_lidar_frame(), make_lidar_frame(frame_id="frame-1", keyframe=True)]
+    )
+    sample = make_sample(record=record)
+
+    with pytest.raises(ValueError, match="carries 2 keyframe lidar frames"):
+        keyframe_lidar_frame(sample)

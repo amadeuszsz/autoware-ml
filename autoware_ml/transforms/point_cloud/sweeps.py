@@ -143,7 +143,7 @@ class LoadPointsFromMultiSweeps(BaseTransform):
         )
         num_current_points = current_features.shape[0]
 
-        sweep_frames = sample.record.lidar_frames[1:]
+        sweep_frames = [frame for frame in sample.record.lidar_frames if not frame.lidar_keyframe]
         selected_sweeps = self._select_sweeps(
             sweep_frames=sweep_frames,
             needed=max(0, self.sweeps_num - 1),
