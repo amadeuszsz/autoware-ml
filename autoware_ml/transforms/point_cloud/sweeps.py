@@ -174,7 +174,7 @@ class LoadPointsFromMultiSweeps(BaseTransform):
             feature_names=self.use_features,
             num_current_points=num_current_points,
         )
-        return sample.model_copy(update={"points": point_cloud})
+        return sample.replace(points=point_cloud)
 
     def _build_frame_features(
         self, sample: Sample, lidar_frame: LidarFrameDataModel, time_lag: float

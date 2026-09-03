@@ -214,7 +214,7 @@ class CalibrationMisalignment(BaseTransform):
             Sample with the calibrated ground truth status.
         """
         calibration = sample.calibration.model_copy(update={"status": CalibrationStatus.CALIBRATED})
-        return sample.model_copy(update={"calibration": calibration})
+        return sample.replace(calibration=calibration)
 
     def transform(self, sample: Sample) -> Sample:
         """Apply the calibration misalignment augmentation.
@@ -232,7 +232,7 @@ class CalibrationMisalignment(BaseTransform):
         calibration = sample.calibration.model_copy(
             update={"data": data, "status": CalibrationStatus.MISCALIBRATED}
         )
-        return sample.model_copy(update={"calibration": calibration})
+        return sample.replace(calibration=calibration)
 
     def bounded_gaussian(
         self, center: float, min_value: float, max_value: float, scale: float
@@ -430,7 +430,7 @@ class LidarCameraFusion(BaseTransform):
             calibration.affine_transform,
         )
         calibration = calibration.model_copy(update={"fused_image": fused_image})
-        return sample.model_copy(update={"calibration": calibration})
+        return sample.replace(calibration=calibration)
 
     def _create_fused_image(
         self,
@@ -750,7 +750,7 @@ class Affine(BaseTransform):
         calibration = sample.calibration.model_copy(
             update={"affine_transform": np.eye(3, dtype=np.float32)}
         )
-        return sample.model_copy(update={"calibration": calibration})
+        return sample.replace(calibration=calibration)
 
     def transform(self, sample: Sample) -> Sample:
         """Apply a random affine transformation to the calibration image.
@@ -809,7 +809,7 @@ class Affine(BaseTransform):
                 "affine_transform": affine_matrix_3x3.astype(np.float32),
             }
         )
-        return sample.model_copy(update={"calibration": calibration})
+        return sample.replace(calibration=calibration)
 
 
 class SaveFusionPreview(BaseTransform):
@@ -1034,7 +1034,7 @@ class ImageAug3D(BaseTransform):
                 "img_aug_matrix": np.stack(aug_matrices, axis=0).astype(np.float32),
             }
         )
-        return sample.model_copy(update={"images": updated})
+        return sample.replace(images=updated)
 
     def _augment_image(
         self, image: Float32[np.ndarray, "height width channels"]

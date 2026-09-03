@@ -30,8 +30,8 @@ def _segmented_sample(coord: list[list[float]], num_current_points: int | None =
         ),
     )
     sample = make_sample(points=points)
-    return sample.model_copy(
-        update={"segment": SegmentationLabels(labels=np.arange(coord.shape[0], dtype=np.int64))}
+    return sample.replace(
+        segment=SegmentationLabels(labels=np.arange(coord.shape[0], dtype=np.int64))
     )
 
 

@@ -68,7 +68,7 @@ class RandomFlip3D(BaseTransform):
             sample = g3d.flip_sample(sample, axis=0)
         flip = g3d.flip_matrix(flip_x, flip_y)
         images = g3d.update_image_set_matrices(sample.images, np.linalg.inv(flip))
-        return sample.model_copy(update={"images": images})
+        return sample.replace(images=images)
 
 
 class GlobalRotScaleTrans(BaseTransform):
@@ -111,4 +111,4 @@ class GlobalRotScaleTrans(BaseTransform):
         sample = g3d.transform_sample_points(sample, rotation, scale, translation)
         augmentation = g3d.rot_scale_trans_matrix(rotation, scale, translation)
         images = g3d.update_image_set_matrices(sample.images, np.linalg.inv(augmentation))
-        return sample.model_copy(update={"images": images})
+        return sample.replace(images=images)

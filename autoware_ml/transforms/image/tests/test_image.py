@@ -33,7 +33,7 @@ def _make_sample(*, with_image: bool = True) -> Sample:
     rng = np.random.default_rng(0)
     image = rng.integers(0, 255, size=(64, 64, 3)).astype(np.float32) if with_image else None
     calibration = CalibrationSample(data=data, camera_name="CAM_FRONT", image=image)
-    return make_sample().model_copy(update={"calibration": calibration})
+    return make_sample().replace(calibration=calibration)
 
 
 def test_distortion_changes_the_image_and_keeps_the_layout() -> None:

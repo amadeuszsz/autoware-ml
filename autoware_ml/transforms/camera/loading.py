@@ -115,7 +115,7 @@ class LoadImageFromFile(BaseTransform):
         if self.color_type == "rgb":
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         calibration = sample.calibration.model_copy(update={"image": image.astype(np.float32)})
-        return sample.model_copy(update={"calibration": calibration})
+        return sample.replace(calibration=calibration)
 
 
 class LoadMultiViewImagesFromFiles(BaseTransform):
@@ -181,7 +181,7 @@ class LoadMultiViewImagesFromFiles(BaseTransform):
             lidar2cam=np.stack(lidar2cam, axis=0),
             lidar2img=np.stack(lidar2img, axis=0),
         )
-        return sample.model_copy(update={"images": image_set})
+        return sample.replace(images=image_set)
 
     @staticmethod
     def _compose_lidar2cam(

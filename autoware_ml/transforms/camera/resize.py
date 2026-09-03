@@ -87,7 +87,7 @@ class CropAndScale(BaseTransform):
         calibration = calibration.model_copy(
             update={"image": resized_image.astype(np.float32), "data": data}
         )
-        return sample.model_copy(update={"calibration": calibration})
+        return sample.replace(calibration=calibration)
 
     def _update_camera_matrix(
         self,

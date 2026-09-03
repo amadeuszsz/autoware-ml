@@ -35,7 +35,7 @@ def _make_sample() -> Sample:
     rng = np.random.default_rng(0)
     image = rng.integers(0, 255, size=(48, 64, 3)).astype(np.float32)
     calibration = CalibrationSample(data=data, camera_name="CAM_FRONT", image=image)
-    return make_sample().model_copy(update={"calibration": calibration})
+    return make_sample().replace(calibration=calibration)
 
 
 def test_crop_and_scale_preserves_shape_and_updates_intrinsics() -> None:
@@ -65,7 +65,7 @@ def test_crop_and_scale_does_not_mutate_the_input() -> None:
 def test_crop_and_scale_requires_loaded_image() -> None:
     sample = _make_sample()
     calibration = sample.calibration.model_copy(update={"image": None})
-    sample = sample.model_copy(update={"calibration": calibration})
+    sample = sample.replace(calibration=calibration)
 
     with pytest.raises(ValueError, match="loaded calibration image"):
         CropAndScale(p=1.0)(sample)

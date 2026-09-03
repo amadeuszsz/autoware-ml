@@ -84,7 +84,7 @@ class ObjectRangeFilter(BaseTransform):
         lower = self.point_cloud_range[:3]
         upper = self.point_cloud_range[3:]
         mask = ((centers >= lower) & (centers <= upper)).all(axis=1)
-        return sample.model_copy(update={"boxes": sample.boxes.filter(mask)})
+        return sample.replace(boxes=sample.boxes.filter(mask))
 
 
 class ObjectRangeMinPointsFilter(BaseTransform):
@@ -127,4 +127,4 @@ class ObjectRangeMinPointsFilter(BaseTransform):
         in_range = (radii >= self.min_radius) & (radii < self.max_radius)
         counts = _count_current_frame_points(sample.points, sample.boxes)
         mask = ~in_range | (counts >= self.min_num_points)
-        return sample.model_copy(update={"boxes": sample.boxes.filter(mask)})
+        return sample.replace(boxes=sample.boxes.filter(mask))

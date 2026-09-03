@@ -63,19 +63,17 @@ def test_build_point_features_packs_the_requested_columns_in_order() -> None:
 
 def test_build_point_features_missing_feature_raises() -> None:
     sample = _make_sample()
-    sample = sample.model_copy(
-        update={
-            "points": PointCloud(
-                features=sample.points.features[:, :4],
-                feature_names=(
-                    PointFeatureName.X,
-                    PointFeatureName.Y,
-                    PointFeatureName.Z,
-                    PointFeatureName.INTENSITY,
-                ),
-                num_current_points=3,
-            )
-        }
+    sample = sample.replace(
+        points=PointCloud(
+            features=sample.points.features[:, :4],
+            feature_names=(
+                PointFeatureName.X,
+                PointFeatureName.Y,
+                PointFeatureName.Z,
+                PointFeatureName.INTENSITY,
+            ),
+            num_current_points=3,
+        )
     )
     transform = BuildPointFeatures(feature_names=["x", "y", "z", "timestamp_difference"])
 

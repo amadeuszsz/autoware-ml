@@ -69,7 +69,7 @@ def _make_calibration_sample(
         )
     record = make_record(camera_frames=[make_camera_frame(image_path="db/cam/42.jpg")])
     sample = make_sample(record=record, points=point_cloud)
-    return sample.model_copy(update={"calibration": calibration})
+    return sample.replace(calibration=calibration)
 
 
 class TestCalibrationMisalignment:
@@ -204,7 +204,7 @@ class TestSaveFusionPreview:
         calibration = sample.calibration.model_copy(
             update={"status": CalibrationStatus.MISCALIBRATED}
         )
-        sample = sample.model_copy(update={"calibration": calibration})
+        sample = sample.replace(calibration=calibration)
         transform = SaveFusionPreview(p=1.0, out_dir=str(tmp_path / "previews"))
 
         output = transform(sample)
@@ -226,7 +226,7 @@ class TestImageAug3D:
             lidar2cam=lidar2cam,
             lidar2img=lidar2cam.copy(),
         )
-        sample = make_sample().model_copy(update={"images": image_set})
+        sample = make_sample().replace(images=image_set)
         transform = ImageAug3D(
             final_dim=[6, 6], resize_lim=[1.0, 1.0], bot_pct_lim=[0.0, 0.0], training=False
         )

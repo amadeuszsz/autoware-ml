@@ -309,7 +309,7 @@ def transform_sample_points(
         update["boxes"] = sample.boxes.with_params(
             transform_box_params(sample.boxes.params, rotation, rotation_angle, scale, translation)
         )
-    return sample.model_copy(update=update)
+    return sample.replace(**update)
 
 
 def rotate_sample_about_center(
@@ -338,7 +338,7 @@ def rotate_sample_about_center(
         update["boxes"] = sample.boxes.with_params(
             rotate_box_params_about_center(sample.boxes.params, rotation, rotation_angle, center)
         )
-    return sample.model_copy(update=update)
+    return sample.replace(**update)
 
 
 def flip_sample(sample: Sample, axis: int) -> Sample:
@@ -354,7 +354,7 @@ def flip_sample(sample: Sample, axis: int) -> Sample:
     update = {"points": sample.points.with_coord(flip_xyz(sample.points.coord, axis))}
     if sample.boxes is not None:
         update["boxes"] = sample.boxes.with_params(flip_box_params(sample.boxes.params, axis))
-    return sample.model_copy(update=update)
+    return sample.replace(**update)
 
 
 def update_image_set_matrices(images: ImageSet, aug_inv: Float32[np.ndarray, "4 4"]) -> ImageSet:

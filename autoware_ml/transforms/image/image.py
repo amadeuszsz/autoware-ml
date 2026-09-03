@@ -90,4 +90,4 @@ class PhotometricDistortion(BaseTransform):
         distorted = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
         calibration = calibration.model_copy(update={"image": distorted.astype(np.float32)})
-        return sample.model_copy(update={"calibration": calibration})
+        return sample.replace(calibration=calibration)

@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from typing import Any, Mapping
+
 import numpy as np
 from jaxtyping import Bool, Int64
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -31,8 +33,8 @@ class Sample(BaseModel):
     """
     Typed sample of one frame. A dataset seeds the sample with the dataset record and the frame
     metadata, and the transform pipeline fills the task fields. Every task field is optional, a
-    task is active when its field is set. Transforms never mutate a sample, they return a new
-    one.
+    task is active when its field is set. Transforms never mutate a sample, they derive a new
+    one through replace, which runs the sample validators again.
 
     Attributes:
       record: Dataset record the sample was created from. Loading transforms read their inputs
@@ -77,6 +79,25 @@ class Sample(BaseModel):
                 )
         return self
 
+    def replace(self, **update: Any) -> Sample:
+        """
+        Create a sample with the given fields replaced. The result is validated like a new
+        sample, so the alignment between the task fields holds after every transform.
+
+        Args:
+          **update: Field names of the sample and their new values.
+
+        Returns:
+          Sample: The derived sample.
+        """
+
+        fields = {name: getattr(self, name) for name in type(self).model_fields}
+        return Sample(**{**fields, **update})
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Sample:
+        """Reject the unvalidated copy, a sample is derived through replace."""
+        raise TypeError("Sample.model_copy skips the sample validators, use Sample.replace.")
+
     def filter_points(self, mask: Bool[np.ndarray, " num_points"]) -> Sample:
         """
         Create a sample keeping only the masked points. The segmentation labels are filtered
@@ -94,7 +115,7 @@ class Sample(BaseModel):
         update = {"points": self.points.filter(mask)}
         if self.segment is not None:
             update["segment"] = self.segment.filter(mask)
-        return self.model_copy(update=update)
+        return self.replace(**update)
 
     def reorder_points(self, indices: Int64[np.ndarray, " num_points"]) -> Sample:
         """
@@ -113,4 +134,4 @@ class Sample(BaseModel):
         update = {"points": self.points.reorder(indices)}
         if self.segment is not None:
             update["segment"] = self.segment.reorder(indices)
-        return self.model_copy(update=update)
+        return self.replace(**update)

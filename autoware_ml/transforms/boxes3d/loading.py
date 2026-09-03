@@ -107,4 +107,4 @@ class LoadDet3DAnnotations(BaseTransform):
             names=tuple(names),
             num_lidar_points=np.array(num_lidar_points, dtype=np.int64),
         )
-        return sample.model_copy(update={"boxes": boxes})
+        return sample.replace(boxes=boxes)

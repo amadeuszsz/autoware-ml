@@ -51,9 +51,7 @@ def _seg_sample(features: list[list[float]], labels: list[int]) -> Sample:
         num_current_points=len(features),
     )
     sample = make_sample(points=points)
-    return sample.model_copy(
-        update={"segment": SegmentationLabels(labels=np.array(labels, dtype=np.int64))}
-    )
+    return sample.replace(segment=SegmentationLabels(labels=np.array(labels, dtype=np.int64)))
 
 
 def _context(sample: Sample) -> PipelineContext:
@@ -107,9 +105,7 @@ def test_mixing_applies_pre_transform_to_secondary_sample() -> None:
     class _RelabelNinetyNine(BaseTransform):
         def transform(self, sample: Sample) -> Sample:
             labels = np.full_like(sample.segment.labels, 99)
-            return sample.model_copy(
-                update={"segment": sample.segment.model_copy(update={"labels": labels})}
-            )
+            return sample.replace(segment=sample.segment.model_copy(update={"labels": labels}))
 
     sample = _seg_sample([[0.0, 0.0, 0.0, 1.0]], [1])
     mix_sample = _seg_sample([[1.0, 0.0, 0.0, 2.0]], [5])
@@ -133,9 +129,7 @@ def test_mixing_applies_pre_transform_to_secondary_sample() -> None:
 def test_mixing_rejects_time_lag_clouds(transform: BaseTransform) -> None:
     points = make_point_cloud(num_points=4, with_time_lag=True)
     sample = make_sample(points=points)
-    sample = sample.model_copy(
-        update={"segment": SegmentationLabels(labels=np.zeros(4, dtype=np.int64))}
-    )
+    sample = sample.replace(segment=SegmentationLabels(labels=np.zeros(4, dtype=np.int64)))
 
     with pytest.raises(ValueError, match="single frame"):
         transform(sample)
@@ -153,9 +147,7 @@ def test_mixing_rejects_mismatched_feature_layouts() -> None:
     sample = _seg_sample([[0.0, 0.0, 0.0, 1.0]], [1])
     mix_points = make_point_cloud(num_points=2, with_time_lag=True)
     mix_sample = make_sample(points=mix_points)
-    mix_sample = mix_sample.model_copy(
-        update={"segment": SegmentationLabels(labels=np.zeros(2, dtype=np.int64))}
-    )
+    mix_sample = mix_sample.replace(segment=SegmentationLabels(labels=np.zeros(2, dtype=np.int64)))
 
     with pytest.raises(ValueError, match="matching point feature layouts"):
         InstanceCopy(instance_classes=[5], p=1.0)(sample, context=_context(mix_sample))

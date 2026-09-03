@@ -121,4 +121,4 @@ class RangeInterpolation(BaseTransform):
                 update={"labels": np.concatenate([sample.segment.labels, new_labels], axis=0)}
             )
 
-        return sample.model_copy(update=update)
+        return sample.replace(**update)

@@ -102,7 +102,7 @@ def _rebuild_mixed_sample(
         }
     )
     segment = sample.segment.model_copy(update={"labels": labels})
-    return sample.model_copy(update={"points": point_cloud, "segment": segment})
+    return sample.replace(points=point_cloud, segment=segment)
 
 
 class FrustumMix(BaseTransform):

@@ -61,4 +61,4 @@ class PermuteAxes(BaseTransform):
         calibration = sample.calibration.model_copy(
             update={"fused_image": np.transpose(fused_image, self.axes)}
         )
-        return sample.model_copy(update={"calibration": calibration})
+        return sample.replace(calibration=calibration)

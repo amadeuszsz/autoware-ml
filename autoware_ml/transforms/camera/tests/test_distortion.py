@@ -35,7 +35,7 @@ def _make_sample(distortion_coefficients: np.ndarray) -> Sample:
     rng = np.random.default_rng(0)
     image = rng.integers(0, 255, size=(48, 64, 3)).astype(np.float32)
     calibration = CalibrationSample(data=data, camera_name="CAM_FRONT", image=image)
-    return make_sample().model_copy(update={"calibration": calibration})
+    return make_sample().replace(calibration=calibration)
 
 
 def test_zero_distortion_passes_through() -> None:
@@ -75,7 +75,7 @@ def test_input_calibration_data_is_not_mutated() -> None:
 def test_requires_loaded_image() -> None:
     sample = _make_sample(np.zeros(5, dtype=np.float32))
     calibration = sample.calibration.model_copy(update={"image": None})
-    sample = sample.model_copy(update={"calibration": calibration})
+    sample = sample.replace(calibration=calibration)
 
     with pytest.raises(ValueError, match="loaded calibration image"):
         UndistortImage()(sample)

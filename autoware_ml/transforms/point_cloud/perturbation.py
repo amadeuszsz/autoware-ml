@@ -56,9 +56,7 @@ class RandomJitter(BaseTransform):
             -self.clip,
             self.clip,
         ).astype(np.float32)
-        return sample.model_copy(
-            update={"points": sample.points.with_coord(sample.points.coord + noise)}
-        )
+        return sample.replace(points=sample.points.with_coord(sample.points.coord + noise))
 
 
 class RandomStrengthJitter(BaseTransform):
@@ -115,6 +113,6 @@ class RandomStrengthJitter(BaseTransform):
         shift = np.random.uniform(*self.shift_range)
         intensity = sample.points.feature(PointFeatureName.INTENSITY)
         jittered = np.clip(np.power(intensity, gamma) * scale + shift, 0.0, 1.0).astype(np.float32)
-        return sample.model_copy(
-            update={"points": sample.points.with_feature(PointFeatureName.INTENSITY, jittered)}
+        return sample.replace(
+            points=sample.points.with_feature(PointFeatureName.INTENSITY, jittered)
         )

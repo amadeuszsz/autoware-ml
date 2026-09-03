@@ -31,7 +31,7 @@ def _make_sample_with_images(num_cameras: int = 2, size: int = 64) -> Sample:
         lidar2cam=eye.copy(),
         lidar2img=eye.copy(),
     )
-    return make_sample().model_copy(update={"images": image_set})
+    return make_sample().replace(images=image_set)
 
 
 def test_grid_mask_zeroes_grid_cells() -> None:

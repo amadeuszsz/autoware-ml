@@ -40,7 +40,7 @@ def _make_fusion_sample() -> Sample:
     sample = make_sample(
         points=make_point_cloud(num_points=20, with_time_lag=False), boxes=make_boxes3d()
     )
-    return sample.model_copy(update={"images": image_set})
+    return sample.replace(images=image_set)
 
 
 def _project(matrix: np.ndarray, point: np.ndarray) -> np.ndarray:

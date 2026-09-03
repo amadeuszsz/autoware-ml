@@ -55,7 +55,7 @@ class GridMask(BaseTransform):
             image_hwc = np.transpose(image, (1, 2, 0))
             masked.append(np.transpose(self._grid_mask(image_hwc), (2, 0, 1)))
         images = sample.images.model_copy(update={"images": np.stack(masked, axis=0)})
-        return sample.model_copy(update={"images": images})
+        return sample.replace(images=images)
 
     def _grid_mask(
         self, image: Num[np.ndarray, "height width channels"]

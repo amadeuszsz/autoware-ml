@@ -61,6 +61,6 @@ class PreparePointCloudInput(BaseTransform):
                 f"carries {points.feature_names}."
             )
         intensity = points.feature(PointFeatureName.INTENSITY)
-        return sample.model_copy(
-            update={"points": points.with_feature(PointFeatureName.INTENSITY, intensity / 255.0)}
+        return sample.replace(
+            points=points.with_feature(PointFeatureName.INTENSITY, intensity / 255.0)
         )

@@ -253,11 +253,12 @@ class MyAugmentation(BaseTransform):
     def transform(self, sample: Sample) -> Sample:
         noise = (self.intensity * np.random.randn(len(sample.points), 3)).astype(np.float32)
         points = sample.points.with_coord(sample.points.coord + noise)
-        return sample.model_copy(update={"points": points})
+        return sample.replace(points=points)
 ```
 
-Build the output through the copy helpers of the sample models. Operations
-that filter or reorder points must go through `Sample.filter_points()` or
+Build the output through `Sample.replace()`, which validates the derived
+sample, or through the copy helpers of the sample models. Operations that
+filter or reorder points must go through `Sample.filter_points()` or
 `Sample.reorder_points()` so aligned fields such as segmentation labels stay
 consistent. `_required_fields` lists the sample fields validated before the
 transform runs.

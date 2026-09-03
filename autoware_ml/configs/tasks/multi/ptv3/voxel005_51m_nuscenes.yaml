@@ -57,9 +57,6 @@ datamodule:
         taxonomy: ${database.taxonomy.segmentation3d}
       - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
         require_time_lag: true
-      - _target_: autoware_ml.transforms.segmentation3d.formatting.PreparePointSegInput
-        ignore_index: ${dataset.segmentation3d.ignore_index}
-        require_labels: true
       - _target_: autoware_ml.transforms.point_cloud.geometry.RandomRotateTargetAngle
         p: 0.75
         angle: [0.5, 1.0, 1.5]
@@ -106,9 +103,6 @@ datamodule:
         taxonomy: ${database.taxonomy.segmentation3d}
       - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
         require_time_lag: true
-      - _target_: autoware_ml.transforms.segmentation3d.formatting.PreparePointSegInput
-        ignore_index: ${dataset.segmentation3d.ignore_index}
-        require_labels: true
       - _target_: autoware_ml.transforms.point_cloud.crop.PointsRangeFilter
         point_cloud_range: ${point_cloud_range}
       - _target_: autoware_ml.transforms.boxes3d.filters.ObjectRangeFilter

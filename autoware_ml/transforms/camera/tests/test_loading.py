@@ -94,7 +94,7 @@ def _make_calibration_sample(tmp_path: Path, camera_name: str) -> Sample:
         lidar_to_camera_transformation=np.eye(4, dtype=np.float32),
     )
     calibration = CalibrationSample(data=data, camera_name=camera_name)
-    return sample.model_copy(update={"calibration": calibration})
+    return sample.replace(calibration=calibration)
 
 
 class TestLoadMultiViewImagesFromFiles:

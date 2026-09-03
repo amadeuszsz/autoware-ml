@@ -31,7 +31,7 @@ def _make_sample(fused_image: np.ndarray | None) -> Sample:
         lidar_to_camera_transformation=np.eye(4, dtype=np.float32),
     )
     calibration = CalibrationSample(data=data, camera_name="CAM_FRONT", fused_image=fused_image)
-    return make_sample().model_copy(update={"calibration": calibration})
+    return make_sample().replace(calibration=calibration)
 
 
 def test_permute_axes_moves_channels_first() -> None:

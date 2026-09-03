@@ -24,6 +24,7 @@ from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.datamodule.samples.segmentation3d import SegmentationLabels
 from autoware_ml.transforms.base import BaseTransform
 from autoware_ml.transforms.point_cloud.loading import keyframe_lidar_frame, resolve_frame_path
+from autoware_ml.types.geometry import PointFeatureName
 
 
 class LoadSeg3DAnnotations(BaseTransform):
@@ -35,9 +36,10 @@ class LoadSeg3DAnnotations(BaseTransform):
     A category outside the taxonomy, a raw index the record does not name, and every point of
     a record whose category mapping is empty take the ignore index of the taxonomy.
 
-    The produced segment covers the current frame points only. For a densified cloud
-    PreparePointSegInput pads the labels to the full point count, so no transform that filters
-    or reorders points may run in between.
+    The produced segment covers every point of the cloud. The current frame is the leading
+    block the point loader tracks, points appended from earlier sweeps take the ignore index so
+    they shape the geometry but never the loss or the metrics. When the cloud carries the
+    timestamp_difference feature the leading block is verified against it.
     """
 
     _required_fields = ["points"]
@@ -64,8 +66,22 @@ class LoadSeg3DAnnotations(BaseTransform):
             sample: Sample holding the dataset record and a loaded point cloud.
 
         Returns:
-            Sample with the current frame segmentation labels.
+            Sample with segmentation labels covering every point.
         """
+        points = sample.points
+        num_current = points.num_current_points
+        if num_current is None:
+            raise ValueError(
+                "LoadSeg3DAnnotations requires num_current_points, the point cloud does not "
+                "track its leading current frame block."
+            )
+        if points.has_feature(PointFeatureName.TIMESTAMP_DIFFERENCE):
+            zero_lag = points.feature(PointFeatureName.TIMESTAMP_DIFFERENCE) == 0
+            if np.any(~zero_lag[:num_current]) or np.any(zero_lag[num_current:]):
+                raise ValueError(
+                    "LoadSeg3DAnnotations requires the current frame (time lag 0) to be exactly "
+                    f"the leading block of {num_current} points."
+                )
         keyframe = keyframe_lidar_frame(sample)
         if keyframe.lidar_pointcloud_semantic_mask_path is None:
             raise ValueError(
@@ -74,12 +90,18 @@ class LoadSeg3DAnnotations(BaseTransform):
             )
         path = resolve_frame_path(sample.data_root, keyframe.lidar_pointcloud_semantic_mask_path)
         raw_labels = np.fromfile(path, dtype=self.dtype).astype(np.int64)
+        if raw_labels.shape[0] != num_current:
+            raise ValueError(
+                "LoadSeg3DAnnotations requires one semantic label per current frame point, got "
+                f"{raw_labels.shape[0]} labels for {num_current} points."
+            )
 
         lookup = self._category_lookup(sample)
-        labels = np.full(raw_labels.shape, self.ignore_index, dtype=np.int64)
+        labels = np.full(len(points), self.ignore_index, dtype=np.int64)
         valid = (raw_labels >= 0) & (raw_labels < lookup.shape[0])
-        labels[valid] = lookup[raw_labels[valid]]
-        return sample.model_copy(update={"segment": SegmentationLabels(labels=labels)})
+        current = labels[:num_current]
+        current[valid] = lookup[raw_labels[valid]]
+        return sample.replace(segment=SegmentationLabels(labels=labels))
 
     def _category_lookup(self, sample: Sample) -> Int64[np.ndarray, " lookup_size"]:
         """Build the raw label lookup table from the category mapping of the record.

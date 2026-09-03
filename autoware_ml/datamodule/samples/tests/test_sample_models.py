@@ -65,6 +65,24 @@ def test_sample_rejects_misaligned_segmentation_labels() -> None:
         )
 
 
+def test_replace_validates_the_derived_sample() -> None:
+    sample = _segmented_sample(4)
+
+    replaced = sample.replace(points=make_point_cloud(num_points=4, seed=1))
+
+    assert replaced.segment is sample.segment
+    assert not np.array_equal(replaced.points.features, sample.points.features)
+    with pytest.raises(ValidationError, match="Segmentation labels cover"):
+        sample.replace(points=make_point_cloud(num_points=3))
+
+
+def test_model_copy_is_rejected_in_favour_of_replace() -> None:
+    sample = _segmented_sample(4)
+
+    with pytest.raises(TypeError, match="use Sample.replace"):
+        sample.model_copy(update={"points": make_point_cloud(num_points=3)})
+
+
 def test_point_operations_require_a_loaded_point_cloud() -> None:
     sample = make_sample()
 

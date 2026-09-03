@@ -29,7 +29,7 @@ class _AttachPoints(BaseTransform):
     """Attach a synthetic point cloud so the pre transform pipeline is observable."""
 
     def transform(self, sample: Sample) -> Sample:
-        return sample.model_copy(update={"points": make_point_cloud(num_points=4)})
+        return sample.replace(points=make_point_cloud(num_points=4))
 
 
 def _dataset(num_records: int) -> T4Dataset:

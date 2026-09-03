@@ -61,4 +61,4 @@ class BuildPointFeatures(BaseTransform):
             feature_names=self.feature_names,
             num_current_points=points.num_current_points,
         )
-        return sample.model_copy(update={"points": point_cloud})
+        return sample.replace(points=point_cloud)

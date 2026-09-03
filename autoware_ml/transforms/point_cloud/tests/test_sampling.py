@@ -23,9 +23,7 @@ def _indexed_sample(num_points: int, num_current_points: int | None = None):
         num_current_points=(num_current_points if num_current_points is not None else num_points),
     )
     sample = make_sample(points=points)
-    return sample.model_copy(
-        update={"segment": SegmentationLabels(labels=np.arange(num_points, dtype=np.int64))}
-    )
+    return sample.replace(segment=SegmentationLabels(labels=np.arange(num_points, dtype=np.int64)))
 
 
 def test_point_shuffle_keeps_points_and_segment_aligned() -> None:

@@ -26,9 +26,7 @@ def _range_sample(features: list[list[float]], labels: list[int] | None) -> Samp
     sample = make_sample(points=points)
     if labels is None:
         return sample
-    return sample.model_copy(
-        update={"segment": SegmentationLabels(labels=np.array(labels, dtype=np.int64))}
-    )
+    return sample.replace(segment=SegmentationLabels(labels=np.array(labels, dtype=np.int64)))
 
 
 def test_adds_midpoint_and_boundary_label() -> None:

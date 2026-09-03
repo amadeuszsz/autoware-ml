@@ -108,7 +108,7 @@ def test_an_empty_category_mapping_ignores_every_point(tmp_path) -> None:
             "category_mapping": CategoryMappingDataModel(category_names=[], category_indices=[])
         }
     )
-    sample = sample.model_copy(update={"record": record})
+    sample = sample.replace(record=record)
 
     output = LoadSeg3DAnnotations(taxonomy=_taxonomy())(sample)
 
@@ -146,4 +146,51 @@ def test_requires_loaded_points() -> None:
     sample = make_sample()
 
     with pytest.raises(ValueError, match="points"):
+        LoadSeg3DAnnotations(taxonomy=_taxonomy())(sample)
+
+
+def _densified_sample(tmp_path, raw_labels, time_lags):
+    np.array(raw_labels, dtype="uint8").tofile(tmp_path / "mask.bin")
+    record = make_record(
+        lidar_frames=[make_lidar_frame(semantic_mask_path="mask.bin")],
+        category_names=("car", "pedestrian"),
+        category_indices=(1, 2),
+    )
+    points = make_point_cloud(num_points=len(time_lags), num_current_points=len(raw_labels))
+    features = points.features.copy()
+    features[:, 4] = time_lags
+    points = points.model_copy(update={"features": features})
+    return make_sample(record=record, data_root=str(tmp_path), points=points)
+
+
+def test_sweep_points_take_the_ignore_index(tmp_path) -> None:
+    sample = _densified_sample(tmp_path, [1, 2], [0.0, 0.0, 0.1, 0.2])
+
+    output = LoadSeg3DAnnotations(taxonomy=_taxonomy())(sample)
+
+    assert np.array_equal(output.segment.labels, np.array([0, 1, IGNORE, IGNORE], dtype=np.int64))
+    assert len(output.segment) == len(output.points)
+
+
+def test_rejects_a_mask_that_does_not_cover_the_current_frame(tmp_path) -> None:
+    sample = _densified_sample(tmp_path, [1, 2], [0.0, 0.0, 0.0, 0.1])
+    points = sample.points.model_copy(update={"num_current_points": 3})
+    sample = sample.replace(points=points)
+
+    with pytest.raises(ValueError, match="one semantic label per current frame point"):
+        LoadSeg3DAnnotations(taxonomy=_taxonomy())(sample)
+
+
+def test_rejects_a_current_frame_outside_the_leading_block(tmp_path) -> None:
+    sample = _densified_sample(tmp_path, [1, 2], [0.0, 0.1, 0.0, 0.2])
+
+    with pytest.raises(ValueError, match="leading block"):
+        LoadSeg3DAnnotations(taxonomy=_taxonomy())(sample)
+
+
+def test_rejects_an_untracked_current_frame_block(tmp_path) -> None:
+    sample = _densified_sample(tmp_path, [1, 2], [0.0, 0.0])
+    sample = sample.replace(points=sample.points.model_copy(update={"num_current_points": None}))
+
+    with pytest.raises(ValueError, match="num_current_points"):
         LoadSeg3DAnnotations(taxonomy=_taxonomy())(sample)
