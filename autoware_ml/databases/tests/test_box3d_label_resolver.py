@@ -104,12 +104,13 @@ def test_merger_rejects_a_level_that_trains_the_absorbed_label() -> None:
         Box3DLabelResolver(_offline(), [_merger()])
 
 
-def test_merger_rejects_a_target_outside_the_vocabulary() -> None:
+def test_merger_rejects_a_source_label_outside_the_vocabulary() -> None:
+    # A misspelled source would otherwise never match a box and silently disable the merge
     merger = Box3DExtendLongerMerger(
-        target_labels={"bus": ["bus", "trailer"]}, proximity_distance_threshold=1.0
+        target_labels={"truck": ["truck", "trailr"]}, proximity_distance_threshold=1.0
     )
 
-    with pytest.raises(ValueError, match="not fine labels of the vocabulary"):
+    with pytest.raises(ValueError, match="source labels \\['trailr'\\] are not fine labels"):
         Box3DLabelResolver(_online(), [merger])
 
 

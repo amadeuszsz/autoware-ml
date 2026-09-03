@@ -72,18 +72,19 @@ class Box3DMerger(Box3DPipeline):
 
     def validate_taxonomy(self, taxonomy: LabelTaxonomy) -> None:
         """
-        Reject a taxonomy that trains an absorbed label as a class of its own, and a target
-        label the vocabulary does not know.
+        Reject a taxonomy that trains an absorbed label as a class of its own, and a source
+        label the vocabulary does not know, so a misspelled label cannot disable the merger.
 
         Args:
           taxonomy: Taxonomy the boxes are baked with.
         """
 
         fine_names = set(taxonomy.vocabulary.fine_names)
-        unknown_targets = sorted(set(self.target_labels) - fine_names)
-        if unknown_targets:
+        source_labels = {label for labels in self.target_labels.values() for label in labels}
+        unknown_sources = sorted(source_labels - fine_names)
+        if unknown_sources:
             raise ValueError(
-                f"Merger target labels {unknown_targets} are not fine labels of the vocabulary."
+                f"Merger source labels {unknown_sources} are not fine labels of the vocabulary."
             )
         absorbed_classes = sorted(self.absorbed_labels() & set(taxonomy.class_names))
         if absorbed_classes:
