@@ -1,6 +1,6 @@
 # @package _global_
 
-# Stage 3 of the voxel006 teacher pipeline: joint training on the j6gen2 base set, detection
+# Stage 3 of the voxel006 teacher pipeline: joint training on the pseudo labelled j6gen2 set, detection
 # ground truth with pseudo segmentation, with the j6gen2 seg3d ground truth frames rehearsed
 # in. Architecture, precision and the offline taxonomy come from the j6gen2 joint voxel006
 # config, and the rehearsal database is bound to the same taxonomy level and pipelines.
@@ -11,7 +11,7 @@ defaults:
   - /database@rehearsal_database: t4dataset/t4dataset_j6gen2_semaseg
   - override /database/t4dataset/taxonomy@rehearsal_database.taxonomy: offline
   - override /database/t4dataset/box3d_pipelines@rehearsal_database.box3d_pipelines: trailer_class_box3d_pipelines
-  - override /database@database: t4dataset/t4dataset_j6gen2_base_pseudo
+  - override /database@database: t4dataset/t4dataset_j6gen2_pseudo
   - _self_
 
 datamodule:

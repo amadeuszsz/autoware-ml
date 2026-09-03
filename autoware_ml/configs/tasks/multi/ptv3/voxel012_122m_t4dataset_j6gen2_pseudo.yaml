@@ -1,13 +1,13 @@
 # @package _global_
 
-# Stage 3 of the seg3d preserving pipeline: joint training on the j6gen2 base set, detection
+# Stage 3 of the seg3d preserving pipeline: joint training on the pseudo labelled j6gen2 set, detection
 # ground truth with pseudo segmentation, with the j6gen2 seg3d ground truth frames rehearsed
 # in. Initialized from the stage 2 checkpoint, so the warmup and the schedule are shorter.
 
 defaults:
   - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
   - /database@rehearsal_database: t4dataset/t4dataset_j6gen2_semaseg
-  - override /database@database: t4dataset/t4dataset_j6gen2_base_pseudo
+  - override /database@database: t4dataset/t4dataset_j6gen2_pseudo
   - _self_
 
 # The pseudo masks carry the category names of the auto label generator, the segmentation

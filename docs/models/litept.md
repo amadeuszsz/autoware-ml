@@ -56,7 +56,7 @@ operator calls `rope_freq`. This is a hyperparameter and needs tuning.
 | `detection3d/litept/voxel012_122m_t4dataset_j6gen2`       | detection3d                  | T4Dataset | TransFusion | 122 m | T4Dataset detection                          |
 | `multi/litept/voxel012_122m_t4dataset_j6gen2`             | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Joint segmentation + detection               |
 | `multi/litept/voxel012_122m_t4dataset_base_pseudo`        | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Pretraining on the pseudo labelled base set  |
-| `multi/litept/voxel012_122m_t4dataset_j6gen2_base_pseudo` | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Joint training on the pseudo labelled J6 set |
+| `multi/litept/voxel012_122m_t4dataset_j6gen2_pseudo`      | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Joint training on the pseudo labelled J6 set |
 
 Each inherits dataset, transforms, optimizer and deploy settings from the PTv3
 config of the same name and swaps only the encoder and, where the model has one,

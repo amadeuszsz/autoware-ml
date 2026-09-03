@@ -1,4 +1,4 @@
-# The pseudo labelled J6 gen2 base databases, the J6 gen2 and large bus releases. The masks
+# The pseudo labelled J6 gen2 databases, the J6 gen2 and large bus releases. The masks
 # are regenerated whenever the teacher changes, and the scenes live under pseudo_large, so
 # they form a database of their own.
 _target_: autoware_ml.databases.t4dataset.t4database.T4Database
@@ -7,9 +7,9 @@ _convert_: all
 defaults:
   - /database/t4dataset/taxonomy@taxonomy: online
   - /database/t4dataset/box3d_pipelines@box3d_pipelines: default_box3d_pipelines
-  - /database/t4dataset/scenarios@scenarios.db_j6gen2_base_pseudo: segmentation3d_pseudo/db_j6gen2_base_pseudo
+  - /database/t4dataset/scenarios@scenarios.db_j6gen2_pseudo: segmentation3d_pseudo/db_j6gen2_pseudo
 
-version: T4Dataset-j6gen2_base_pseudo-v1.0.0
+version: T4Dataset-j6gen2_pseudo-v1.0.0
 # Root path of actual annotation files
 root_path: ${data_root_path}/t4dataset/pseudo_large/
 
