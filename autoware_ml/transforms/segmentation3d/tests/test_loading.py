@@ -65,14 +65,26 @@ def test_categories_resolve_through_the_record_and_the_taxonomy(tmp_path) -> Non
     sample = _seg_sample(
         tmp_path,
         [2, 5, 7, 9],
-        category_names=("vehicle.car", "pedestrian", "stroller"),
-        category_indices=(2, 5, 7),
+        category_names=("vehicle.car", "pedestrian", "stroller", "tree"),
+        category_indices=(2, 5, 7, 9),
     )
 
     output = LoadSeg3DAnnotations(taxonomy=_taxonomy())(sample)
 
     assert output.segment.labels.dtype == np.int64
     assert np.array_equal(output.segment.labels, np.array([0, 1, 1, IGNORE], dtype=np.int64))
+
+
+def test_raw_indices_the_mapping_does_not_name_raise(tmp_path) -> None:
+    sample = _seg_sample(
+        tmp_path,
+        [2, 5, 9, 250],
+        category_names=("car", "pedestrian"),
+        category_indices=(2, 5),
+    )
+
+    with pytest.raises(ValueError, match="raw indices \\[9, 250\\]"):
+        LoadSeg3DAnnotations(taxonomy=_taxonomy())(sample)
 
 
 def test_categories_outside_every_level_take_the_ignore_index(tmp_path) -> None:

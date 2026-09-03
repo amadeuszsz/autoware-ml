@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 import numpy as np
-from jaxtyping import Int64
+from jaxtyping import Bool, Int64
 
+from autoware_ml.databases.schemas.category_mapping import CategoryMappingDataModel
 from autoware_ml.databases.taxonomy import LabelTaxonomy
 from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.datamodule.samples.segmentation3d import SegmentationLabels
@@ -33,8 +34,9 @@ class LoadSeg3DAnnotations(BaseTransform):
     The semantic mask of the keyframe lidar frame stores one raw category index per current
     frame point. The category mapping of the record names every raw index, and the
     segmentation taxonomy of the database resolves every category name to its training label.
-    A category outside the taxonomy, a raw index the record does not name, and every point of
-    a record whose category mapping is empty take the ignore index of the taxonomy.
+    A category outside the taxonomy and every point of a record whose category mapping is empty
+    take the ignore index of the taxonomy. A raw index the mapping does not name is corrupt
+    data and raises.
 
     The produced segment covers every point of the cloud. The current frame is the leading
     block the point loader tracks, points appended from earlier sweeps take the ignore index so
@@ -96,34 +98,47 @@ class LoadSeg3DAnnotations(BaseTransform):
                 f"{raw_labels.shape[0]} labels for {num_current} points."
             )
 
-        lookup = self._category_lookup(sample)
         labels = np.full(len(points), self.ignore_index, dtype=np.int64)
-        valid = (raw_labels >= 0) & (raw_labels < lookup.shape[0])
-        current = labels[:num_current]
-        current[valid] = lookup[raw_labels[valid]]
-        return sample.replace(segment=SegmentationLabels(labels=labels))
-
-    def _category_lookup(self, sample: Sample) -> Int64[np.ndarray, " lookup_size"]:
-        """Build the raw label lookup table from the category mapping of the record.
-
-        Args:
-            sample: Sample holding the dataset record.
-
-        Returns:
-            Int64[np.ndarray, " lookup_size"]: Training label per raw label.
-        """
         category_mapping = sample.record.category_mapping
         if category_mapping is None:
             raise ValueError(
                 f"The record of sample {sample.meta.sample_id} carries no category mapping, "
                 "so its semantic mask cannot be resolved."
             )
-        lookup_size = 0
-        if len(category_mapping.category_indices):
-            lookup_size = max(category_mapping.category_indices) + 1
+        if not len(category_mapping.category_indices):
+            return sample.replace(segment=SegmentationLabels(labels=labels))
+
+        lookup, named = self._category_lookup(category_mapping)
+        in_range = (raw_labels >= 0) & (raw_labels < lookup.shape[0])
+        known = in_range.copy()
+        known[in_range] = named[raw_labels[in_range]]
+        if not known.all():
+            unknown = sorted(set(raw_labels[~known].tolist()))
+            raise ValueError(
+                f"The semantic mask of sample {sample.meta.sample_id} carries the raw indices "
+                f"{unknown}, which the category mapping of the record does not name."
+            )
+        labels[:num_current] = lookup[raw_labels]
+        return sample.replace(segment=SegmentationLabels(labels=labels))
+
+    def _category_lookup(
+        self, category_mapping: CategoryMappingDataModel
+    ) -> tuple[Int64[np.ndarray, " lookup_size"], Bool[np.ndarray, " lookup_size"]]:
+        """Build the raw label lookup table from the category mapping of the record.
+
+        Args:
+            category_mapping: Non empty category mapping of the record.
+
+        Returns:
+            tuple[Int64[np.ndarray, " lookup_size"], Bool[np.ndarray, " lookup_size"]]: Training
+                label per raw label, and whether the mapping names the raw label.
+        """
+        lookup_size = max(category_mapping.category_indices) + 1
         lookup = np.full(lookup_size, fill_value=self.ignore_index, dtype=np.int64)
+        named = np.zeros(lookup_size, dtype=bool)
         for category_name, raw_label in zip(
             category_mapping.category_names, category_mapping.category_indices
         ):
             lookup[raw_label] = self.taxonomy.resolve_index(category_name)
-        return lookup
+            named[raw_label] = True
+        return lookup, named
