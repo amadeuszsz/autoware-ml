@@ -1,11 +1,9 @@
 # @package _global_
 
-# Stage 2 of the seg3d-preserving pipeline (joint-training-issue.md): pretrain
-# on the 120k mixed-ODD base set (det3d GT + pseudo seg3d) with the 4k j6gen2
-# seg3d GT frames rehearsed in (det loss masked). The schedule is shorter and
-# the encoder groups cooler than the joint stage: this stage only pretrains
-# features that stage 3 consumes, and every epoch here is 2x the optimizer
-# steps of a 60k-frame epoch.
+# Stage 2 of the seg3d preserving pipeline: pretraining on the mixed ODD base set, detection
+# ground truth with pseudo segmentation, with the j6gen2 seg3d ground truth frames rehearsed
+# in. The schedule is shorter and the encoder groups cooler than the joint stage, this stage
+# only pretrains the features stage 3 consumes.
 
 defaults:
   - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
@@ -13,11 +11,8 @@ defaults:
   - override /database@database: t4dataset/t4dataset_base_pseudo
   - _self_
 
-# The auto-label generator writes canonical-style category names into the
-# pseudo masks (driveable_flat, non_driveable_flat, vehicle_extension, ignored,
-# ...). Those names are absorbed by the segmentation vocabulary of the database
-# taxonomy, so this stage needs no per-config class remapping and inherits the
-# online taxonomy and the behaviour groups unchanged.
+# The pseudo masks carry the category names of the auto label generator, the segmentation
+# vocabulary of the database absorbs them, so this stage needs no class remapping.
 
 datamodule:
   # Training mixes the pseudo corpus with the rehearsed seg3d GT frames.
@@ -54,8 +49,7 @@ model:
   scheduler:
     warmup_epochs: 2
     decay_epochs: 22
-    # The inherited 10.0 peaked the from-scratch det branch at 1e-3 and the
-    # run diverged into NaN while still ramping (4.3e-4); cap like stage 3.
+    # Caps the peak learning rate of the detection branch trained from scratch
     max_lr_factor: 5.0
 
 trainer:

@@ -1,10 +1,8 @@
 # @package _global_
 
-# Stage 3 of the seg3d-preserving pipeline (joint-training-issue.md): joint
-# training on the 60k j6gen2 base set (det3d GT + pseudo seg3d) with the 4k
-# j6gen2 seg3d GT frames rehearsed in (det loss masked). Initialized from the
-# stage-2 checkpoint, so the det branch is no longer random: warmup shrinks and
-# the total schedule is shorter than a from-scratch joint run.
+# Stage 3 of the seg3d preserving pipeline: joint training on the j6gen2 base set, detection
+# ground truth with pseudo segmentation, with the j6gen2 seg3d ground truth frames rehearsed
+# in. Initialized from the stage 2 checkpoint, so the warmup and the schedule are shorter.
 
 defaults:
   - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
@@ -12,11 +10,8 @@ defaults:
   - override /database@database: t4dataset/t4dataset_j6gen2_base_pseudo
   - _self_
 
-# The auto-label generator writes canonical-style category names into the
-# pseudo masks (driveable_flat, non_driveable_flat, vehicle_extension, ignored,
-# ...). Those names are absorbed by the segmentation vocabulary of the database
-# taxonomy, so this stage needs no per-config class remapping and inherits the
-# online taxonomy and the behaviour groups unchanged.
+# The pseudo masks carry the category names of the auto label generator, the segmentation
+# vocabulary of the database absorbs them, so this stage needs no class remapping.
 
 datamodule:
   # Training mixes the pseudo corpus with the rehearsed seg3d GT frames.

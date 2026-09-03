@@ -1,14 +1,9 @@
 # @package _global_
 
-# Stage 2 of the voxel005 teacher pipeline (seg3d -> THIS -> j6gen2 base
-# pseudo -> j6gen2 joint): pretrain on the 120k mixed-ODD base set (det3d GT +
-# pseudo seg3d) with the j6gen2 seg3d GT frames rehearsed in (det loss masked).
-# Inherits the architecture, geometry, precision, and the offline taxonomy from
-# the j6gen2 joint voxel005 config; the rehearsal database is bound to the same
-# level and pipelines, since every database of a datamodule must share one
-# taxonomy. Schedule and encoder-group learning rates mirror the voxel012 base
-# pseudo stage (initialized from the stage-1 seg3d voxel005 checkpoint; the
-# from-scratch det branch caps at max_lr_factor 5, the inherited 10 diverged).
+# Stage 2 of the voxel005 teacher pipeline: pretraining on the mixed ODD base set, detection
+# ground truth with pseudo segmentation, with the j6gen2 seg3d ground truth frames rehearsed
+# in. Architecture, precision and the offline taxonomy come from the j6gen2 joint voxel005
+# config, and the rehearsal database is bound to the same taxonomy level and pipelines.
 
 defaults:
   - /tasks/multi/ptv3/voxel005_122m_t4dataset_j6gen2
