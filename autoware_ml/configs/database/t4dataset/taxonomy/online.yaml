@@ -102,7 +102,7 @@ segmentation3d:
     grouped_obstacle: [barrier, traffic_cone, debris]
     grouped_static_structure: [manmade, vertical_thin, vegetation]
     grouped_flat_surface: [driveable_flat, non_driveable_flat, curb]
-    grouped_non_physical: [noise]
+    grouped_artifact: [noise]
   # The detection classes come first, in the same order, so a detection class and its
   # segmentation class share one index
   class_names:

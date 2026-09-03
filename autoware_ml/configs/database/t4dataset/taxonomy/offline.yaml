@@ -142,8 +142,7 @@ segmentation3d:
     grouped_flat_surface:
       [driveable_flat, non_driveable_flat.sidewalk, non_driveable_flat.other_flat_surface,
        curb.low_curb, curb.high_curb]
-    grouped_non_physical: [noise.noise, noise.ghost_point]
-    grouped_ego_vehicle: [ego_vehicle]
+    grouped_artifact: [noise.noise, noise.ghost_point, ego_vehicle]
   # The detection classes come first, in the same order, so a detection class and its
   # segmentation class share one index. The ego vehicle is an output of this level only.
   class_names:
