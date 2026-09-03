@@ -32,7 +32,7 @@ class BuildPointFeatures(BaseTransform):
 
     The transform packs the selected feature columns of the point cloud so the model consumes
     exactly the declared layout. Every selected feature must exist, the row order stays
-    untouched, and the current frame block and the lidar source spans are preserved.
+    untouched, and the current frame block is preserved.
     """
 
     _required_fields = ["points"]

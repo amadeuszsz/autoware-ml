@@ -85,7 +85,7 @@ def _rebuild_mixed_sample(
     """Build the mixed sample from the combined features and labels.
 
     Every row of a mixed single frame cloud is a current frame point, so the current frame
-    block covers the whole cloud. Source spans do not survive mixing and are dropped.
+    block covers the whole cloud.
 
     Args:
         sample: Sample the mixed data replaces the task fields of.
@@ -99,7 +99,6 @@ def _rebuild_mixed_sample(
         update={
             "features": features,
             "num_current_points": features.shape[0],
-            "sources": None,
         }
     )
     segment = sample.segment.model_copy(update={"labels": labels})
