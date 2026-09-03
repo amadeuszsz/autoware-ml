@@ -100,10 +100,6 @@ class T4RecordsGenerator:
         self.segmentation_taxonomy = segmentation_taxonomy
         self.recompute_boxes3d_lidar_points_num = recompute_boxes3d_lidar_points_num
         self.num_features = scenario_data.lidar_pointcloud_num_features
-        if scenario_data.sample_steps < 1:
-            raise ValueError(f"sample_steps must be at least 1, got {scenario_data.sample_steps}.")
-        if scenario_data.max_sweeps < 0:
-            raise ValueError(f"max_sweeps must not be negative, got {scenario_data.max_sweeps}.")
 
         self.scene_dir = (
             f"{scenario_data.dataset_name}/{scenario_data.scenario_id}/"

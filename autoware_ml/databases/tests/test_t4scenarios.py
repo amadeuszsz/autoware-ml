@@ -36,8 +36,13 @@ def _params(**overrides) -> DatasetParams:
     return DatasetParams(**settings)
 
 
-def _scenarios(tmp_path, entries: dict, params: DatasetParams | None = None) -> T4Scenarios:
+def _write_list(tmp_path, entries: dict) -> None:
     (tmp_path / "db_a.yaml").write_text(yaml.safe_dump(entries), encoding="utf-8")
+
+
+def _scenarios(tmp_path, entries: dict, params: DatasetParams | None = None) -> T4Scenarios:
+    # A scenario list names every split, the tests spell out only the ones they fill
+    _write_list(tmp_path, {"train": [], "val": [], "test": [], **entries})
     return T4Scenarios(scenario_root_path=tmp_path, dataset_params=[params or _params()])
 
 
@@ -78,6 +83,35 @@ def test_a_malformed_entry_is_rejected(tmp_path) -> None:
 def test_a_missing_scenario_list_is_rejected(tmp_path) -> None:
     with pytest.raises(FileNotFoundError, match="does not exist"):
         T4Scenarios(scenario_root_path=tmp_path, dataset_params=[_params()])
+
+
+def test_a_list_must_name_every_split_with_string_entries(tmp_path) -> None:
+    _write_list(tmp_path, {"train": ["abc/1"], "val": []})
+    with pytest.raises(ValidationError, match="names no test split"):
+        T4Scenarios(scenario_root_path=tmp_path, dataset_params=[_params()])
+
+    _write_list(tmp_path, {"train": ["abc/1"], "val": None, "test": []})
+    with pytest.raises(ValidationError, match="must be a list of scenario entries, got NoneType"):
+        T4Scenarios(scenario_root_path=tmp_path, dataset_params=[_params()])
+
+    _write_list(tmp_path, {"train": [{"abc": 1}], "val": [], "test": []})
+    with pytest.raises(ValidationError, match="non string entry"):
+        T4Scenarios(scenario_root_path=tmp_path, dataset_params=[_params()])
+
+
+def test_a_list_may_carry_metadata_keys_besides_the_splits(tmp_path) -> None:
+    scenarios = _scenarios(tmp_path, {"train": ["abc/1"], "version": 3, "amount": [{"total": 9}]})
+
+    assert len(scenarios.scenario_data[SplitType.TRAIN]) == 1
+
+
+def test_dataset_parameters_are_validated_at_construction() -> None:
+    with pytest.raises(ValidationError, match="sample_steps"):
+        _params(sample_steps=0)
+    with pytest.raises(ValidationError, match="max_sweeps"):
+        _params(max_sweeps=-1)
+    with pytest.raises(ValidationError, match="lidar_pointcloud_num_features"):
+        _params(lidar_pointcloud_num_features=2)
 
 
 def test_the_string_form_covers_every_parameter(tmp_path) -> None:

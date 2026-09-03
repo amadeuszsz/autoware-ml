@@ -25,7 +25,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Mapping, Sequence
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 from autoware_ml.types.dataset import SplitType
 
@@ -69,9 +69,9 @@ class DatasetParams(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True)
 
     dataset_name: str
-    max_sweeps: int
-    sample_steps: int
-    lidar_pointcloud_num_features: int
+    max_sweeps: int = Field(ge=0)
+    sample_steps: int = Field(ge=1)
+    lidar_pointcloud_num_features: int = Field(ge=3)
     semantic_masks: bool = False
 
     def __str__(self) -> str:

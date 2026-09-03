@@ -93,7 +93,8 @@ def write_scenario_list(
     dataset_name: str = FAKE_DATASET_NAME,
 ) -> Path:
     """
-    Write a scenario list in the perception-devops yaml form.
+    Write a scenario list in the perception-devops yaml form, every split named, a split
+    absent from the mapping written empty.
 
     Args:
       directory: Directory receiving the yaml file.
@@ -107,8 +108,8 @@ def write_scenario_list(
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{dataset_name}.yaml"
     entries = {
-        split: [f"{scenario_id}/{SCENARIO_VERSION}" for scenario_id in scenario_ids]
-        for split, scenario_ids in splits.items()
+        split: [f"{scenario_id}/{SCENARIO_VERSION}" for scenario_id in splits.get(split, [])]
+        for split in ("train", "val", "test")
     }
     path.write_text(yaml.safe_dump(entries), encoding="utf-8")
     return path

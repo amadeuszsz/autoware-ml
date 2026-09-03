@@ -108,7 +108,9 @@ class T4Scenarios(Scenarios):
         self, db_scenarios: Mapping[str, Sequence[str]], dataset_params: DatasetParams
     ) -> Mapping[SplitType, Sequence[ScenarioData]]:
         """
-        Build the scenario data of every split from one scenario list.
+        Build the scenario data of every split from one scenario list. The list names every
+        split with a list of string entries, an empty list for a split without scenarios, and
+        may carry metadata keys besides the splits.
 
         Args:
           db_scenarios: Dictionary of split name to scenario entries.
@@ -120,16 +122,25 @@ class T4Scenarios(Scenarios):
 
         scenario_splits: dict[SplitType, list[ScenarioData]] = {}
         for split in _SPLITS:
-            entries = db_scenarios.get(split.value, [])
-            if entries is None:
-                entries = []
-            if not isinstance(entries, Sequence) or isinstance(entries, str):
+            if split.value not in db_scenarios:
+                raise ValueError(
+                    f"The scenario list of dataset {dataset_params.dataset_name} names no "
+                    f"{split.value} split."
+                )
+            entries = db_scenarios[split.value]
+            if not isinstance(entries, list):
                 raise ValueError(
                     f"Split {split.value} of dataset {dataset_params.dataset_name} must be a list "
                     f"of scenario entries, got {type(entries).__name__}."
                 )
+            for entry in entries:
+                if not isinstance(entry, str):
+                    raise ValueError(
+                        f"Split {split.value} of dataset {dataset_params.dataset_name} holds the "
+                        f"non string entry {entry!r}."
+                    )
             scenario_splits[split] = [
-                self._build_scenario_data(scenario_entry=str(entry), dataset_params=dataset_params)
+                self._build_scenario_data(scenario_entry=entry, dataset_params=dataset_params)
                 for entry in entries
             ]
         return scenario_splits
