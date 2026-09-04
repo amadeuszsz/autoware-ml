@@ -144,6 +144,9 @@ def get_predict_batch(
 ) -> "ProcessedBatch":
     """Load one prediction batch and apply transfer-time preprocessing.
 
+    The datamodule runs outside a Trainer here, so the hooks follow the Trainer order: the
+    record tables are generated before the prediction split is set up.
+
     Args:
         datamodule: Data module serving the prediction split.
         model: Model owning the runtime preprocessing.
@@ -152,6 +155,7 @@ def get_predict_batch(
     Returns:
         The processed batch on the target device.
     """
+    datamodule.prepare_data()
     datamodule.setup("predict")
     predict_dataloader = datamodule.predict_dataloader()
     batch = next(iter(predict_dataloader))
