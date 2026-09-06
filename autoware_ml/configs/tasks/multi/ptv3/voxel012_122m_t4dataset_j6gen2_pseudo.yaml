@@ -2,7 +2,8 @@
 
 # Stage 3 of the seg3d preserving pipeline: joint training on the pseudo labelled j6gen2 set, detection
 # ground truth with pseudo segmentation, with the j6gen2 seg3d ground truth frames rehearsed
-# in. Initialized from the stage 2 checkpoint, so the warmup and the schedule are shorter.
+# in. Initialized from the stage 2 checkpoint, so the warmup is short and every learning rate
+# sits below the stage that produced those weights.
 
 defaults:
   - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
@@ -38,14 +39,31 @@ datamodule:
   test_sources: ${datamodule.val_sources}
 
 model:
+  # Both branches arrive trained from stage 2, so the encoder groups stay below the stage 2
+  # rates and the detection branch drops the peak it needed while it was learning from scratch.
+  # Without these overrides the leaf inherits the from-scratch rates of the base config and
+  # fine tunes the encoder twice as fast as the stage that trained it.
+  optimizer_group_overrides:
+    encoder_block:
+      lr: 0.00001
+    encoder_default:
+      lr: 0.000025
+    seg3d_head:
+      lr: 0.00005
   scheduler:
-    warmup_epochs: 4
-    decay_epochs: 36
-    max_lr_factor: 5.0
+    warmup_epochs: 2
+    # Warmup plus decay has to cover max_epochs, the cosine turns back upwards beyond it.
+    decay_epochs: 38
+    max_lr_factor: 2.0
 
 trainer:
   max_epochs: 40
 
 callbacks:
+  # Segmentation quality is what this stage hands to stage 4, and it contributes a few percent
+  # of val/loss, so the checkpoint is selected on the segmentation metric directly.
+  model_checkpoint:
+    monitor: val/seg3d/mIoU
+    mode: max
   early_stopping:
     patience: 40
