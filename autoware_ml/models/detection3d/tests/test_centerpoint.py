@@ -20,11 +20,16 @@ import math
 
 import torch
 
+from autoware_ml.datamodule.samples.batch import Batch, Boxes3DBatch
 from autoware_ml.models.detection3d.backbones.second import SECONDBackbone
 from autoware_ml.models.detection3d.centerpoint import CenterPointDetectionModel
 from autoware_ml.models.detection3d.encoders.pillar import PillarFeatureNet, PointPillarsScatter
 from autoware_ml.models.detection3d.heads.centerpoint import CenterHead
 from autoware_ml.models.detection3d.necks.second_fpn import SECONDFPN
+from autoware_ml.models.detection3d.outputs import Detection3DPrediction
+from autoware_ml.models.detection3d.tests.ptv3_detection_fixtures import make_frame_meta
+from autoware_ml.preprocessing.base import ProcessedBatch
+from autoware_ml.preprocessing.detection3d.point_pillar import PillarInputs
 
 
 def _build_model(use_velocity: bool = True) -> CenterPointDetectionModel:
@@ -60,6 +65,54 @@ def _build_model(use_velocity: bool = True) -> CenterPointDetectionModel:
             post_max_size=10,
             nms_min_radius=1.0,
             use_velocity=use_velocity,
+        ),
+    )
+
+
+def _build_voxel_inputs() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    voxels = torch.randn(12, 5, 5)
+    num_points = torch.randint(1, 5, (12,), dtype=torch.int32)
+    voxel_coords = torch.randint(0, 8, (12, 4), dtype=torch.int32)
+    voxel_coords[:, 0] = 0
+    return voxels, num_points, voxel_coords
+
+
+def _pillar_processed(
+    voxels: torch.Tensor,
+    num_points: torch.Tensor,
+    voxel_coords: torch.Tensor,
+    batch: Batch | None = None,
+) -> ProcessedBatch:
+    """Wrap hand-built voxelizer outputs as a processed batch."""
+    if batch is None:
+        batch = Batch(meta=make_frame_meta(1))
+    point_voxel_indices = torch.repeat_interleave(
+        torch.arange(voxels.shape[0], dtype=torch.long), voxels.shape[1]
+    )
+    return ProcessedBatch(
+        batch=batch,
+        inputs=(
+            PillarInputs(
+                voxels=voxels,
+                num_points=num_points,
+                voxel_coords=voxel_coords,
+                point_voxel_indices=point_voxel_indices,
+                num_dropped_voxels=torch.tensor(0),
+            ),
+        ),
+    )
+
+
+def _detection_batch() -> Batch:
+    """Return a one-frame typed batch carrying one ground-truth box."""
+    gt_boxes = torch.tensor([[2.0, 3.0, 0.2, 4.0, 1.6, 1.5, 0.25, 0.5, -0.1]], dtype=torch.float32)
+    return Batch(
+        meta=make_frame_meta(1),
+        boxes=Boxes3DBatch(
+            params=(gt_boxes,),
+            labels=(torch.tensor([0], dtype=torch.long),),
+            names=(("car",),),
+            num_lidar_points=(torch.tensor([10], dtype=torch.long),),
         ),
     )
 
@@ -122,42 +175,31 @@ class TestCenterPointTargets:
 
         predictions = head.predict(outputs)
 
-        assert predictions[0]["bboxes_3d"].shape == (1, 7)
+        assert predictions[0].bboxes_3d.shape == (1, 7)
         assert torch.allclose(
-            predictions[0]["bboxes_3d"][0, 3:6],
+            predictions[0].bboxes_3d[0, 3:6],
             torch.tensor([4.0, 1.6, 1.5]),
         )
 
     def test_centerpoint_loss_and_predict_run(self) -> None:
         model = _build_model()
-        voxels = torch.randn(12, 5, 5)
-        num_points = torch.randint(1, 5, (12,), dtype=torch.int32)
-        voxel_coords = torch.randint(0, 8, (12, 4), dtype=torch.int32)
-        voxel_coords[:, 0] = 0
-        outputs = model(voxels=voxels, num_points=num_points, voxel_coords=voxel_coords)
-        gt_boxes = [
-            torch.tensor([[2.0, 3.0, 0.2, 4.0, 1.6, 1.5, 0.25, 0.5, -0.1]], dtype=torch.float32)
-        ]
-        gt_labels = [torch.tensor([0], dtype=torch.long)]
+        voxels, num_points, voxel_coords = _build_voxel_inputs()
+        processed = _pillar_processed(voxels, num_points, voxel_coords, batch=_detection_batch())
 
-        metrics = model.compute_metrics({"gt_boxes": gt_boxes, "gt_labels": gt_labels}, outputs)
+        outputs = model(**model.bind_forward_inputs(processed))
+        metrics = model.compute_metrics(processed, outputs)
         predictions = model.bbox_head.predict(outputs)
 
         assert "loss" in metrics
         assert outputs["heatmap"].shape[:2] == (1, 2)
         assert isinstance(predictions, list)
-        assert set(predictions[0]) == {"bboxes_3d", "scores_3d", "labels_3d"}
+        assert isinstance(predictions[0], Detection3DPrediction)
 
     def test_centerpoint_builds_split_deployment_specs(self) -> None:
         model = _build_model().eval()
-        voxels = torch.randn(12, 5, 5)
-        num_points = torch.randint(1, 5, (12,), dtype=torch.int32)
-        voxel_coords = torch.randint(0, 8, (12, 4), dtype=torch.int32)
-        voxel_coords[:, 0] = 0
+        processed = _pillar_processed(*_build_voxel_inputs())
 
-        specs = model.build_export_specs(
-            {"voxels": voxels, "num_points": num_points, "voxel_coords": voxel_coords}
-        )
+        specs = model.build_export_specs(processed)
 
         assert list(specs) == [
             "pts_voxel_encoder_centerpoint",
@@ -178,14 +220,9 @@ class TestCenterPointTargets:
 
     def test_export_specs_follow_head_velocity_configuration(self) -> None:
         model = _build_model(use_velocity=False).eval()
-        voxels = torch.randn(12, 5, 5)
-        num_points = torch.randint(1, 5, (12,), dtype=torch.int32)
-        voxel_coords = torch.randint(0, 8, (12, 4), dtype=torch.int32)
-        voxel_coords[:, 0] = 0
+        processed = _pillar_processed(*_build_voxel_inputs())
 
-        specs = model.build_export_specs(
-            {"voxels": voxels, "num_points": num_points, "voxel_coords": voxel_coords}
-        )
+        specs = model.build_export_specs(processed)
 
         head_spec = specs["pts_backbone_neck_head_centerpoint"]
         assert head_spec.output_names == ["heatmap", "reg", "height", "dim", "rot"]
@@ -290,6 +327,6 @@ def test_centerhead_uses_natural_dimension_order() -> None:
     predictions = head.predict(outputs)
 
     assert torch.allclose(
-        predictions[0]["bboxes_3d"][0, 3:6],
+        predictions[0].bboxes_3d[0, 3:6],
         torch.tensor([4.0, 1.6, 1.5]),
     )

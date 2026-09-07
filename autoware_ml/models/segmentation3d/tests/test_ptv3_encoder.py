@@ -11,6 +11,18 @@ import torch
 import torch.nn as nn
 
 import autoware_ml.utils.point_cloud.structures as point_structures
+from autoware_ml.datamodule.samples.batch import (
+    Batch,
+    FrameMetaBatch,
+    PointCloudBatch,
+    SegmentationBatch,
+)
+from autoware_ml.models.detection3d.tests.ptv3_detection_fixtures import (
+    PTV3_FEATURE_NAMES,
+    build_processed,
+    build_ptv3_encoder,
+    build_seg_head,
+)
 from autoware_ml.models.segmentation3d.encoders.ptv3 import (
     Point,
     PointSequential,
@@ -20,7 +32,12 @@ from autoware_ml.models.segmentation3d.encoders.ptv3 import (
     build_serialized_pooling_meta,
 )
 from autoware_ml.models.segmentation3d.encoders.voxel import MeanVoxelFeatureEncoder
-from autoware_ml.models.segmentation3d.heads.ptv3 import check_voxel_budget
+from autoware_ml.models.segmentation3d.heads.ptv3 import (
+    check_voxel_budget,
+    segmentation_eval_output,
+    segmentation_point_loss,
+    segmentation_predict_outputs,
+)
 from autoware_ml.models.segmentation3d.ptv3 import (
     PTv3SegmentationModel,
     _PTv3SegmentationExportModule,
@@ -30,12 +47,8 @@ from autoware_ml.models.segmentation3d.ptv3_base import (
     validate_serialization_geometry,
 )
 from autoware_ml.ops.spconv.availability import IS_SPCONV_AVAILABLE
-from autoware_ml.models.detection3d.tests.ptv3_detection_fixtures import (
-    build_inputs,
-    build_ptv3_encoder,
-    build_seg_head,
-    move_batch_to_device,
-)
+from autoware_ml.preprocessing.base import ProcessedBatch
+from autoware_ml.preprocessing.detection3d.point_pillar import PillarInputs
 
 
 def test_serialized_attention_requires_supported_flash_configuration() -> None:
@@ -337,12 +350,49 @@ def test_point_sequential_skips_dense_module_on_empty_sparse_tensor() -> None:
     assert output.features.shape == (0, 4)
 
 
-def test_compute_metrics_and_eval_output_work_at_the_point_level() -> None:
+def _seg_processed(
+    point_frames: list[torch.Tensor],
+    point_voxel_indices: torch.Tensor,
+    segment_frames: list[torch.Tensor] | None = None,
+    num_dropped_voxels: int = 0,
+) -> ProcessedBatch:
+    """Wrap per-frame points and hand-built voxelizer outputs as a processed batch."""
+    batch_size = len(point_frames)
+    batch = Batch(
+        meta=FrameMetaBatch(
+            sample_ids=tuple(f"sample-{index}" for index in range(batch_size)),
+            scene_tokens=None,
+            timestamps=tuple(0.0 for _ in range(batch_size)),
+            ego2globals=None,
+            prev_exists=None,
+        ),
+        point_cloud=PointCloudBatch(
+            features=tuple(point_frames),
+            feature_names=PTV3_FEATURE_NAMES,
+            num_current_points=None,
+        ),
+        segmentation=SegmentationBatch(labels=tuple(segment_frames))
+        if segment_frames is not None
+        else None,
+    )
+    num_voxels = int(point_voxel_indices.max()) + 1 if point_voxel_indices.numel() else 0
+    return ProcessedBatch(
+        batch=batch,
+        inputs=(
+            PillarInputs(
+                voxels=torch.zeros((num_voxels, 1, point_frames[0].shape[1])),
+                num_points=torch.ones(num_voxels, dtype=torch.int32),
+                voxel_coords=torch.zeros((num_voxels, 4), dtype=torch.int32),
+                point_voxel_indices=point_voxel_indices,
+                num_dropped_voxels=torch.tensor(num_dropped_voxels),
+            ),
+        ),
+    )
+
+
+def test_point_loss_and_eval_output_work_at_the_point_level() -> None:
     """Losses use every point's voxel logits; eval keeps current-frame points only."""
-    model = PTv3SegmentationModel.__new__(PTv3SegmentationModel)
-    torch.nn.Module.__init__(model)
-    model.time_lag_dim = 4
-    model.seg3d_head = build_seg_head(num_classes=3, dec_depths=(0,))
+    head = build_seg_head(num_classes=3, dec_depths=(0,))
 
     voxel_logits = torch.tensor(
         [
@@ -361,19 +411,18 @@ def test_compute_metrics_and_eval_output_work_at_the_point_level() -> None:
         ],
         dtype=torch.float32,
     )
-    batch = {
-        "points": [points],
-        "point_voxel_indices": torch.tensor([0, 1, 1], dtype=torch.long),
-        "num_dropped_voxels": torch.tensor(0),
-        "segment": torch.tensor([0, 1, -1], dtype=torch.long),
-    }
+    processed = _seg_processed(
+        [points],
+        torch.tensor([0, 1, 1], dtype=torch.long),
+        segment_frames=[torch.tensor([0, 1, -1], dtype=torch.long)],
+    )
 
-    metrics = PTv3SegmentationModel.compute_metrics(model, batch, voxel_logits)
+    metrics = segmentation_point_loss(head, voxel_logits, processed)
 
     assert set(metrics) == {"loss", "loss_ce", "loss_lovasz"}
     assert metrics["loss"] > 0
 
-    eval_out = PTv3SegmentationModel.build_eval_output(model, batch, voxel_logits)
+    eval_out = segmentation_eval_output(voxel_logits, processed)
     (frame,) = eval_out["seg_frames"]
     assert torch.equal(frame["pred"], torch.tensor([0, 1]))
     assert torch.equal(frame["target"], torch.tensor([0, 1]))
@@ -389,54 +438,40 @@ def test_voxel_budget_overflow_raises() -> None:
 
 def test_points_outside_the_voxel_grid_are_excluded_from_loss_and_eval() -> None:
     """A point without a voxel (outside the grid) neither supervises nor gets scored."""
-    model = PTv3SegmentationModel.__new__(PTv3SegmentationModel)
-    torch.nn.Module.__init__(model)
-    model.time_lag_dim = 4
-    model.seg3d_head = build_seg_head(num_classes=3, dec_depths=(0,))
+    head = build_seg_head(num_classes=3, dec_depths=(0,))
     voxel_logits = torch.tensor([[3.0, 0.1, 0.2], [0.2, 2.5, 0.1]], dtype=torch.float32)
     points = torch.zeros((3, 5), dtype=torch.float32)
-    batch = {
-        "points": [points],
-        "point_voxel_indices": torch.tensor([0, -1, 1], dtype=torch.long),
-        "num_dropped_voxels": torch.tensor(0),
-        "segment": torch.tensor([0, 2, 1], dtype=torch.long),
-    }
-    reference = {
-        "points": [points[[0, 2]]],
-        "point_voxel_indices": torch.tensor([0, 1], dtype=torch.long),
-        "num_dropped_voxels": torch.tensor(0),
-        "segment": torch.tensor([0, 1], dtype=torch.long),
-    }
+    processed = _seg_processed(
+        [points],
+        torch.tensor([0, -1, 1], dtype=torch.long),
+        segment_frames=[torch.tensor([0, 2, 1], dtype=torch.long)],
+    )
+    reference = _seg_processed(
+        [points[[0, 2]]],
+        torch.tensor([0, 1], dtype=torch.long),
+        segment_frames=[torch.tensor([0, 1], dtype=torch.long)],
+    )
 
-    metrics = PTv3SegmentationModel.compute_metrics(model, batch, voxel_logits)
-    expected = PTv3SegmentationModel.compute_metrics(model, reference, voxel_logits)
+    metrics = segmentation_point_loss(head, voxel_logits, processed)
+    expected = segmentation_point_loss(head, voxel_logits, reference)
     assert torch.allclose(metrics["loss"], expected["loss"])
 
-    (frame,) = PTv3SegmentationModel.build_eval_output(model, batch, voxel_logits)["seg_frames"]
+    (frame,) = segmentation_eval_output(voxel_logits, processed)["seg_frames"]
     assert torch.equal(frame["pred"], torch.tensor([0, 1]))
     assert torch.equal(frame["target"], torch.tensor([0, 1]))
 
 
 def test_predict_outputs_reconstructs_current_frame_point_predictions() -> None:
     """predict_outputs scatters voxel logits to the current-frame source points only."""
-    model = PTv3SegmentationModel.__new__(PTv3SegmentationModel)
-    torch.nn.Module.__init__(model)
-    model.time_lag_dim = 4
-
     voxel_logits = torch.tensor([[4.0, 0.1], [0.1, 5.0]], dtype=torch.float32)
     point_voxel_indices = torch.tensor([0, 1, 0, 1], dtype=torch.long)
     points = torch.zeros((4, 5), dtype=torch.float32)
     # the last point comes from an earlier sweep and gets no prediction
     points[3, 4] = 0.1
 
-    predictions = PTv3SegmentationModel.predict_outputs(
-        model,
-        {
-            "points": [points[:2], points[2:]],
-            "point_voxel_indices": point_voxel_indices,
-            "num_dropped_voxels": torch.tensor(0),
-        },
+    predictions = segmentation_predict_outputs(
         voxel_logits,
+        _seg_processed([points[:2], points[2:]], point_voxel_indices),
     )
 
     assert torch.equal(predictions["pred_labels"], torch.tensor([0, 1, 0]))
@@ -620,14 +655,13 @@ def test_ptv3_frozen_encoder_supports_decoder_block_backward() -> None:
         seg3d_head=build_seg_head(),
         freeze_encoder=True,
         grid_size=1.0,
-        time_lag_dim=4,
         point_cloud_range=[0.0, 0.0, -2.0, 8.0, 8.0, 2.0],
     ).cuda()
-    batch = move_batch_to_device(build_inputs(), torch.device("cuda"))
+    processed = build_processed(device=torch.device("cuda"))
 
-    logits = model(**batch)
+    logits = model(**model.bind_forward_inputs(processed))
     logits.sum().backward()
-    assert logits.shape == (batch["voxels"].shape[0], 3)
+    assert logits.shape == (processed.resolve("voxels").shape[0], 3)
 
     assert all(p.grad is None for p in model.encoder.parameters())
     assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.seg3d_head.parameters())

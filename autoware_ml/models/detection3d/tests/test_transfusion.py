@@ -11,6 +11,7 @@ import torch
 from omegaconf import OmegaConf
 from onnx import TensorProto
 
+from autoware_ml.datamodule.samples.batch import Batch
 from autoware_ml.models.detection3d.backbones.second import SECONDBackbone
 from autoware_ml.models.detection3d.encoders.sparse import SparseConv3d as NativeSparseConv3d
 from autoware_ml.models.detection3d.encoders.sparse import SubMConv3d as NativeSubMConv3d
@@ -27,9 +28,12 @@ from autoware_ml.models.detection3d.task_modules.match_costs import (
     ClassificationCost,
     IoU3DCost,
 )
+from autoware_ml.models.detection3d.tests.ptv3_detection_fixtures import make_frame_meta
 from autoware_ml.models.detection3d.transfusion import TransFusionDetectionModel
 from autoware_ml.ops.spconv.availability import IS_SPCONV_AVAILABLE
 from autoware_ml.ops.spconv.sparse_conv import SubMConv3d as ExportableSubMConv3d
+from autoware_ml.preprocessing.base import ProcessedBatch
+from autoware_ml.preprocessing.detection3d.point_pillar import PillarInputs
 from autoware_ml.utils.onnx_precision import validate_module_onnx_precision
 
 # Scaled-down mirror of tasks/detection3d/transfusion/base.yaml: an 8 m range
@@ -130,6 +134,27 @@ def _build_voxel_inputs(device: torch.device) -> dict[str, torch.Tensor]:
     }
 
 
+def _processed_voxel_inputs(device: torch.device) -> ProcessedBatch:
+    """Wrap the hand-built voxelizer outputs as a processed batch."""
+    inputs = _build_voxel_inputs(device)
+    point_voxel_indices = torch.repeat_interleave(
+        torch.arange(inputs["voxels"].shape[0], dtype=torch.long, device=device),
+        inputs["voxels"].shape[1],
+    )
+    return ProcessedBatch(
+        batch=Batch(meta=make_frame_meta(1)),
+        inputs=(
+            PillarInputs(
+                voxels=inputs["voxels"],
+                num_points=inputs["num_points"],
+                voxel_coords=inputs["voxel_coords"],
+                point_voxel_indices=point_voxel_indices,
+                num_dropped_voxels=torch.tensor(0, device=device),
+            ),
+        ),
+    )
+
+
 def _build_head(**kwargs) -> TransFusionHead:
     assigner = kwargs.pop(
         "assigner",
@@ -217,7 +242,7 @@ def test_transfusion_forward_returns_query_predictions() -> None:
 def test_transfusion_build_export_spec_uses_deployment_io_contract() -> None:
     model = _build_model().cuda().eval()
 
-    spec = model.build_export_spec(_build_voxel_inputs(torch.device("cuda")))
+    spec = model.build_export_spec(_processed_voxel_inputs(torch.device("cuda")))
     with torch.no_grad():
         cls_score0, bbox_pred0, dir_cls_pred0 = spec.module(*spec.args)
 
@@ -232,7 +257,7 @@ def test_transfusion_build_export_spec_uses_deployment_io_contract() -> None:
 def test_transfusion_build_export_spec_prepares_modules_without_mutating_model() -> None:
     model = _build_model().eval()
 
-    spec = model.build_export_spec(_build_voxel_inputs(torch.device("cpu")))
+    spec = model.build_export_spec(_processed_voxel_inputs(torch.device("cpu")))
 
     assert isinstance(model.bbox_head.decoder[0].self_attn, torch.nn.MultiheadAttention)
     assert isinstance(spec.module.bbox_head.decoder[0].self_attn, ExportableMultiheadAttention)
@@ -327,7 +352,7 @@ def test_transfusion_predict_reweights_scores_by_query_labels() -> None:
 
     predictions = head.predict(outputs)
 
-    assert predictions[0]["labels_3d"].tolist() == [0, 1]
+    assert predictions[0].labels_3d.tolist() == [0, 1]
 
 
 def test_transfusion_predict_skips_circle_nms_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -352,7 +377,7 @@ def test_transfusion_predict_skips_circle_nms_by_default(monkeypatch: pytest.Mon
 
     predictions = head.predict(outputs)
 
-    assert predictions[0]["scores_3d"].shape[0] == 2
+    assert predictions[0].scores_3d.shape[0] == 2
 
 
 def test_transfusion_predict_applies_circle_nms_when_requested(
@@ -380,7 +405,7 @@ def test_transfusion_predict_applies_circle_nms_when_requested(
 
     predictions = head.predict(outputs)
 
-    assert predictions[0]["scores_3d"].shape[0] == 1
+    assert predictions[0].scores_3d.shape[0] == 1
 
 
 def test_transfusion_targets_use_raw_logits_for_assignment() -> None:
@@ -559,10 +584,8 @@ def test_transfusion_nms_groups_cap_zero_radius_groups_by_score() -> None:
     predictions = head.predict(outputs)
 
     # Both queries are class 0; the group cap keeps only the highest score.
-    assert predictions[0]["scores_3d"].shape[0] == 1
-    assert torch.isclose(
-        predictions[0]["scores_3d"][0], torch.sigmoid(torch.tensor(8.0)), atol=1e-4
-    )
+    assert predictions[0].scores_3d.shape[0] == 1
+    assert torch.isclose(predictions[0].scores_3d[0], torch.sigmoid(torch.tensor(8.0)), atol=1e-4)
 
 
 def test_transfusion_coder_supports_per_class_score_thresholds() -> None:

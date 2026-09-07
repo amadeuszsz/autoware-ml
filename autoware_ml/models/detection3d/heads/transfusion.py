@@ -29,6 +29,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from autoware_ml.models.detection3d.outputs import Detection3DPrediction
 from autoware_ml.losses.detection3d.focal import SigmoidFocalLoss
 from autoware_ml.losses.detection3d.gaussian_focal import GaussianFocalLoss
 from autoware_ml.models.common.layers.conv import ConvModule
@@ -714,7 +715,7 @@ class TransFusionHead(nn.Module):
         outputs["query_labels"] = top_classes
         return outputs
 
-    def predict(self, outputs: dict[str, torch.Tensor]) -> list[dict[str, torch.Tensor]]:
+    def predict(self, outputs: dict[str, torch.Tensor]) -> list[Detection3DPrediction]:
         """Decode predictions into metric-space boxes.
 
         Args:
@@ -757,7 +758,9 @@ class TransFusionHead(nn.Module):
             scores = prediction["scores"]
             labels = prediction["labels"]
             if boxes.numel() == 0:
-                results.append({"bboxes_3d": boxes, "scores_3d": scores, "labels_3d": labels})
+                results.append(
+                    Detection3DPrediction(bboxes_3d=boxes, scores_3d=scores, labels_3d=labels)
+                )
                 continue
             if self.nms_type is None:
                 kept_indices = torch.arange(scores.shape[0], device=scores.device)
@@ -768,11 +771,11 @@ class TransFusionHead(nn.Module):
                     f"Unsupported TransFusion NMS type at runtime: {self.nms_type!r}"
                 )
             results.append(
-                {
-                    "bboxes_3d": boxes[kept_indices],
-                    "scores_3d": scores[kept_indices],
-                    "labels_3d": labels[kept_indices],
-                }
+                Detection3DPrediction(
+                    bboxes_3d=boxes[kept_indices],
+                    scores_3d=scores[kept_indices],
+                    labels_3d=labels[kept_indices],
+                )
             )
         return results
 

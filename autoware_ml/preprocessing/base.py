@@ -12,69 +12,142 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Base classes for GPU-oriented batch preprocessing pipelines.
+"""Base classes for GPU oriented batch preprocessing pipelines.
 
-This module defines the shared preprocessing interface used between dataloaders
-and model forward passes.
+The preprocessing pipeline runs after batch transfer and derives the model family specific
+input tensors from the typed batch, for example voxel grids or frustum projections. Its
+product wraps the batch together with the derived inputs, and the model binds its forward
+parameters against both by name.
 """
+
+from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
+
+from autoware_ml.datamodule.samples.batch import Batch
+
+
+class ModelInputs(BaseModel):
+    """Base class for the typed inputs a preprocessing layer derives from a batch.
+
+    Subclasses declare the tensors of one model family as fields. Field names are the
+    parameter names the model forwards bind against.
+    """
+
+    model_config = ConfigDict(frozen=True, strict=True, arbitrary_types_allowed=True)
+
+
+class ProcessedBatch(BaseModel):
+    """Typed batch together with the derived model inputs.
+
+    The models resolve their forward parameters against this object: derived inputs first,
+    then the flat batch properties. Everything the training, evaluation, and export paths
+    consume flows through here.
+
+    Attributes:
+      batch: The collated typed batch.
+      inputs: Derived model inputs, one entry per preprocessing layer.
+    """
+
+    model_config = ConfigDict(frozen=True, strict=True, arbitrary_types_allowed=True)
+
+    batch: Batch
+    inputs: tuple[ModelInputs, ...] = ()
+
+    def resolve(self, name: str) -> Any:
+        """Resolve one value by name from the derived inputs or the batch.
+
+        Args:
+          name: Field name of a derived input or property name of the batch.
+
+        Returns:
+          Any: The resolved value.
+
+        Raises:
+          AttributeError: When no derived input and no batch property carries the name.
+          ValueError: When the name resolves to an absent optional batch field.
+        """
+        for inputs in self.inputs:
+            if name in type(inputs).model_fields:
+                return getattr(inputs, name)
+        if not hasattr(self.batch, name):
+            raise AttributeError(
+                f"'{name}' is neither a derived model input "
+                f"({self.available_input_names()}) nor a batch property."
+            )
+        value = getattr(self.batch, name)
+        if value is None:
+            raise ValueError(
+                f"'{name}' is not available on this batch. The pipeline did not produce the "
+                f"task field backing it."
+            )
+        return value
+
+    def has(self, name: str) -> bool:
+        """Check whether a name resolves to an available value.
+
+        Args:
+          name: Field name of a derived input or property name of the batch.
+
+        Returns:
+          bool: True when resolve would succeed.
+        """
+        for inputs in self.inputs:
+            if name in type(inputs).model_fields:
+                return True
+        return hasattr(self.batch, name) and getattr(self.batch, name) is not None
+
+    def available_input_names(self) -> tuple[str, ...]:
+        """List the field names of every derived input.
+
+        Returns:
+          tuple[str, ...]: Field names of the derived inputs.
+        """
+        names: list[str] = []
+        for inputs in self.inputs:
+            names.extend(type(inputs).model_fields)
+        return tuple(names)
 
 
 class DataPreprocessing:
     """Apply a sequence of preprocessing layers to a collated batch.
 
-    This runtime pipeline runs after batch transfer, enabling hardware-accelerated
-    preprocessing operations like voxelization, projection, and format conversion
-    without registering the pipeline as part of the neural network.
-
-    The pipeline follows a dict-in/dict-out pattern where each layer receives the
-    current batch dictionary and returns updates to merge into it.
-
-    Args:
-        pipeline: List of callable layers to apply sequentially. Each layer
-            should accept ``(dict[str, Any], *, is_training: bool)`` and return
-            ``dict[str, Any]``.
-
-    Example:
-        ```python
-        preprocessing = DataPreprocessing(
-            pipeline=[
-                Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ]
-        )
-        batch = preprocessing(batch)  # Applied on GPU
-        ```
+    This runtime pipeline runs after batch transfer, enabling hardware accelerated
+    preprocessing such as voxelization without registering the layers as part of the neural
+    network. Every layer receives the typed batch and returns one ModelInputs instance.
     """
 
     def __init__(self, pipeline: Sequence[Any] = ()) -> None:
         """Initialize preprocessing with optional layers.
 
         Args:
-            pipeline: List of callable layers to apply sequentially.
+            pipeline: Callable layers applied sequentially. Each layer accepts
+                (batch, is_training) and returns a ModelInputs instance.
         """
         self.pipeline = list(pipeline)
 
-    def __call__(self, batch_inputs_dict: dict[str, Any], *, is_training: bool) -> dict[str, Any]:
-        """Apply preprocessing layers after the batch is already on device.
-
-        The input dictionary is mutated in place; the same object is also
-        returned for chaining convenience.
+    def __call__(self, batch: Batch, *, is_training: bool) -> ProcessedBatch:
+        """Apply the preprocessing layers after the batch is already on device.
 
         Args:
-            batch_inputs_dict: Collated batch dictionary on the target device.
-                Mutated in place: each layer's returned mapping is merged into
-                this dict.
-            is_training: Whether the owning model is in training mode. Passed
-                to every layer so mode-dependent behavior (for example a
-                voxelizer with a larger evaluation budget) never relies on
-                implicit module state.
+            batch: Collated typed batch on the target device.
+            is_training: Whether the owning model is in training mode. Passed to every layer
+                so mode dependent behavior never relies on implicit module state.
 
         Returns:
-            The same ``batch_inputs_dict`` with preprocessing applied.
+            The processed batch wrapping the batch and the derived inputs.
         """
+        if not isinstance(batch, Batch):
+            raise TypeError(f"DataPreprocessing expects a Batch, got {type(batch).__name__}.")
+        derived = []
         for layer in self.pipeline:
-            batch_inputs_dict |= layer(batch_inputs_dict, is_training=is_training)
-
-        return batch_inputs_dict
+            inputs = layer(batch, is_training=is_training)
+            if not isinstance(inputs, ModelInputs):
+                raise TypeError(
+                    f"{type(layer).__name__} must return ModelInputs, got {type(inputs).__name__}."
+                )
+            derived.append(inputs)
+        return ProcessedBatch(batch=batch, inputs=tuple(derived))

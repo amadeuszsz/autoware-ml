@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import numpy as np
 import torch
 
+from autoware_ml.datamodule.samples.batch import Batch, Boxes3DBatch, FrameMetaBatch
 from autoware_ml.metrics.segmentation3d.eval_output import (
     concat_frame_ids,
     segmentation_frames_eval_output,
@@ -25,12 +25,21 @@ def test_segmentation_frames_eval_output_splits_and_passes_meta() -> None:
     target = torch.tensor([0, 1, 0, 0])
     scores = torch.full((4, 2), 0.5)
     frame_ids = torch.tensor([0, 0, 1, 1])
-    batch = {
-        "ego2global": [np.eye(4), np.eye(4)],
-        "scene_token": ["scene-a", "scene-b"],
-        "gt_boxes": [torch.zeros((1, 9)), torch.zeros((0, 9))],
-        "gt_labels": [torch.tensor([0]), torch.zeros((0,), dtype=torch.long)],
-    }
+    batch = Batch(
+        meta=FrameMetaBatch(
+            sample_ids=("s0", "s1"),
+            scene_tokens=("scene-a", "scene-b"),
+            timestamps=(1.0, 2.0),
+            ego2globals=(torch.eye(4, dtype=torch.float64), torch.eye(4, dtype=torch.float64)),
+            prev_exists=None,
+        ),
+        boxes=Boxes3DBatch(
+            params=(torch.zeros((1, 9)), torch.zeros((0, 9))),
+            labels=(torch.tensor([0]), torch.zeros((0,), dtype=torch.long)),
+            names=(("car",), ()),
+            num_lidar_points=(torch.tensor([5]), torch.zeros((0,), dtype=torch.long)),
+        ),
+    )
     out = segmentation_frames_eval_output(coord, pred, target, scores, frame_ids, 2, batch)
     frames = out["seg_frames"]
     assert len(frames) == 2

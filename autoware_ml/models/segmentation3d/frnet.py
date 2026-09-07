@@ -19,13 +19,14 @@ This module contains the high-level FRNet Lightning wrapper and export logic.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any
 
 import torch
 import torch.nn as nn
 
+from autoware_ml.preprocessing.base import ProcessedBatch
 from autoware_ml.metrics.segmentation3d.eval_output import (
     concat_frame_ids,
     segmentation_frames_eval_output,
@@ -202,15 +203,14 @@ class FRNet(BaseModel):
 
     def compute_metrics(
         self,
-        batch_inputs_dict: Mapping[str, Any],
+        processed: ProcessedBatch,
         outputs: tuple[torch.Tensor, ...],
     ) -> dict[str, torch.Tensor]:
         """Compute FRNet losses and point-wise accuracy.
 
         Args:
-            batch_inputs_dict: Full batch dictionary after runtime
-                preprocessing. Must contain ``pts_semantic_mask`` and
-                ``semantic_seg``.
+            processed: Processed batch after runtime preprocessing. The frustum inputs must
+                carry ``pts_semantic_mask`` and ``semantic_seg``.
             outputs: Tuple returned by :meth:`forward`. The first element is
                 ``point_logits``; the remainder is the voxel-feature
                 pyramid consumed by auxiliary heads.
@@ -219,8 +219,8 @@ class FRNet(BaseModel):
             Dictionary of named loss tensors and segmentation metrics. The
             total loss is exposed under the ``"loss"`` key.
         """
-        pts_semantic_mask = batch_inputs_dict["pts_semantic_mask"]
-        semantic_seg = batch_inputs_dict["semantic_seg"]
+        pts_semantic_mask = processed.resolve("pts_semantic_mask")
+        semantic_seg = processed.resolve("semantic_seg")
         point_logits, *voxel_feats = outputs
 
         decode_losses = self.decode_head.loss(point_logits, pts_semantic_mask)
@@ -237,37 +237,37 @@ class FRNet(BaseModel):
         return metrics
 
     def build_eval_output(
-        self, batch: Mapping[str, Any], outputs: tuple[torch.Tensor, ...]
+        self, processed: ProcessedBatch, outputs: tuple[torch.Tensor, ...]
     ) -> dict[str, Any]:
         """Pair per-frame point predictions with targets for the segmentation suites.
 
         FRNet's logits are already at the original point level, so each point's
-        frame is its own position in the batch-concatenated ``points`` tensor,
-        bucketed by the batch ``offset``.
+        frame is its own position in the batch-concatenated points tensor,
+        bucketed by the batch offset.
 
         Args:
-            batch: Collated batch as fed to the model.
+            processed: Processed batch of the evaluation step.
             outputs: Raw forward outputs.
 
         Returns:
             Flat dict with the per-frame ``seg_frames`` the suites read.
         """
         point_logits = outputs[0]
-        offset = batch["offset"].long()
+        offset = processed.resolve("offset").long().to(point_logits.device)
         point_index = torch.arange(point_logits.shape[0], device=point_logits.device)
         return segmentation_frames_eval_output(
-            coord=batch["points"][:, :3],
+            coord=processed.resolve("points")[:, :3],
             pred_labels=point_logits.argmax(dim=1),
-            target_labels=batch["pts_semantic_mask"].long(),
+            target_labels=processed.resolve("pts_semantic_mask").long(),
             scores=torch.softmax(point_logits, dim=1),
             frame_ids=concat_frame_ids(offset, point_index),
             num_frames=int(offset.shape[0]),
-            batch=batch,
+            batch=processed.batch,
         )
 
     def predict_outputs(
         self,
-        batch_inputs_dict: Mapping[str, Any],
+        processed: ProcessedBatch | None,
         outputs: tuple[torch.Tensor, ...],
     ) -> dict[str, torch.Tensor]:
         """Format FRNet segmentation predictions at the point level.
@@ -276,8 +276,8 @@ class FRNet(BaseModel):
         ``inverse_map``, so no voxel-to-point scatter is needed here.
 
         Args:
-            batch_inputs_dict: Full batch dictionary (unused; FRNet's logits
-                are already at point level).
+            processed: Processed batch of the prediction step, unused since FRNet's logits
+                are already at point level.
             outputs: Tuple returned by :meth:`forward`. Only the first
                 element (``point_logits``) is consumed.
 
@@ -285,7 +285,7 @@ class FRNet(BaseModel):
             Dictionary with ``"pred_labels"`` (predicted class indices) and
             ``"pred_probs"`` (per-class probabilities).
         """
-        del batch_inputs_dict
+        del processed
         point_logits = outputs[0]
         pred_probs = torch.softmax(point_logits, dim=1)
         return {"pred_labels": pred_probs.argmax(dim=1), "pred_probs": pred_probs}
@@ -298,31 +298,20 @@ class FRNet(BaseModel):
         """
         return ["pred_probs"]
 
-    def get_log_batch_size(self, batch_inputs_dict: Mapping[str, Any]) -> int:
-        """Return the number of samples represented by the FRNet batch.
-
-        Args:
-            batch_inputs_dict: Collated model inputs.
-
-        Returns:
-            The batch size.
-        """
-        return int(batch_inputs_dict["sample_count"])
-
-    def build_export_spec(self, batch_inputs_dict: Mapping[str, torch.Tensor]) -> ExportSpec:
+    def build_export_spec(self, processed: ProcessedBatch) -> ExportSpec:
         """Build the FRNet deployment export specification.
 
         FRNet uses an explicit export wrapper because deployment needs a copied
         module graph and a single probability tensor with a stable output name.
 
         Args:
-            batch_inputs_dict: Example model inputs used for tracing.
+            processed: Example processed batch with the frustum inputs.
 
         Returns:
             The export specification.
         """
         input_names = ["points", "coors", "voxel_coors", "inverse_map"]
-        input_args = tuple(batch_inputs_dict[name] for name in input_names)
+        input_args = tuple(processed.resolve(name) for name in input_names)
         return ExportSpec(
             module=_FRNetExportModule(self),
             args=input_args,

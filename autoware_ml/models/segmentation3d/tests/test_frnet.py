@@ -6,9 +6,26 @@ from unittest.mock import MagicMock
 
 import torch
 
+from autoware_ml.datamodule.samples.batch import (
+    Batch,
+    FrameMetaBatch,
+    PointCloudBatch,
+    SegmentationBatch,
+)
 from autoware_ml.models.segmentation3d.frnet import FRNet
-from autoware_ml.preprocessing.base import DataPreprocessing
-from autoware_ml.preprocessing.segmentation3d.frustum_range import FrustumRangePreprocessor
+from autoware_ml.preprocessing.base import DataPreprocessing, ProcessedBatch
+from autoware_ml.preprocessing.segmentation3d.frustum_range import (
+    FrustumInputs,
+    FrustumRangePreprocessor,
+)
+from autoware_ml.types.geometry import PointFeatureName
+
+_FEATURE_NAMES = (
+    PointFeatureName.X,
+    PointFeatureName.Y,
+    PointFeatureName.Z,
+    PointFeatureName.INTENSITY,
+)
 
 
 class _IdentityEncoder(torch.nn.Module):
@@ -90,8 +107,27 @@ def _make_frnet(num_classes: int = 3) -> FRNet:
     )
 
 
-def _make_batch(num_points: int = 5, num_classes: int = 3) -> dict:
-    """Return a minimal preprocessed batch compatible with the test model."""
+def _make_typed_batch(points: torch.Tensor, labels: torch.Tensor) -> Batch:
+    """Return a one-sample typed batch with points and segmentation labels."""
+    return Batch(
+        meta=FrameMetaBatch(
+            sample_ids=("sample-0",),
+            scene_tokens=None,
+            timestamps=(0.0,),
+            ego2globals=None,
+            prev_exists=None,
+        ),
+        point_cloud=PointCloudBatch(
+            features=(points,),
+            feature_names=_FEATURE_NAMES,
+            num_current_points=(points.shape[0],),
+        ),
+        segmentation=SegmentationBatch(labels=(labels,)),
+    )
+
+
+def _make_processed(num_points: int = 5, num_classes: int = 3) -> ProcessedBatch:
+    """Return a minimal processed batch with hand-built frustum inputs."""
     points = torch.rand(num_points, 4)
     coors = torch.stack(
         [
@@ -102,26 +138,29 @@ def _make_batch(num_points: int = 5, num_classes: int = 3) -> dict:
         dim=1,
     )
     voxel_coors, inverse_map = torch.unique(coors, return_inverse=True, dim=0)
-    semantic_seg = torch.zeros(1, 2, 2, dtype=torch.long)  # (B, H, W)
     pts_semantic_mask = torch.randint(0, num_classes - 1, (num_points,))
-    return {
-        "points": points,
-        "coors": coors,
-        "voxel_coors": voxel_coors,
-        "inverse_map": inverse_map,
-        "pts_semantic_mask": pts_semantic_mask,
-        "semantic_seg": semantic_seg,
-        "sample_count": 1,
-    }
+    frustum_inputs = FrustumInputs(
+        points=points,
+        coors=coors,
+        voxel_coors=voxel_coors,
+        inverse_map=inverse_map,
+        sample_count=1,
+        pts_semantic_mask=pts_semantic_mask,
+        semantic_seg=torch.zeros(1, 2, 2, dtype=torch.long),
+    )
+    return ProcessedBatch(
+        batch=_make_typed_batch(points, pts_semantic_mask),
+        inputs=(frustum_inputs,),
+    )
 
 
 def test_frnet_shared_step_returns_scalar_loss_with_grad() -> None:
     """_shared_step should return a differentiable scalar loss tensor."""
     model = _make_frnet()
     model.log_dict = MagicMock()
-    batch = _make_batch()
+    processed = _make_processed()
 
-    metrics, _ = model._shared_step(batch, "train")
+    metrics, _ = model._shared_step(processed, "train")
 
     assert "loss" in metrics
     assert metrics["loss"].shape == torch.Size([])
@@ -129,11 +168,11 @@ def test_frnet_shared_step_returns_scalar_loss_with_grad() -> None:
     assert model.backbone.last_sample_count == 1
 
 
-def test_frnet_get_log_batch_size_uses_sample_count() -> None:
+def test_frnet_get_log_batch_size_counts_batch_samples() -> None:
     model = _make_frnet(num_classes=4)
-    batch = _make_batch(num_points=8, num_classes=4)
+    processed = _make_processed(num_points=8, num_classes=4)
 
-    assert model.get_log_batch_size(batch) == batch["sample_count"]
+    assert model.get_log_batch_size(processed) == processed.batch.batch_size == 1
 
 
 def test_frnet_forward_uses_explicit_sample_count() -> None:
@@ -172,17 +211,14 @@ def test_frnet_with_preprocessing_runs_shared_step_end_to_end() -> None:
     )
     model.set_data_preprocessing(DataPreprocessing([preprocessor]))
 
-    raw_batch = {
-        "points": torch.tensor(
-            [[1.0, 0.0, 0.0, 0.1], [2.0, 0.0, 0.0, 0.2], [1.0, 1.0, 0.0, 0.3]],
-            dtype=torch.float32,
-        ),
-        "offset": torch.tensor([3], dtype=torch.long),
-        "pts_semantic_mask": torch.tensor([0, 1, 0], dtype=torch.long),
-    }
+    points = torch.tensor(
+        [[1.0, 0.0, 0.0, 0.1], [2.0, 0.0, 0.0, 0.2], [1.0, 1.0, 0.0, 0.3]],
+        dtype=torch.float32,
+    )
+    labels = torch.tensor([0, 1, 0], dtype=torch.long)
 
-    preprocessed = model.on_after_batch_transfer(raw_batch, dataloader_idx=0)
-    metrics, _ = model._shared_step(preprocessed, "train")
+    processed = model.on_after_batch_transfer(_make_typed_batch(points, labels), dataloader_idx=0)
+    metrics, _ = model._shared_step(processed, "train")
 
     assert "loss" in metrics
     assert metrics["loss"].requires_grad

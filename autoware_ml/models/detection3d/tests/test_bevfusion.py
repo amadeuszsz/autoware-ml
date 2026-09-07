@@ -19,6 +19,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from autoware_ml.datamodule.samples.batch import Batch
 from autoware_ml.models.common.backbones.resnet import ResNet18MultiScale
 from autoware_ml.models.common.necks.lss_fpn import GeneralizedLSSFPN
 from autoware_ml.models.detection3d.bevfusion import (
@@ -28,8 +29,10 @@ from autoware_ml.models.detection3d.bevfusion import (
     _runtime_coors_to_voxel_coords,
 )
 from autoware_ml.models.detection3d.fusion import ConvFuser
-from autoware_ml.transforms.camera.resize import ResizeMultiviewImages
+from autoware_ml.models.detection3d.tests.ptv3_detection_fixtures import make_frame_meta
 from autoware_ml.models.detection3d.view_transforms.depth_lss import DepthLSSTransform
+from autoware_ml.preprocessing.base import ProcessedBatch
+from autoware_ml.preprocessing.detection3d.point_pillar import PillarInputs
 
 
 class _IdentityHead(nn.Module):
@@ -198,22 +201,6 @@ def test_depth_lss_transform_supports_precomputed_pool_metadata(monkeypatch) -> 
     assert calls["coords"].shape[1] == 4
 
 
-def test_resize_multiview_images_updates_intrinsics() -> None:
-    transform = ResizeMultiviewImages(target_size=[4, 8])
-    input_dict = {
-        "img": torch.ones(2, 3, 2, 4).numpy(),
-        "camera_intrinsics": torch.eye(4).view(1, 4, 4).repeat(2, 1, 1).numpy(),
-        "lidar2cam": torch.eye(4).view(1, 4, 4).repeat(2, 1, 1).numpy(),
-        "lidar2img": torch.eye(4).view(1, 4, 4).repeat(2, 1, 1).numpy(),
-    }
-
-    output = transform(input_dict)
-
-    assert output["img"].shape == (2, 3, 4, 8)
-    assert output["camera_intrinsics"][0, 0, 0] == 2.0
-    assert output["camera_intrinsics"][0, 1, 1] == 2.0
-
-
 def test_bevfusion_model_fuses_camera_and_lidar_branches() -> None:
     class FakeVoxelEncoder(nn.Module):
         def forward(self, voxels, num_points, voxel_coords):
@@ -373,15 +360,22 @@ def test_runtime_coors_conversion_keeps_zyx_order_and_adds_batch_column() -> Non
 
 
 def test_first_sample_voxel_inputs_round_trip_to_internal_layout() -> None:
-    batch_inputs_dict = {
-        "voxel_coords": torch.tensor([[0, 1, 2, 3], [0, 4, 5, 6], [1, 7, 8, 9]], dtype=torch.int64),
-        "voxels": torch.arange(3 * 2 * 5, dtype=torch.float32).view(3, 2, 5),
-        "num_points": torch.tensor([2, 1, 2], dtype=torch.int64),
-    }
-
-    voxels, coors, num_points = BEVFusionDetectionModel._first_sample_voxel_inputs(
-        batch_inputs_dict
+    processed = ProcessedBatch(
+        batch=Batch(meta=make_frame_meta(2)),
+        inputs=(
+            PillarInputs(
+                voxels=torch.arange(3 * 2 * 5, dtype=torch.float32).view(3, 2, 5),
+                num_points=torch.tensor([2, 1, 2], dtype=torch.int32),
+                voxel_coords=torch.tensor(
+                    [[0, 1, 2, 3], [0, 4, 5, 6], [1, 7, 8, 9]], dtype=torch.int32
+                ),
+                point_voxel_indices=torch.tensor([0, 0, 1, 2, 2], dtype=torch.long),
+                num_dropped_voxels=torch.tensor(0),
+            ),
+        ),
     )
+
+    voxels, coors, num_points = BEVFusionDetectionModel._first_sample_voxel_inputs(processed)
 
     assert coors.tolist() == [[1, 2, 3], [4, 5, 6]]
     assert voxels.shape[0] == 2

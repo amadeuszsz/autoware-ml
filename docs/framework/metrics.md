@@ -80,7 +80,7 @@ sequenceDiagram
     participant Me as Metric
     loop each val batch
         L->>M: on_validation_batch_end(outputs, batch)
-        M->>M: build_eval_output(batch, outputs)
+        M->>M: build_eval_output(processed, outputs)
         M->>S: update(eval_out)
     end
     L->>M: on_validation_epoch_end()
@@ -99,10 +99,10 @@ Each piece of state is registered with `add_state(name, default, dist_reduce_fx)
 function torchmetrics uses to combine that state across GPUs.
 
 | Suite                                      | `prefix`   | Required keys                          | State (`dist_reduce_fx`)                                  |
-| ------------------------------------------ | ---------- | -------------------------------------- | ---------------------------------------------------------- |
-| `Detection3DMetricSuite`                   | `det3d`    | `predictions`, `gt_boxes`, `gt_labels` | per-frame box tensors as list states (`None`)               |
-| `Segmentation3DConfusionMatrixMetricSuite` | `seg3d`    | `seg_frames`                           | one confusion tensor over (filter, range) buckets (`sum`)   |
-| `Segmentation3DPointCloudMetricSuite`      | `seg3d_pt` | `seg_frames`                           | per-frame point tensors (`None`)                            |
+|--------------------------------------------|------------|----------------------------------------|-----------------------------------------------------------|
+| `Detection3DMetricSuite`                   | `det3d`    | `predictions`, `gt_boxes`, `gt_labels` | per-frame box tensors as list states (`None`)             |
+| `Segmentation3DConfusionMatrixMetricSuite` | `seg3d`    | `seg_frames`                           | one confusion tensor over (filter, range) buckets (`sum`) |
+| `Segmentation3DPointCloudMetricSuite`      | `seg3d_pt` | `seg_frames`                           | per-frame point tensors (`None`)                          |
 
 A confusion matrix is a bounded sufficient statistic, so its counts sum across ranks. Detection
 matching is score ordered inside each frame and the point-level metrics read raw points, so those
@@ -366,7 +366,8 @@ own reachable sets enter through the collision metrics, not through the filter.
 
 **Behaviour groups.** `class_groups` folds the trained classes onto behaviour-equivalent groups.
 Confusing a bus for a truck does not change how the vehicle drives, so inside a group it counts
-as a hit. Grouping always replaces the class axis, never extends it: the same suite is configured
+as a hit. The groups belong to the taxonomy of the bound database, every class sits in exactly
+one group. Grouping always replaces the class axis, never extends it: the same suite is configured
 twice, once per class and once grouped under its own prefix, and both views share one
 accumulation contract.
 
@@ -468,33 +469,33 @@ ego's overlap. An object that cannot reach ego within the horizon has an infinit
 </div>
 
 The model runs on the following constants. Values marked config are set in the bundled dataset
-configs and tunable there, the rest are code defaults.
+configs and tunable there, values marked taxonomy come from the detection taxonomy of the bound
+database, the rest are code defaults.
 
-| Constant                               | Value                                              |
-| -------------------------------------- | -------------------------------------------------- |
-| horizon                                | 4 s (config)                                       |
-| propagation time step                  | 0.1 s (config)                                     |
-| max lateral acceleration (turn bound)  | 3.0 m/s^2 (config)                                 |
-| minimum turn radius floor              | ego: wheel base over tan max steer angle (config), objects: 3.0 m friction floor (config) |
-| arc samples per reachable set          | at least 21, raised until neighbouring sweeps overlap at their far ends |
-| ego body                               | vehicle description dimensions from the dataset config, measured from the rear axle |
-| object body                            | the object's own box length and width               |
-| wheeled speed on the map               | the lanelet speed limit at the agent's position    |
-| off-map fallback speed                 | 16.7 m/s (config)                                  |
-| living run speeds                      | pedestrian 3.0, animal 4.0, bicycle 6.0 m/s        |
-| wheeled classes                        | car, truck, bus, train, motorcycle                 |
-| living classes                         | pedestrian, animal, bicycle                        |
-| static classes (footprint only)        | barrier, traffic_cone, debris, bicycle_rack, vehicle_extension |
-| corridor width                         | 3.0 m (config)                                     |
+| Constant                              | Value                                                                               |
+| ------------------------------------- | ----------------------------------------------------------------------------------- |
+| horizon                               | 4 s (config)                                                                        |
+| propagation time step                 | 0.1 s (config)                                                                      |
+| max lateral acceleration (turn bound) | 3.0 m/s^2 (config)                                                                  |
+| minimum turn radius floor             | ego: wheel base over tan max steer angle (config), objects: 3.0 m friction floor (config)|
+| arc samples per reachable set         | at least 21, raised until neighbouring sweeps overlap at their far ends             |
+| ego body                              | vehicle description dimensions from the dataset config, measured from the rear axle |
+| object body                           | the object's own box length and width                                               |
+| wheeled speed on the map              | the lanelet speed limit at the agent's position                                     |
+| off-map fallback speed                | 16.7 m/s (config)                                                                   |
+| living run speeds                     | per living class (taxonomy)                                                         |
+| wheeled, living and static classes    | per class (taxonomy)                                                                |
+| corridor width                        | 3.0 m (config)                                                                      |
 
 ### Default slices
 
 The bundled dataset configs attach every metric to every filter slice (whole scene, road,
 walkway, corridor, collision area). Every key is also emitted per radial range bin and once more
-per behaviour group through the grouped twin suite. The partial-detection score is wired in the
-joint detection plus segmentation
-configs only (the detection ground truth rides in seg_frames) and is never grouped, its box to
-class mapping is bound to the trained label space.
+per behaviour group through the grouped twin suite. The partial-detection score lives in the joint
+detection and segmentation dataset package, composed by the joint configs only, since the
+detection ground truth rides in seg_frames. That package names the detection classes it scores and
+the score validates that the segmentation taxonomy starts with the detection taxonomy, so both
+share one class index. It is never grouped.
 
 ## Detection metrics
 
@@ -1140,8 +1141,9 @@ right there.
 `PartialDetectionScore` groups segmentation points inside each small-object ground-truth box and
 rewards partial hits with a saturating credit: for a pedestrian or a cone, classifying even a few
 points correctly is far better than none, which point-averaged mIoU cannot see. A diagnostic
-metric wired in the joint detection plus segmentation configs, whose `seg_frames` carry the
-detection ground-truth boxes.
+metric of the joint detection and segmentation dataset package, whose `seg_frames` carry the
+detection ground-truth boxes. It scores the detection classes the package names and reads the
+segmentation class of a box at the same index, which the shared taxonomy prefix guarantees.
 
 <div class="metrics-fig">
 <svg viewBox="0 0 660 210" width="660" height="210" role="img" aria-labelledby="fig-d3-title">
@@ -1303,11 +1305,11 @@ token) is passed through.
 
 ```python
 class ModelA(BaseModel):
-    def build_eval_output(self, batch, outputs):
+    def build_eval_output(self, processed, outputs):
         return {
             "predictions": self.bbox_head.predict(outputs),
-            "gt_boxes": batch["gt_boxes"],
-            "gt_labels": batch["gt_labels"],
+            "gt_boxes": list(processed.batch.gt_boxes),
+            "gt_labels": list(processed.batch.gt_labels),
         }
 ```
 

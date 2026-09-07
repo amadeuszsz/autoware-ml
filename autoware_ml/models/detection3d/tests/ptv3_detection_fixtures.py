@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Any
+from collections.abc import Sequence
 
 import torch
 
+from autoware_ml.datamodule.samples.batch import (
+    Batch,
+    Boxes3DBatch,
+    FrameMetaBatch,
+    PointCloudBatch,
+    SegmentationBatch,
+)
 from autoware_ml.models.detection3d.heads.transfusion import TransFusionHead
 from autoware_ml.models.detection3d.ptv3 import (
     PTv3BEVEncoder,
@@ -28,7 +34,19 @@ from autoware_ml.models.segmentation3d.encoders.ptv3 import (
 )
 from autoware_ml.models.segmentation3d.heads.ptv3 import PTv3SegDecoderHead
 from autoware_ml.models.segmentation3d.ptv3 import PTv3SegmentationModel
+from autoware_ml.preprocessing.base import DataPreprocessing, ProcessedBatch
 from autoware_ml.preprocessing.detection3d.point_pillar import PointPillarPreprocessor
+from autoware_ml.types.geometry import PointFeatureName
+
+PTV3_FEATURE_NAMES = (
+    PointFeatureName.X,
+    PointFeatureName.Y,
+    PointFeatureName.Z,
+    PointFeatureName.INTENSITY,
+    PointFeatureName.TIMESTAMP_DIFFERENCE,
+)
+
+POINT_CLOUD_RANGE = [0.0, 0.0, -2.0, 8.0, 8.0, 2.0]
 
 
 def build_ptv3_encoder() -> PointTransformerV3Encoder:
@@ -88,8 +106,7 @@ def build_seg_model() -> PTv3SegmentationModel:
         seg3d_head=build_seg_head(),
         optimizer=lambda params: torch.optim.AdamW(params, lr=1e-3),
         grid_size=1.0,
-        time_lag_dim=4,
-        point_cloud_range=[0.0, 0.0, -2.0, 8.0, 8.0, 2.0],
+        point_cloud_range=POINT_CLOUD_RANGE,
     )
 
 
@@ -146,7 +163,7 @@ def build_transfusion_head() -> TransFusionHead:
             reg_cost=BBoxBEVL1Cost(weight=0.25),
             iou_cost=IoU3DCost(weight=0.25),
         ),
-        point_cloud_range=[0.0, 0.0, -2.0, 8.0, 8.0, 2.0],
+        point_cloud_range=POINT_CLOUD_RANGE,
         voxel_size=[1.0, 1.0, 4.0],
         out_size_factor=1,
         code_weights=[1.0] * 8 + [0.2, 0.2],
@@ -179,12 +196,9 @@ def build_trans_model(
         ],
         freeze_encoder=freeze_encoder,
         grid_size=1.0,
-        point_cloud_range=[0.0, 0.0, -2.0, 8.0, 8.0, 2.0],
+        point_cloud_range=POINT_CLOUD_RANGE,
         optimizer=lambda params: torch.optim.AdamW(params, lr=1e-3),
     )
-
-
-POINT_CLOUD_RANGE = [0.0, 0.0, -2.0, 8.0, 8.0, 2.0]
 
 
 def build_preprocessor() -> PointPillarPreprocessor:
@@ -225,19 +239,15 @@ def build_points() -> torch.Tensor:
     return torch.cat([coord, intensity, time_lag], dim=1)
 
 
-def build_batch() -> dict[str, Any]:
-    """Return one preprocessed single-frame PTv3 batch with segmentation targets."""
-    points = build_points()
-    segment = torch.arange(points.shape[0], dtype=torch.long) % 3
-    segment[-1] = -1
-    batch = {"points": [points], "segment": segment}
-    return build_preprocessor()(batch, is_training=True)
-
-
-def build_inputs() -> dict[str, torch.Tensor]:
-    """Return the forward inputs of one preprocessed single-frame PTv3 batch."""
-    batch = build_batch()
-    return {key: batch[key] for key in ("voxels", "num_points", "voxel_coords")}
+def make_frame_meta(batch_size: int) -> FrameMetaBatch:
+    """Return frame metadata for a synthetic batch of the given size."""
+    return FrameMetaBatch(
+        sample_ids=tuple(f"sample-{index}" for index in range(batch_size)),
+        scene_tokens=tuple(f"scene-{index}" for index in range(batch_size)),
+        timestamps=tuple(float(index) for index in range(batch_size)),
+        ego2globals=tuple(torch.eye(4, dtype=torch.float64) for _ in range(batch_size)),
+        prev_exists=tuple(False for _ in range(batch_size)),
+    )
 
 
 def build_targets() -> tuple[list[torch.Tensor], list[torch.Tensor]]:
@@ -252,27 +262,43 @@ def build_targets() -> tuple[list[torch.Tensor], list[torch.Tensor]]:
     return gt_boxes, gt_labels
 
 
-def move_batch_to_device(
-    batch: Mapping[str, Any],
-    device: torch.device,
-) -> dict[str, Any]:
-    """Copy a PTv3 input batch onto one device."""
-    return {
-        name: [item.to(device) for item in value] if isinstance(value, list) else value.to(device)
-        for name, value in batch.items()
-    }
-
-
-def move_targets_to_device(
-    gt_boxes: list[torch.Tensor],
-    gt_labels: list[torch.Tensor],
-    device: torch.device,
-) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
-    """Copy detection targets onto one device."""
-    return (
-        [boxes.to(device) for boxes in gt_boxes],
-        [labels.to(device) for labels in gt_labels],
+def build_batch() -> Batch:
+    """Return one typed single-frame PTv3 batch with segmentation and box targets."""
+    points = build_points()
+    segment = torch.arange(points.shape[0], dtype=torch.long) % 3
+    segment[-1] = -1
+    gt_boxes, gt_labels = build_targets()
+    return Batch(
+        meta=make_frame_meta(1),
+        point_cloud=PointCloudBatch(
+            features=(points,),
+            feature_names=PTV3_FEATURE_NAMES,
+            num_current_points=(points.shape[0] - 1,),
+        ),
+        segmentation=SegmentationBatch(labels=(segment,)),
+        boxes=Boxes3DBatch(
+            params=tuple(gt_boxes),
+            labels=tuple(gt_labels),
+            names=(("car",),),
+            num_lidar_points=(torch.tensor([8], dtype=torch.long),),
+        ),
     )
+
+
+def build_processed(device: torch.device | None = None, is_training: bool = True) -> ProcessedBatch:
+    """Voxelize one typed single-frame PTv3 batch into a processed batch.
+
+    Args:
+      device: Device the batch moves to before voxelization, CPU when omitted.
+      is_training: Voxel budget mode of the preprocessor.
+
+    Returns:
+      ProcessedBatch: The batch with the derived pillar inputs.
+    """
+    batch = build_batch()
+    if device is not None:
+        batch = batch.to(device)
+    return DataPreprocessing([build_preprocessor()])(batch, is_training=is_training)
 
 
 def build_litept_encoder() -> LitePTEncoder:
@@ -335,6 +361,5 @@ def build_litept_seg_model() -> PTv3SegmentationModel:
         seg3d_head=build_litept_seg_head(),
         optimizer=lambda params: torch.optim.AdamW(params, lr=1e-3),
         grid_size=1.0,
-        time_lag_dim=4,
-        point_cloud_range=[0.0, 0.0, -2.0, 8.0, 8.0, 2.0],
+        point_cloud_range=POINT_CLOUD_RANGE,
     )

@@ -21,14 +21,20 @@ from pathlib import Path
 from omegaconf import OmegaConf
 import pytest
 import torch
+from torch import Tensor
 
 import autoware_ml.utils.deploy as deploy
+from autoware_ml.datamodule.samples.batch import Batch, FrameMetaBatch, PointCloudBatch
+from autoware_ml.preprocessing.base import ModelInputs, ProcessedBatch
+from autoware_ml.types.geometry import PointFeatureName
 from autoware_ml.utils.deploy import (
     ExportSpec,
     build_dynamic_shapes,
     build_dynamic_axes,
     export_to_onnx,
+    extract_input_from_batch,
     get_export_parameter_names,
+    infer_export_spec,
     merge_module_onnx_cfg,
     normalize_dynamic_shapes_for_model,
     resolve_export_specs,
@@ -44,10 +50,69 @@ class _DummyModel(torch.nn.Module):
         return voxels + num_points.unsqueeze(-1)
 
 
+class _DeployInputs(ModelInputs):
+    """Derived inputs used to exercise the processed-batch resolution."""
+
+    voxels: Tensor
+    num_points: Tensor
+
+
+def _make_processed() -> ProcessedBatch:
+    meta = FrameMetaBatch(
+        sample_ids=("sample-0", "sample-1"),
+        scene_tokens=None,
+        timestamps=(0.0, 1.0),
+        ego2globals=None,
+        prev_exists=None,
+    )
+    batch = Batch(
+        meta=meta,
+        point_cloud=PointCloudBatch(
+            features=(
+                torch.zeros((3, 4), dtype=torch.float32),
+                torch.ones((2, 4), dtype=torch.float32),
+            ),
+            feature_names=(
+                PointFeatureName.X,
+                PointFeatureName.Y,
+                PointFeatureName.Z,
+                PointFeatureName.INTENSITY,
+            ),
+            num_current_points=(3, 2),
+        ),
+    )
+    inputs = _DeployInputs(voxels=torch.ones(4, 1, 4), num_points=torch.ones(4))
+    return ProcessedBatch(batch=batch, inputs=(inputs,))
+
+
 def test_get_export_parameter_names_ignores_variadic_parameters() -> None:
     model = _DummyModel()
 
     assert get_export_parameter_names(model) == ["voxels", "num_points"]
+
+
+def test_extract_input_from_batch_resolves_inputs_and_unwraps_per_sample_sequences() -> None:
+    processed = _make_processed()
+
+    voxels = extract_input_from_batch(processed, "voxels")
+    first_points = extract_input_from_batch(processed, "points")
+
+    assert voxels is processed.resolve("voxels")
+    # Per-sample sequences are unwrapped to the first sample for export.
+    assert torch.equal(first_points, processed.batch.points[0])
+    with pytest.raises(ValueError, match="not available"):
+        extract_input_from_batch(processed, "missing")
+
+
+def test_infer_export_spec_binds_forward_parameters_by_name() -> None:
+    model = _DummyModel()
+    processed = _make_processed()
+
+    spec = infer_export_spec(model, processed)
+
+    assert spec.input_param_names == ["voxels", "num_points"]
+    assert spec.args[0] is processed.resolve("voxels")
+    assert spec.args[1] is processed.resolve("num_points")
 
 
 def test_export_to_onnx_prefers_export_spec_output_names(tmp_path: Path) -> None:

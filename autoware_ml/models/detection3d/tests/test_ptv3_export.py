@@ -5,12 +5,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from autoware_ml.ops.spconv.availability import IS_SPCONV_AVAILABLE
 from autoware_ml.models.detection3d.tests.ptv3_detection_fixtures import (
-    build_inputs,
+    build_processed,
     build_trans_model,
-    move_batch_to_device,
 )
+from autoware_ml.ops.spconv.availability import IS_SPCONV_AVAILABLE
 
 EXPECTED_PTV3_INPUT_NAMES = [
     "voxels",
@@ -35,9 +34,9 @@ EXPECTED_PTV3_INPUT_NAMES = [
 def test_ptv3_transhead_build_export_spec_uses_named_detection_outputs() -> None:
     device = torch.device("cuda")
     model = build_trans_model().to(device)
-    batch = move_batch_to_device(build_inputs(), device)
+    processed = build_processed(device=device)
 
-    spec = model.build_export_spec(batch)
+    spec = model.build_export_spec(processed)
     outputs = spec.module(*spec.args)
 
     assert spec.input_param_names == EXPECTED_PTV3_INPUT_NAMES

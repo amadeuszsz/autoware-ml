@@ -12,45 +12,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PointPillars preprocessing for Detection3D models."""
+"""Voxelization preprocessing for point cloud models."""
 
 from __future__ import annotations
 
-from typing import Any
-
-from jaxtyping import Float32
+from jaxtyping import Float32, Int32, Int64
 import torch
+from torch import Tensor
 
+from autoware_ml.datamodule.samples.batch import Batch
 from autoware_ml.ops.voxelization.voxelization import hard_voxelize
+from autoware_ml.preprocessing.base import ModelInputs
+
+
+class PillarInputs(ModelInputs):
+    """Voxelized point cloud inputs of one batch.
+
+    Attributes:
+      voxels: Padded voxel features.
+      num_points: Number of points of every voxel.
+      voxel_coords: Voxel coordinates with the batch index in the first column.
+      point_voxel_indices: Voxel row of every input point in the concatenated batch order,
+        -1 when the point was not assigned to a retained voxel.
+      num_dropped_voxels: Occupied voxels discarded by the voxel budget.
+    """
+
+    voxels: Float32[Tensor, "num_voxels max_num_points num_features"]
+    num_points: Int32[Tensor, " num_voxels"]
+    voxel_coords: Int32[Tensor, "num_voxels 4"]
+    point_voxel_indices: Int64[Tensor, " total_points"]
+    num_dropped_voxels: Int64[Tensor, ""]
 
 
 class PointPillarPreprocessor:
-    """Convert batched point clouds into padded pillars for PointPillars models.
+    """Convert batched point clouds into padded voxels for voxel based models.
 
-    The preprocessor voxelizes each point cloud using
-    :func:`~autoware_ml.ops.voxelization.hard_voxelize`, pads variable-size
-    pillars to ``max_num_points``, and packages the tensors expected by
-    PointPillars-style detectors.
-
-    Args:
-        voxel_size: Voxel size along each axis ``[dx, dy, dz]`` in meters.
-        point_cloud_range: Spatial range ``[x_min, y_min, z_min, x_max, y_max, z_max]``
-            in meters.
-        max_num_points: Maximum number of points kept per pillar.
-        max_voxels: Maximum number of pillars retained per sample during training.
-        eval_max_voxels: Maximum number of pillars retained per sample during
-            evaluation and inference. Required before the preprocessor runs in
-            evaluation mode.
-        voxelization_z_order_first: If ``True``, this preprocessor will transpose [x, y, z]
-            coordinates to [z, y, x] in coords from voxelization.
-            This is used for backward-compatible, and will be removed very soon.
-        default_point_channels: Default number of point channels to be used when no points
-            are provided in the batch. Default is 4, which corresponds to (x, y, z, intensity).
+    The preprocessor voxelizes each point cloud using hard_voxelize, pads variable size
+    voxels to max_num_points, and packages the tensors expected by voxel based detectors and
+    segmentors.
     """
 
     # Add class attributes for type checking
-    voxel_size: Float32[torch.Tensor, " 3"]
-    point_cloud_range: Float32[torch.Tensor, " 6"]
+    voxel_size: Float32[Tensor, " 3"]
+    point_cloud_range: Float32[Tensor, " 6"]
 
     def __init__(
         self,
@@ -60,37 +64,37 @@ class PointPillarPreprocessor:
         max_voxels: int,
         eval_max_voxels: int | None = None,
         voxelization_z_order_first: bool = True,
-        default_point_channels: int = 4,
     ) -> None:
+        """Initialize the PointPillarPreprocessor.
+
+        Args:
+            voxel_size: Voxel size along each axis [dx, dy, dz] in meters.
+            point_cloud_range: Spatial range [x_min, y_min, z_min, x_max, y_max, z_max] in
+                meters.
+            max_num_points: Maximum number of points kept per voxel.
+            max_voxels: Maximum number of voxels retained per sample during training.
+            eval_max_voxels: Maximum number of voxels retained per sample during evaluation
+                and inference. Required before the preprocessor runs in evaluation mode.
+            voxelization_z_order_first: Whether to transpose the [x, y, z] voxel coordinates
+                to [z, y, x]. Kept for the deployed coordinate convention.
+        """
         self.voxel_size = torch.tensor(voxel_size, dtype=torch.float32)
         self.point_cloud_range = torch.tensor(point_cloud_range, dtype=torch.float32)
         self.max_num_points = max_num_points
         self.max_voxels = max_voxels
         self.eval_max_voxels = eval_max_voxels
         self.voxelization_z_order_first = voxelization_z_order_first
-        self._default_point_channels = default_point_channels
 
-    def __call__(self, batch_inputs_dict: dict[str, Any], *, is_training: bool) -> dict[str, Any]:
-        """Voxelize batched point clouds and append pillar tensors.
+    def __call__(self, batch: Batch, *, is_training: bool) -> PillarInputs:
+        """Voxelize the batched point clouds.
 
         Args:
-            batch_inputs_dict: Batch dictionary containing a ``"points"`` key
-                with a list of ``(N_i, C)`` point tensors.
-            is_training: Whether the owning model is in training mode. Selects
-                between the ``max_voxels`` (training) and ``eval_max_voxels``
-                (evaluation) pillar budgets.
+            batch: Collated typed batch with point clouds.
+            is_training: Whether the owning model is in training mode. Selects between the
+                max_voxels (training) and eval_max_voxels (evaluation) budgets.
 
         Returns:
-            Updated batch dictionary with the following additional keys:
-
-            - ``"voxels"`` - padded pillar features ``(total_pillars, max_num_points, C)``.
-            - ``"num_points"`` - per-pillar point counts ``(total_pillars,)``.
-            - ``"voxel_coords"`` - pillar coordinates ``(total_pillars, 4)`` in
-              ``[batch, z, y, x]`` order, ``dtype=torch.int32``.
-            - ``"point_voxel_indices"`` - pillar row of every input point in the
-              concatenated batch order ``(total_points,)``, ``-1`` when the point
-              was not assigned to a retained pillar.
-            - ``"num_dropped_voxels"`` - occupied pillars discarded by the pillar budget.
+            The voxelized inputs.
         """
         if not is_training and self.eval_max_voxels is None:
             raise ValueError(
@@ -98,34 +102,17 @@ class PointPillarPreprocessor:
                 "is not set. Set 'eval_max_voxels' in the data_preprocessing config (use the "
                 "same value as 'max_voxels' to keep the training-time budget)."
             )
-        points_list = batch_inputs_dict["points"]
-        outputs = dict(batch_inputs_dict)
-        if not points_list:
-            outputs["voxels"] = self.voxel_size.new_zeros(
-                (0, self.max_num_points, self._default_point_channels)
-            )
-            outputs["num_points"] = torch.zeros(
-                (0,), device=self.voxel_size.device, dtype=torch.int32
-            )
-            outputs["voxel_coords"] = torch.zeros(
-                (0, 4), device=self.voxel_size.device, dtype=torch.int32
-            )
-            outputs["point_voxel_indices"] = torch.zeros(
-                (0,), device=self.voxel_size.device, dtype=torch.int64
-            )
-            outputs["num_dropped_voxels"] = torch.zeros(
-                (), device=self.voxel_size.device, dtype=torch.int64
-            )
-            return outputs
+        if batch.points is None:
+            raise ValueError("PointPillarPreprocessor requires a point cloud batch.")
+        points_list = batch.points
 
         device = points_list[0].device
         voxel_size = self.voxel_size.to(device=device)
         point_cloud_range = self.point_cloud_range.to(device=device)
 
-        # Concat all points across a batch size to a single tensor for voxelization, but keep track of the batch index
-        # (N*B, point dimension)
+        # Concat all points across the batch to a single tensor for voxelization, but keep
+        # track of the batch index
         points = torch.cat(points_list, dim=0)
-        # (N*B,) where each point has a batch index
         points_batch_indices = torch.cat(
             [
                 torch.full((p.shape[0],), i, device=device, dtype=torch.int32)
@@ -144,28 +131,26 @@ class PointPillarPreprocessor:
 
         # Handle the case where no voxels are generated
         if not len(voxels_data.voxels):
-            outputs["voxels"] = points.new_zeros((0, self.max_num_points, points.shape[1]))
-            outputs["num_points"] = torch.zeros((0,), device=points.device, dtype=torch.int32)
-            outputs["voxel_coords"] = torch.zeros((0, 4), device=points.device, dtype=torch.int32)
-            outputs["point_voxel_indices"] = voxels_data.point_voxel_indices
-            outputs["num_dropped_voxels"] = voxels_data.num_dropped_voxels
-            return outputs
+            return PillarInputs(
+                voxels=points.new_zeros((0, self.max_num_points, points.shape[1])),
+                num_points=torch.zeros((0,), device=points.device, dtype=torch.int32),
+                voxel_coords=torch.zeros((0, 4), device=points.device, dtype=torch.int32),
+                point_voxel_indices=voxels_data.point_voxel_indices,
+                num_dropped_voxels=voxels_data.num_dropped_voxels,
+            )
 
         # Concat batch column to the voxel coordinates
         batch_coords = torch.cat(
             [voxels_data.batch_indices.unsqueeze(1), voxels_data.coords], dim=1
         )
-        batch_voxels = voxels_data.voxels
-        batch_num_points = voxels_data.num_points
-
-        # TODO (KokSeang): Remove this backward compatibility code in the future
         if self.voxelization_z_order_first:
-            # Transpose [x, y, z] to [z, y, x] for backward compatibility
+            # Transpose [x, y, z] to [z, y, x], the coordinate order of the deployed engines
             batch_coords = batch_coords[:, [0, 3, 2, 1]].contiguous()
 
-        outputs["voxels"] = batch_voxels
-        outputs["num_points"] = batch_num_points
-        outputs["voxel_coords"] = batch_coords
-        outputs["point_voxel_indices"] = voxels_data.point_voxel_indices
-        outputs["num_dropped_voxels"] = voxels_data.num_dropped_voxels
-        return outputs
+        return PillarInputs(
+            voxels=voxels_data.voxels,
+            num_points=voxels_data.num_points,
+            voxel_coords=batch_coords,
+            point_voxel_indices=voxels_data.point_voxel_indices,
+            num_dropped_voxels=voxels_data.num_dropped_voxels,
+        )

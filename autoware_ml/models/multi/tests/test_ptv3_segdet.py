@@ -7,9 +7,23 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from autoware_ml.datamodule.samples.batch import (
+    Batch,
+    Boxes3DBatch,
+    PointCloudBatch,
+    SegmentationBatch,
+)
+from autoware_ml.models.detection3d.outputs import Detection3DPrediction
 from autoware_ml.models.detection3d.ptv3 import PTv3DetFeatureFusion
+from autoware_ml.models.detection3d.tests.ptv3_detection_fixtures import (
+    PTV3_FEATURE_NAMES,
+    build_seg_head,
+    make_frame_meta,
+)
 from autoware_ml.models.multi.ptv3_segdet import PTv3SegDetModel
 from autoware_ml.models.segmentation3d.heads.ptv3 import current_frame_mask
+from autoware_ml.preprocessing.base import ProcessedBatch
+from autoware_ml.preprocessing.detection3d.point_pillar import PillarInputs
 from autoware_ml.utils.point_cloud.structures import Point
 
 
@@ -35,25 +49,52 @@ def _make_masking_model(recorded_calls: list) -> SimpleNamespace:
     )
 
 
-def _make_batch(has_boxes: list[bool]) -> dict:
+def _make_processed(has_boxes: list[bool]) -> ProcessedBatch:
     """Detection supervision is carried by the ground truth itself: frames
     without boxes are detection-unsupervised. Every frame carries two points
     that map to their own voxels."""
     num_frames = len(has_boxes)
-    return {
-        "points": [torch.zeros((2, 5), dtype=torch.float32) for _ in range(num_frames)],
-        "point_voxel_indices": torch.arange(2 * num_frames, dtype=torch.long),
-        "num_dropped_voxels": torch.tensor(0),
-        "segment": torch.tensor([0, 1] * num_frames, dtype=torch.long),
-        "gt_boxes": [
-            torch.full((1, 9), float(i)) if with_boxes else torch.zeros((0, 9))
-            for i, with_boxes in enumerate(has_boxes)
-        ],
-        "gt_labels": [
-            torch.tensor([i]) if with_boxes else torch.zeros((0,), dtype=torch.long)
-            for i, with_boxes in enumerate(has_boxes)
-        ],
-    }
+    num_points = 2 * num_frames
+    batch = Batch(
+        meta=make_frame_meta(num_frames),
+        point_cloud=PointCloudBatch(
+            features=tuple(torch.zeros((2, 5), dtype=torch.float32) for _ in range(num_frames)),
+            feature_names=PTV3_FEATURE_NAMES,
+            num_current_points=tuple(2 for _ in range(num_frames)),
+        ),
+        segmentation=SegmentationBatch(
+            labels=tuple(torch.tensor([0, 1], dtype=torch.long) for _ in range(num_frames))
+        ),
+        boxes=Boxes3DBatch(
+            params=tuple(
+                torch.full((1, 9), float(index)) if with_boxes else torch.zeros((0, 9))
+                for index, with_boxes in enumerate(has_boxes)
+            ),
+            labels=tuple(
+                torch.tensor([index]) if with_boxes else torch.zeros((0,), dtype=torch.long)
+                for index, with_boxes in enumerate(has_boxes)
+            ),
+            names=tuple(("car",) if with_boxes else () for with_boxes in has_boxes),
+            num_lidar_points=tuple(
+                torch.tensor([1], dtype=torch.long)
+                if with_boxes
+                else torch.zeros((0,), dtype=torch.long)
+                for with_boxes in has_boxes
+            ),
+        ),
+    )
+    return ProcessedBatch(
+        batch=batch,
+        inputs=(
+            PillarInputs(
+                voxels=torch.zeros((num_points, 1, 5), dtype=torch.float32),
+                num_points=torch.ones(num_points, dtype=torch.int32),
+                voxel_coords=torch.zeros((num_points, 4), dtype=torch.int32),
+                point_voxel_indices=torch.arange(num_points, dtype=torch.long),
+                num_dropped_voxels=torch.tensor(0),
+            ),
+        ),
+    )
 
 
 def _make_outputs(batch_size: int) -> dict:
@@ -69,10 +110,10 @@ def _make_outputs(batch_size: int) -> dict:
 def test_compute_metrics_masks_detection_loss_to_frames_with_boxes() -> None:
     recorded_calls: list = []
     model = _make_masking_model(recorded_calls)
-    batch = _make_batch([True, False])
+    processed = _make_processed([True, False])
     outputs = _make_outputs(batch_size=2)
 
-    metrics = PTv3SegDetModel.compute_metrics(model, batch, outputs)
+    metrics = PTv3SegDetModel.compute_metrics(model, processed, outputs)
 
     assert len(recorded_calls) == 1
     det_outputs, gt_boxes, gt_labels = recorded_calls[0]
@@ -86,10 +127,10 @@ def test_compute_metrics_masks_detection_loss_to_frames_with_boxes() -> None:
 def test_compute_metrics_keeps_every_frame_when_all_have_boxes() -> None:
     recorded_calls: list = []
     model = _make_masking_model(recorded_calls)
-    batch = _make_batch([True, True])
+    processed = _make_processed([True, True])
     outputs = _make_outputs(batch_size=2)
 
-    PTv3SegDetModel.compute_metrics(model, batch, outputs)
+    PTv3SegDetModel.compute_metrics(model, processed, outputs)
 
     det_outputs, gt_boxes, _ = recorded_calls[0]
     assert torch.equal(det_outputs["heatmap"], outputs["det_outputs"]["heatmap"])
@@ -99,10 +140,10 @@ def test_compute_metrics_keeps_every_frame_when_all_have_boxes() -> None:
 def test_compute_metrics_keeps_det_branch_in_graph_without_supervised_frames() -> None:
     recorded_calls: list = []
     model = _make_masking_model(recorded_calls)
-    batch = _make_batch([False, False])
+    processed = _make_processed([False, False])
     outputs = _make_outputs(batch_size=2)
 
-    metrics = PTv3SegDetModel.compute_metrics(model, batch, outputs)
+    metrics = PTv3SegDetModel.compute_metrics(model, processed, outputs)
 
     assert not recorded_calls
     assert float(metrics["det_loss"].detach()) == 0.0
@@ -116,17 +157,16 @@ def _make_eval_model() -> SimpleNamespace:
     def predict(det_outputs):
         batch_size = det_outputs["heatmap"].shape[0]
         return [
-            {
-                "bboxes_3d": torch.full((2, 9), float(index)),
-                "scores_3d": torch.full((2,), float(index)),
-                "labels_3d": torch.zeros(2, dtype=torch.long),
-            }
+            Detection3DPrediction(
+                bboxes_3d=torch.full((2, 9), float(index)),
+                scores_3d=torch.full((2,), float(index)),
+                labels_3d=torch.zeros(2, dtype=torch.long),
+            )
             for index in range(batch_size)
         ]
 
     return SimpleNamespace(
         bbox_head=SimpleNamespace(predict=predict),
-        time_lag_dim=4,
         _detection_frame_mask=PTv3SegDetModel._detection_frame_mask,
     )
 
@@ -137,9 +177,9 @@ def test_build_eval_output_neutralizes_unflagged_frames_keeping_one_entry_per_fr
     frame regardless of its seg/det frame mix."""
     model = _make_eval_model()
     outputs = _make_outputs(batch_size=2)
-    batch = _make_batch([False, True])
+    processed = _make_processed([False, True])
 
-    eval_out = PTv3SegDetModel.build_eval_output(model, batch, outputs)
+    eval_out = PTv3SegDetModel.build_eval_output(model, processed, outputs)
 
     assert len(eval_out["seg_frames"]) == 2
     assert len(eval_out["predictions"]) == 2
@@ -155,9 +195,9 @@ def test_build_eval_output_neutralizes_unflagged_frames_keeping_one_entry_per_fr
 def test_build_eval_output_without_flagged_frames_keeps_neutral_entries() -> None:
     model = _make_eval_model()
     outputs = _make_outputs(batch_size=1)
-    batch = _make_batch([False])
+    processed = _make_processed([False])
 
-    eval_out = PTv3SegDetModel.build_eval_output(model, batch, outputs)
+    eval_out = PTv3SegDetModel.build_eval_output(model, processed, outputs)
 
     assert len(eval_out["seg_frames"]) == 1
     assert len(eval_out["predictions"]) == 1
@@ -169,8 +209,6 @@ def test_seg_head_loss_returns_connected_zero_when_all_targets_ignored() -> None
     """A batch can carry zero seg supervision (e.g. seg-masked det-val frames);
     CE over zero valid targets is nan, so the head must short-circuit to a
     graph-connected zero."""
-    from autoware_ml.models.detection3d.tests.ptv3_detection_fixtures import build_seg_head
-
     head = build_seg_head(num_classes=3, dec_depths=(0,))
     logits = torch.randn(5, 3, requires_grad=True)
     all_ignored = torch.full((5,), -1, dtype=torch.long)

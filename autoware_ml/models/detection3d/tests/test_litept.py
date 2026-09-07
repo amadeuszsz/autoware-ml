@@ -27,12 +27,11 @@ from autoware_ml.models.segmentation3d.encoders.ptv3 import (
 )
 from autoware_ml.ops.spconv.availability import IS_SPCONV_AVAILABLE
 from autoware_ml.models.detection3d.tests.ptv3_detection_fixtures import (
-    build_inputs,
     build_litept_encoder,
     build_litept_seg_model,
+    build_processed,
     build_ptv3_encoder,
     build_seg_model,
-    move_batch_to_device,
 )
 
 REQUIRES_SPARSE_CUDA = pytest.mark.skipif(
@@ -198,12 +197,12 @@ def test_expand_stage_flags_rejects_a_wrong_length_sequence() -> None:
 def test_litept_is_a_drop_in_encoder_for_the_ptv3_segmentation_model() -> None:
     """The unmodified PTv3 task model trains and predicts with a LitePT encoder."""
     model = build_litept_seg_model().cuda().eval()
-    batch = move_batch_to_device(build_inputs(), torch.device("cuda"))
+    processed = build_processed(device=torch.device("cuda"))
 
     with torch.no_grad():
-        logits = model(**batch)
+        logits = model(**model.bind_forward_inputs(processed))
 
-    assert logits.shape == (batch["voxels"].shape[0], 3)
+    assert logits.shape == (processed.resolve("voxels").shape[0], 3)
     assert torch.isfinite(logits).all()
 
 
@@ -215,9 +214,9 @@ def test_litept_split_export_declares_and_consumes_the_ptv3_contract() -> None:
     so the only difference from PTv3 is which of them the graph consumes.
     """
     model = build_litept_seg_model().cuda().eval()
-    batch = move_batch_to_device(build_inputs(), torch.device("cuda"))
+    processed = build_processed(device=torch.device("cuda"))
 
-    specs = model.build_export_specs(batch)
+    specs = model.build_export_specs(processed)
     encoder_spec = specs["ptv3_encoder"]
 
     assert "serialized_order" in encoder_spec.input_param_names
@@ -242,17 +241,17 @@ def test_litept_split_export_declares_and_consumes_the_ptv3_contract() -> None:
     ]
     with torch.no_grad():
         pred_labels, pred_probs = head_spec.module(*head_spec.args)
-    assert pred_labels.shape == (batch["voxels"].shape[0],)
-    assert pred_probs.shape == (batch["voxels"].shape[0], 3)
+    assert pred_labels.shape == (processed.resolve("voxels").shape[0],)
+    assert pred_probs.shape == (processed.resolve("voxels").shape[0], 3)
 
 
 @REQUIRES_SPARSE_CUDA
 def test_litept_monolithic_export_runs_on_its_declared_inputs() -> None:
     """The single-graph export adds clusters and otherwise matches PTv3 too."""
     model = build_litept_seg_model().cuda().eval()
-    batch = move_batch_to_device(build_inputs(), torch.device("cuda"))
+    processed = build_processed(device=torch.device("cuda"))
 
-    spec = model.build_export_spec(batch)
+    spec = model.build_export_spec(processed)
 
     assert "serialized_order" in spec.input_param_names
     assert "serialized_inverse" in spec.input_param_names
@@ -262,17 +261,17 @@ def test_litept_monolithic_export_runs_on_its_declared_inputs() -> None:
 
     with torch.no_grad():
         pred_labels, pred_probs = spec.module(*spec.args)
-    assert pred_labels.shape == (batch["voxels"].shape[0],)
-    assert pred_probs.shape == (batch["voxels"].shape[0], 3)
+    assert pred_labels.shape == (processed.resolve("voxels").shape[0],)
+    assert pred_probs.shape == (processed.resolve("voxels").shape[0], 3)
 
 
 @REQUIRES_SPARSE_CUDA
 def test_ptv3_monolithic_export_contract_still_lists_every_tensor() -> None:
     """Regression guard: the PTv3 single-graph contract is byte-for-byte what it was."""
     model = build_seg_model().cuda().eval()
-    batch = move_batch_to_device(build_inputs(), torch.device("cuda"))
+    processed = build_processed(device=torch.device("cuda"))
 
-    spec = model.build_export_spec(batch)
+    spec = model.build_export_spec(processed)
 
     assert spec.input_param_names == [
         "voxels",
@@ -310,8 +309,8 @@ def test_exported_encoder_graph_declares_a_subset_of_the_contract(tmp_path) -> N
 
     for tag, model in (("litept", build_litept_seg_model()), ("ptv3", build_seg_model())):
         model = model.cuda().eval()
-        batch = move_batch_to_device(build_inputs(), torch.device("cuda"))
-        spec = model.build_export_specs(batch)["ptv3_encoder"]
+        processed = build_processed(device=torch.device("cuda"))
+        spec = model.build_export_specs(processed)["ptv3_encoder"]
         path = tmp_path / f"{tag}_encoder.onnx"
 
         export_to_onnx(
@@ -339,9 +338,9 @@ def test_litept_encoder_contract_matches_ptv3_field_for_field() -> None:
     every stage, plus the level-0 ``serialized_order`` and ``serialized_inverse`` - and
     rejects an engine missing any of them.
     """
-    batch = move_batch_to_device(build_inputs(), torch.device("cuda"))
-    litept = build_litept_seg_model().cuda().eval().build_export_specs(batch)["ptv3_encoder"]
-    ptv3 = build_seg_model().cuda().eval().build_export_specs(batch)["ptv3_encoder"]
+    processed = build_processed(device=torch.device("cuda"))
+    litept = build_litept_seg_model().cuda().eval().build_export_specs(processed)["ptv3_encoder"]
+    ptv3 = build_seg_model().cuda().eval().build_export_specs(processed)["ptv3_encoder"]
 
     def stage_fields(names: list[str]) -> set[str]:
         return {name.split("_", 3)[3] for name in names if name.startswith("serialized_pooling_")}
