@@ -12,7 +12,10 @@ All configs live in `autoware_ml/configs/`:
 
 ```text
 configs/
+├── database/          # Databases, their taxonomies, scenario lists and box pipelines
+├── datasets/          # Shared dataset parameters referenced by task configs
 ├── defaults/          # Base settings and module defaults
+├── generators/        # Dataset record generation configs
 └── tasks/             # Task-specific configs
 ```
 
@@ -65,30 +68,23 @@ A complete task config includes these sections:
 
 ### `datamodule`
 
-Controls data loading and split-specific transforms:
+Controls data sources and split-specific transforms. The datamodule generates the record table
+of every configured database when it is missing, splits the records by the scenario lists of
+the database, and serves typed samples through the transform pipelines:
 
 ```yaml
 datamodule:
-  _target_: autoware_ml.datamodule.my_dataset.MyDataModule
-  data_root: ${data_root}
-  train_ann_file: ${data_root}/info/train.pkl
-  val_ann_file: ${data_root}/info/val.pkl
-
-  # collation_map: whitelist of batch keys and how to merge them across samples.
-  # Keys not listed here are dropped before the batch reaches the model.
-  # Strategies:
-  #   stack        - fixed-shape tensors concatenated along a new batch dim (all shapes must match)
-  #   concat       - variable-length tensors concatenated along dim 0. Adds a
-  #                  batch["offset"] key with cumulative per-sample lengths so
-  #                  downstream code can recover per-sample boundaries.
-  #   index_concat - like concat, but values are integer indices into the
-  #                  concatenated concat key (e.g. point indices into the point cloud).
-  #                  Each sample's indices are shifted by the cumulative element
-  #                  count of preceding samples so they remain globally valid after concat.
-  #   list         - variable-shape values kept as a Python list (no tensor conversion)
-  collation_map:
-    input_tensor: stack
-    gt_labels: stack
+  _target_: autoware_ml.datamodule.base.DataModule
+  dataset:
+    _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
+    _partial_: true
+  train_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: false
+      repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}
 
   train_dataloader_cfg:
     batch_size: 8
@@ -96,13 +92,75 @@ datamodule:
     shuffle: true
 
   train_transforms:
+    _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.my_transforms.my_transform.MyTransform
-        param: value
+      - _target_: autoware_ml.transforms.point_cloud.crop.PointsRangeFilter
+        point_cloud_range: ${point_cloud_range}
 ```
 
+The section is built from these blocks:
+
+- `dataset` - partial factory of the dataset family (`T4Dataset` or `NuscenesDataset`). The datamodule calls it once per split with the transform pipeline of that split.
+- `splitter` - assigns the records of a database to train, val and test by its scenario lists. The default runtime binds the scenario splitter.
+- `train_sources`, `val_sources`, `test_sources` - databases served by each split, the test sources also serve predict. Every source declares its supervision coverage (`det3d`, `seg3d`) and how often its frames appear per epoch (`repeat`), so one split can mix corpora with different labels.
+- `train/val/test/predict_transforms` - per-split transform pipelines, applied per sample on CPU.
+- `train/val/test/predict_dataloader_cfg` - per-split dataloader settings.
+- `train_frame_sampling` - optional repeat factor sampling settings for the training split.
+
+The `database` value of a source comes from the `configs/database/` group and is bound through
+a defaults entry in the task config:
+
+```yaml
+defaults:
+  - /database@database: t4dataset/t4dataset_j6gen2_base
+```
+
+A database config names the scenario groups of the corpus, binds the taxonomy its labels are
+baked with and the box pipelines, and points at the record table location:
+
+```yaml
+_target_: autoware_ml.databases.t4dataset.t4database.T4Database
+defaults:
+  - /database/t4dataset/taxonomy@taxonomy: online
+  - /database/t4dataset/box3d_pipelines@box3d_pipelines: default_box3d_pipelines
+  - /database/t4dataset/scenarios@scenarios.db_j6gen2_base: detection3d/db_j6gen2_base
+root_path: ${data_root_path}/t4dataset/
+cache_path: ${cache_root_path}/t4dataset/
+```
+
+The taxonomy is a config group under `configs/database/<family>/taxonomy/`, one file per level
+of granularity, each holding the detection and the segmentation classes of the level, how the
+fine labels of the family vocabulary fold onto them, and the tables keyed by class: the
+behaviour groups, the evaluation range per class, the collision kind per class, the run speed
+per living class, the partial detection classes and the heatmap pooling classes
+of the detection heads. The dataset packages read their class lists and these
+tables from the taxonomy of the database bound at `database`, while they keep the choice of
+metrics, ranges and filters, so a task selects a level with one override and every consumer
+follows:
+
+```yaml
+defaults:
+  - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
+  - override /database/t4dataset/taxonomy@database.taxonomy: offline
+  - override /database/t4dataset/box3d_pipelines@database.box3d_pipelines: trailer_class_box3d_pipelines
+```
+
+The same override, passed on the command line of `generate-dataset`, builds the table that
+task reads. Every database a task binds must carry the same taxonomy, so a rehearsal database
+takes the override at its own binding as well. Dataset packages are composed by the task alone,
+never by a database or a metrics package.
+
+Record tables are written below `cache_root_path`, the `.cache` directory of the workspace.
+They index the datasets and stay small, so they need no mount of their own, and the data
+mount is read only. The scenario lists are read from the perception-devops checkout below
+`working_dir`. See [database design](../databases/design.md).
+
+Collation is not configurable. `Batch.collate` turns the transformed samples into the typed
+`Batch` the models consume, and model family specific layouts are derived later by the runtime
+preprocessing on the target device.
+
 For custom components, point `_target_` at the concrete implementation module,
-for example `autoware_ml.transforms.my_transforms.my_transform.MyTransform` or
+for example `autoware_ml.transforms.point_cloud.crop.PointsRangeFilter` or
 `autoware_ml.models.common.backbones.my_backbone.MyBackbone`.
 
 ### `data_preprocessing`
@@ -233,10 +291,11 @@ defaults:
   - _self_                        # Apply this file's overrides
 
 # Override specific values
-data_root: /path/to/dataset
+batch_size: 16
 
 datamodule:
-  data_root: ${data_root}
+  train_dataloader_cfg:
+    batch_size: ${batch_size}
 ```
 
 ## Variable Interpolation
@@ -244,11 +303,10 @@ datamodule:
 Reference other config values with `${...}`:
 
 ```yaml
-data_root: /path/to/dataset
+point_cloud_range: [-122.4, -122.4, -3.0, 122.4, 122.4, 5.0]
 
-datamodule:
-  data_root: ${data_root}
-  train_ann_file: ${data_root}/info/train.pkl
+model:
+  point_cloud_range: ${point_cloud_range}
 ```
 
 Hydra resolvers:

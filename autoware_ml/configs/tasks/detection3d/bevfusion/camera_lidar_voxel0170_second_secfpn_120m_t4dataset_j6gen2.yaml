@@ -4,6 +4,7 @@ defaults:
   - /datasets/t4dataset/detection3d
   - /datasets/t4dataset/lidar
   - /datasets/t4dataset/camera
+  - /database@database: t4dataset/t4dataset_j6gen2_base
   - _self_
 
 batch_size: 8
@@ -19,11 +20,9 @@ point_filters:
   - _target_: autoware_ml.transforms.boxes3d.filters.ObjectRangeMinPointsFilter
     range_radius: [0.0, 60.0]
     min_num_points: ${dataset.detection3d.train_min_points_near}
-    time_lag_dim: 4
   - _target_: autoware_ml.transforms.boxes3d.filters.ObjectRangeMinPointsFilter
     range_radius: [60.0, .inf]
     min_num_points: ${dataset.detection3d.train_min_points_far}
-    time_lag_dim: 4
 voxel_size: [0.17, 0.17, 0.2]
 out_size_factor: 8
 max_time_lag: 0.2
@@ -31,20 +30,16 @@ bev_voxel_size: [0.68, 0.68]
 image_size: [384, 768]
 
 datamodule:
-  collation_map:
-    img: list
-    camera_intrinsics: list
-    lidar2cam: list
-    lidar2img: list
-    img_aug_matrix: list
-  _target_: autoware_ml.datamodule.t4dataset.multiview_detection3d.T4MultiviewDetection3DDataModule
-  data_root: ${dataset.data_root}
-  train_ann_file: info/detection3d/t4dataset_j6gen2_base_infos_train.pkl
-  val_ann_file: info/detection3d/t4dataset_j6gen2_base_infos_val.pkl
-  test_ann_file: info/detection3d/t4dataset_j6gen2_base_infos_val.pkl
-  class_names: ${dataset.detection3d.class_names}
-  camera_order: ${dataset.camera.camera_order}
-  name_mapping: ${dataset.detection3d.name_mapping}
+  dataset:
+    _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
+    _partial_: true
+  train_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: false
+      repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}
   train_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
@@ -58,22 +53,20 @@ datamodule:
   train_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.merge.MergeObjects3D
-        merge_objects: ${dataset.detection3d.merge_objects}
-        name_mapping: ${dataset.detection3d.name_mapping}
-      - _target_: autoware_ml.transforms.boxes3d.loading.LoadAnnotations3D
-        name_mapping: ${dataset.detection3d.name_mapping}
+      - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
+        class_names: ${dataset.detection3d.class_names}
+        ignore_label_index: ${dataset.detection3d.ignore_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.camera.loading.LoadMultiViewImagesFromFiles
+        camera_order: ${dataset.camera.camera_order}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
-        sweeps_num: 2
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
-        pad_empty_sweeps: true
+        use_features: [x, y, z, intensity, timestamp_difference]
         remove_close: true
-        sweep_selection: random
-        time_lag_range: [0.05, 0.25]
+        past:
+          _target_: autoware_ml.transforms.point_cloud.sweeps.SweepWindow
+          num: 1
+          time_lag_range: [0.05, 0.25]
+          selection: random
       - _target_: autoware_ml.transforms.camera_lidar.camera_lidar.ImageAug3D
         final_dim: ${image_size}
         resize_lim: [0.29, 0.35]
@@ -97,22 +90,20 @@ datamodule:
   test_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.merge.MergeObjects3D
-        merge_objects: ${dataset.detection3d.merge_objects}
-        name_mapping: ${dataset.detection3d.name_mapping}
-      - _target_: autoware_ml.transforms.boxes3d.loading.LoadAnnotations3D
-        name_mapping: ${dataset.detection3d.name_mapping}
+      - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
+        class_names: ${dataset.detection3d.class_names}
+        ignore_label_index: ${dataset.detection3d.ignore_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.camera.loading.LoadMultiViewImagesFromFiles
+        camera_order: ${dataset.camera.camera_order}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
-        sweeps_num: 2
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
-        pad_empty_sweeps: true
+        use_features: [x, y, z, intensity, timestamp_difference]
         remove_close: true
-        sweep_selection: nearest
-        time_lag_range: [0.05, 0.25]
+        past:
+          _target_: autoware_ml.transforms.point_cloud.sweeps.SweepWindow
+          num: 1
+          time_lag_range: [0.05, 0.25]
+          selection: nearest
       - _target_: autoware_ml.transforms.camera_lidar.camera_lidar.ImageAug3D
         final_dim: ${image_size}
         resize_lim: [0.32, 0.32]
@@ -129,15 +120,15 @@ datamodule:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
       - _target_: autoware_ml.transforms.camera.loading.LoadMultiViewImagesFromFiles
+        camera_order: ${dataset.camera.camera_order}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
-        sweeps_num: 2
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
-        pad_empty_sweeps: true
+        use_features: [x, y, z, intensity, timestamp_difference]
         remove_close: true
-        sweep_selection: nearest
-        time_lag_range: [0.05, 0.25]
+        past:
+          _target_: autoware_ml.transforms.point_cloud.sweeps.SweepWindow
+          num: 1
+          time_lag_range: [0.05, 0.25]
+          selection: nearest
       - _target_: autoware_ml.transforms.camera_lidar.camera_lidar.ImageAug3D
         final_dim: ${image_size}
         resize_lim: [0.32, 0.32]
@@ -159,7 +150,6 @@ model:
     num_proposals: 500
     class_names: ${dataset.detection3d.class_names}
     num_classes: ${dataset.detection3d.num_classes}
-    dense_heatmap_pooling_classes: [car, truck, bus]
     nms_type: circle
     nms_min_radius: 0.25
     nms_groups:
@@ -187,12 +177,6 @@ model:
       - class_names: [debris]
         nms_radius: 0.0
         post_max_size: 50
-      - class_names: [vehicle_extension]
-        nms_radius: 0.0
-        post_max_size: 50
-      - class_names: [bicycle_rack]
-        nms_radius: 0.0
-        post_max_size: 50
     bbox_coder:
       post_center_range: [-200.0, -200.0, -10.0, 200.0, 200.0, 10.0]
-      score_threshold: [0.015, 0.010, 0.010, 0.010, 0.020, 0.020, 0.030, 0.030, 0.020, 0.040, 0.020, 0.020, 0.020]
+      score_threshold: [0.015, 0.010, 0.010, 0.010, 0.020, 0.020, 0.030, 0.030, 0.020, 0.040, 0.020]

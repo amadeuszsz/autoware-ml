@@ -1,0 +1,63 @@
+# @package _global_
+
+# Stage 3 of the seg3d preserving pipeline: joint training on the pseudo labelled j6gen2 set, detection
+# ground truth with pseudo segmentation, with the j6gen2 seg3d ground truth frames rehearsed
+# in. Initialized from the stage 2 checkpoint, so the warmup is short and every learning rate
+# sits below the stage that produced those weights.
+
+defaults:
+  - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
+  - /database@rehearsal_database: t4dataset/t4dataset_j6gen2_semaseg
+  - override /database@database: t4dataset/t4dataset_j6gen2_pseudo
+  - _self_
+
+# The pseudo masks carry the category names of the auto label generator, the segmentation
+# vocabulary of the database absorbs them, so this stage needs no class remapping.
+
+datamodule:
+  # Training mixes the pseudo corpus with the rehearsed seg3d GT frames.
+  # Validation and test score detection on the pseudo corpus boxes and
+  # segmentation on the GT masks only, each frame once.
+  train_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: true
+      repeat: 1
+    - database: ${rehearsal_database}
+      det3d: false
+      seg3d: true
+      repeat: 6
+  val_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: false
+      repeat: 1
+    - database: ${rehearsal_database}
+      det3d: false
+      seg3d: true
+      repeat: 1
+  test_sources: ${datamodule.val_sources}
+
+model:
+  # Both branches arrive trained from stage 2, so the encoder groups stay below the stage 2
+  # rates and the detection branch drops the peak it needed while it was learning from scratch.
+  # Without these overrides the leaf inherits the from-scratch rates of the base config and
+  # fine tunes the encoder twice as fast as the stage that trained it.
+  optimizer_group_overrides:
+    encoder_block:
+      lr: 0.00001
+    encoder_default:
+      lr: 0.000025
+    seg3d_head:
+      lr: 0.000025
+  scheduler:
+    warmup_epochs: 1
+    # Warmup plus decay has to cover max_epochs, the cosine turns back upwards beyond it.
+    decay_epochs: 15
+    max_lr_factor: 2.0
+
+trainer:
+  max_epochs: 16
+
+callbacks:
+  early_stopping: null

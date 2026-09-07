@@ -1,0 +1,59 @@
+# @package _global_
+
+# Stage 2 of the seg3d preserving pipeline: pretraining on the mixed ODD base set, detection
+# ground truth with pseudo segmentation, with the j6gen2 seg3d ground truth frames rehearsed
+# in. The schedule is shorter and the encoder groups cooler than the joint stage, this stage
+# only pretrains the features stage 3 consumes.
+
+defaults:
+  - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
+  - /database@rehearsal_database: t4dataset/t4dataset_j6gen2_semaseg
+  - override /database@database: t4dataset/t4dataset_base_pseudo
+  - _self_
+
+# The pseudo masks carry the category names of the auto label generator, the segmentation
+# vocabulary of the database absorbs them, so this stage needs no class remapping.
+
+datamodule:
+  # Training mixes the pseudo corpus with the rehearsed seg3d GT frames.
+  # Validation and test score detection on the pseudo corpus boxes and
+  # segmentation on the GT masks only, each frame once.
+  train_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: true
+      repeat: 1
+    - database: ${rehearsal_database}
+      det3d: false
+      seg3d: true
+      repeat: 6
+  val_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: false
+      repeat: 1
+    - database: ${rehearsal_database}
+      det3d: false
+      seg3d: true
+      repeat: 1
+  test_sources: ${datamodule.val_sources}
+
+model:
+  optimizer_group_overrides:
+    encoder_block:
+      lr: 0.00001
+    encoder_default:
+      lr: 0.000025
+    seg3d_head:
+      lr: 0.00005
+  scheduler:
+    warmup_epochs: 2
+    decay_epochs: 22
+    # Caps the peak learning rate of the detection branch trained from scratch
+    max_lr_factor: 5.0
+
+trainer:
+  max_epochs: 24
+
+callbacks:
+  early_stopping: null

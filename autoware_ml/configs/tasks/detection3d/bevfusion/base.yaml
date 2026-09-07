@@ -11,16 +11,6 @@ out_size_factor: ???
 score_threshold: 0.0
 max_time_lag: ???
 
-datamodule:
-  collation_map:
-    points: list
-    gt_boxes: list
-    gt_labels: list
-    gt_num_points: list
-    ego2global: list
-    scene_token: list
-    timestamp: list
-
 model:
   _target_: autoware_ml.models.detection3d.bevfusion.BEVFusionDetectionModel
   metrics: ${dataset.detection3d.metrics}
@@ -91,6 +81,7 @@ model:
     in_channels: 512
     hidden_channel: 128
     num_classes: ${dataset.detection3d.num_classes}
+    dense_heatmap_pooling_classes: ${dataset.detection3d.heatmap_pooling_classes}
     num_decoder_layers: 1
     num_heads: 8
     feedforward_channels: 256

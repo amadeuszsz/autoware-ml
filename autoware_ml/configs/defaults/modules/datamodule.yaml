@@ -1,6 +1,15 @@
 # @package _global_
 
+defaults:
+  - /datamodule/splitter@datamodule.splitter: default_scenario_splitter
+
 datamodule:
+  _target_: autoware_ml.datamodule.base.DataModule
+  _convert_: all
+  dataset: ???
+  train_sources: ???
+  val_sources: ???
+  test_sources: ???
   train_dataloader_cfg:
     pin_memory: true
     persistent_workers: true

@@ -67,8 +67,8 @@ The export produces the two ONNX modules consumed by `autoware_universe/percepti
 | `autoware_ml/models/detection3d/necks/second_fpn.py`    | SECONDFPN neck             |
 | `autoware_ml/models/detection3d/heads/centerpoint.py`   | CenterPoint detection head |
 | `autoware_ml/preprocessing/detection3d/point_pillar.py` | Pillar preprocessing       |
-| `autoware_ml/datamodule/nuscenes/detection3d.py`        | NuScenes datamodule        |
-| `autoware_ml/datamodule/t4dataset/detection3d.py`       | T4Dataset datamodule       |
+| `autoware_ml/datamodule/nuscenes/dataset.py`            | NuScenes dataset           |
+| `autoware_ml/datamodule/t4dataset/dataset.py`           | T4Dataset dataset          |
 | `autoware_ml/configs/tasks/detection3d/centerpoint/`    | Task configurations        |
 
 ## Acknowledgment

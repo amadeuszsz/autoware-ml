@@ -1,6 +1,6 @@
 # @package t4dataset
 
-data_root: ${oc.env:AUTOWARE_ML_DATA_PATH}/t4dataset
+data_root: ${data_root_path}/t4dataset
 
 # Collision model, shared by the detection provider and the evaluation filters of
 # both tasks so its consumers cannot drift apart. Ego is a platform property, it

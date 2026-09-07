@@ -78,6 +78,6 @@ The training pipeline includes image undistortion, synthetic calibration perturb
 | Path                                                                          | Description          |
 | ----------------------------------------------------------------------------- | -------------------- |
 | `autoware_ml/models/calibration_status/`                                      | Model implementation |
-| `autoware_ml/datamodule/nuscenes/calibration_status.py`                       | NuScenes datamodule  |
-| `autoware_ml/datamodule/t4dataset/calibration_status.py`                      | T4Dataset datamodule |
+| `autoware_ml/datamodule/nuscenes/dataset.py`                                  | NuScenes dataset     |
+| `autoware_ml/datamodule/t4dataset/dataset.py`                                 | T4Dataset dataset    |
 | `autoware_ml/configs/tasks/calibration_status/calibration_status_classifier/` | Task configurations  |

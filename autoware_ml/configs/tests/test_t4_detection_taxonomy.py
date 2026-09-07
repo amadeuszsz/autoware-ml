@@ -1,47 +1,56 @@
-"""Tests for the bundled T4 detection taxonomy."""
+# Copyright 2026 TIER IV, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-from __future__ import annotations
+"""Config level checks of the T4dataset taxonomy levels."""
 
 import pytest
 from hydra import compose, initialize_config_module
 from hydra.core.global_hydra import GlobalHydra
-from omegaconf import OmegaConf
+from hydra.utils import instantiate
 
 from autoware_ml.configs.resolvers import register_config_resolvers
-from autoware_ml.transforms.boxes3d.annotations import resolve_detection_class
+from autoware_ml.databases.taxonomy import DatabaseTaxonomy
 
 T4_DETECTION_CONFIG = "tasks/detection3d/ptv3/voxel012_122m_t4dataset_j6gen2"
+LEVELS = ("online", "offline")
 
 
-def _t4_detection_taxonomy() -> dict:
+def _taxonomy(level: str) -> DatabaseTaxonomy:
     register_config_resolvers()
     GlobalHydra.instance().clear()
     with initialize_config_module(version_base=None, config_module="autoware_ml.configs"):
-        cfg = compose(config_name=T4_DETECTION_CONFIG)
-    taxonomy = cfg.t4dataset.detection3d
-    return {
-        key: OmegaConf.to_container(taxonomy[key], resolve=True)
-        for key in ("class_names", "name_mapping", "merge_objects")
-    }
+        cfg = compose(
+            config_name=T4_DETECTION_CONFIG,
+            overrides=[f"database/t4dataset/taxonomy@database.taxonomy={level}"],
+        )
+    return instantiate(cfg.database.taxonomy)
 
 
-def test_every_mapped_target_is_a_detection_class_or_a_merge_source() -> None:
-    # A mapping onto a name that is neither trained nor consumed by a merge rule
-    # would drop every box of that source label without a word.
-    taxonomy = _t4_detection_taxonomy()
-    merge_names = {name for _, members in taxonomy["merge_objects"] for name in members}
-    allowed = set(taxonomy["class_names"]) | merge_names
-    targets = {name for name in taxonomy["name_mapping"].values() if name is not None}
-    assert targets <= allowed, sorted(targets - allowed)
-
-
-@pytest.mark.parametrize("raw_name", ["static_object.bicycle_rack", "static_object.bicycle rack"])
-def test_bicycle_rack_source_labels_resolve(raw_name: str) -> None:
-    # Both spellings the T4 corpora use for bicycle racks must reach the class.
-    taxonomy = _t4_detection_taxonomy()
-    resolved = resolve_detection_class(
-        {"gt_nusc_name": raw_name},
-        class_names=taxonomy["class_names"],
-        name_mapping=taxonomy["name_mapping"],
+@pytest.mark.parametrize("level", LEVELS)
+def test_every_level_is_a_strict_coarsening_of_the_vocabularies(level: str) -> None:
+    # Instantiation validates that every fine label folds onto one class or null and that
+    # the class keyed tables name exactly the classes of the level.
+    taxonomy = _taxonomy(level)
+    assert taxonomy.detection3d.class_names
+    assert taxonomy.segmentation3d.class_names[: taxonomy.detection3d.num_classes] == (
+        taxonomy.detection3d.class_names
     )
-    assert resolved == "bicycle_rack"
+
+
+@pytest.mark.parametrize("level", LEVELS)
+@pytest.mark.parametrize("raw_name", ["static_object.bicycle_rack", "static_object.bicycle rack"])
+def test_bicycle_rack_spellings_share_one_fine_label(level: str, raw_name: str) -> None:
+    # Both spellings the T4 corpora use for bicycle racks must reach the same fine label.
+    taxonomy = _taxonomy(level)
+    assert taxonomy.detection3d.fine_name(raw_name) == "bicycle_rack"

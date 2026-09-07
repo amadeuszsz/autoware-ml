@@ -1,0 +1,34 @@
+# @package _global_
+
+# Final stage of the seg3d preserving pipeline: fine tuning on the j6gen2 ground truth frames,
+# a corpus two orders of magnitude smaller than the pseudo labelled stages before it and the only
+# one carrying the fine segmentation classes, so the heads get the longest schedule of the
+# pipeline while the encoder stays cool.
+
+defaults:
+  - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
+  - _self_
+
+model:
+  # Both branches arrive trained from the pseudo stages and the corpus is small, so the encoder
+  # stays cool while the heads get room to learn the classes the pseudo stages never carried.
+  optimizer:
+    lr: 0.0001
+  optimizer_group_overrides:
+    encoder_block:
+      lr: 0.00001
+    encoder_default:
+      lr: 0.000025
+    seg3d_head:
+      lr: 0.0001
+  scheduler:
+    warmup_epochs: 2
+    # Warmup plus decay has to cover max_epochs, the cosine turns back upwards beyond it.
+    decay_epochs: 38
+    max_lr_factor: 2.0
+
+trainer:
+  max_epochs: 40
+
+callbacks:
+  early_stopping: null

@@ -477,7 +477,7 @@ database, the rest are code defaults.
 | horizon                               | 4 s (config)                                                                        |
 | propagation time step                 | 0.1 s (config)                                                                      |
 | max lateral acceleration (turn bound) | 3.0 m/s^2 (config)                                                                  |
-| minimum turn radius floor             | ego: wheel base over tan max steer angle (config), objects: 3.0 m friction floor (config)|
+| minimum turn radius floor             | ego: wheel base over tan max steer angle (config), objects: 3.0 m friction floor (config) |
 | arc samples per reachable set         | at least 21, raised until neighbouring sweeps overlap at their far ends             |
 | ego body                              | vehicle description dimensions from the dataset config, measured from the rear axle |
 | object body                           | the object's own box length and width                                               |

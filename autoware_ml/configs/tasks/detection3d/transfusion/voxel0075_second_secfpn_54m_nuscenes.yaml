@@ -3,6 +3,7 @@ defaults:
   - /tasks/detection3d/transfusion/base
   - /datasets/nuscenes/detection3d
   - /datasets/nuscenes/lidar
+  - /database@database: nuscenes/nuscenes_trainval
   - _self_
 
 batch_size: 16
@@ -11,7 +12,6 @@ num_workers: 8
 dataset: ${nuscenes}
 
 point_cloud_range: [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
-max_time_lag: 0.5
 # Point-count filters shared by training and validation: the validation loss is
 # computed on the same targets the model trains on. Test stays unfiltered, the
 # metric suites apply their own thresholds there.
@@ -19,18 +19,21 @@ point_filters:
   - _target_: autoware_ml.transforms.boxes3d.filters.ObjectRangeMinPointsFilter
     range_radius: [0.0, .inf]
     min_num_points: 1
-    time_lag_dim: 4
 voxel_size: [0.075, 0.075, 0.2]
 out_size_factor: 8
+max_time_lag: 0.5
 
 datamodule:
-  _target_: autoware_ml.datamodule.nuscenes.detection3d.NuscenesDetection3DDataModule
-  data_root: ${dataset.data_root}
-  train_ann_file: nuscenes_infos_train.pkl
-  val_ann_file: nuscenes_infos_val.pkl
-  test_ann_file: nuscenes_infos_val.pkl
-  class_names: ${dataset.detection3d.class_names}
-  name_mapping: ${dataset.detection3d.name_mapping}
+  dataset:
+    _target_: autoware_ml.datamodule.nuscenes.dataset.NuscenesDataset
+    _partial_: true
+  train_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: false
+      repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}
   train_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
@@ -44,17 +47,17 @@ datamodule:
   train_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.loading.LoadAnnotations3D
-        name_mapping: ${dataset.detection3d.name_mapping}
+      - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
+        class_names: ${dataset.detection3d.class_names}
+        ignore_label_index: ${dataset.detection3d.ignore_index}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
-        sweeps_num: 10
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
-        pad_empty_sweeps: true
+        use_features: [x, y, z, intensity, timestamp_difference]
         remove_close: true
-        sweep_selection: nearest
-        time_lag_range: [0.025, 0.475]
+        past:
+          _target_: autoware_ml.transforms.point_cloud.sweeps.SweepWindow
+          num: 9
+          time_lag_range: [0.025, 0.475]
+          selection: nearest
       - _target_: autoware_ml.transforms.point_cloud.geometry.GlobalRotScaleTrans
         rot_range: [-0.78539816, 0.78539816]
         scale_ratio_range: [0.9, 1.1]
@@ -71,17 +74,17 @@ datamodule:
   test_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.loading.LoadAnnotations3D
-        name_mapping: ${dataset.detection3d.name_mapping}
+      - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
+        class_names: ${dataset.detection3d.class_names}
+        ignore_label_index: ${dataset.detection3d.ignore_index}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
-        sweeps_num: 10
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
-        pad_empty_sweeps: true
+        use_features: [x, y, z, intensity, timestamp_difference]
         remove_close: true
-        sweep_selection: nearest
-        time_lag_range: [0.025, 0.475]
+        past:
+          _target_: autoware_ml.transforms.point_cloud.sweeps.SweepWindow
+          num: 9
+          time_lag_range: [0.025, 0.475]
+          selection: nearest
       - _target_: autoware_ml.transforms.point_cloud.crop.PointsRangeFilter
         point_cloud_range: ${point_cloud_range}
   val_transforms:
@@ -91,14 +94,13 @@ datamodule:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
-        sweeps_num: 10
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
-        pad_empty_sweeps: true
+        use_features: [x, y, z, intensity, timestamp_difference]
         remove_close: true
-        sweep_selection: nearest
-        time_lag_range: [0.025, 0.475]
+        past:
+          _target_: autoware_ml.transforms.point_cloud.sweeps.SweepWindow
+          num: 9
+          time_lag_range: [0.025, 0.475]
+          selection: nearest
       - _target_: autoware_ml.transforms.point_cloud.crop.PointsRangeFilter
         point_cloud_range: ${point_cloud_range}
 

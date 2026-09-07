@@ -4,6 +4,7 @@ defaults:
   - /tasks/detection3d/ptv3/tiny
   - /datasets/t4dataset/detection3d
   - /datasets/t4dataset/lidar
+  - /database@database: t4dataset/t4dataset_j6gen2_base
   - _self_
 
 batch_size: 8
@@ -21,35 +22,39 @@ point_filters:
   - _target_: autoware_ml.transforms.boxes3d.filters.ObjectRangeMinPointsFilter
     range_radius: [0.0, 60.0]
     min_num_points: ${dataset.detection3d.train_min_points_near}
-    time_lag_dim: 4
   - _target_: autoware_ml.transforms.boxes3d.filters.ObjectRangeMinPointsFilter
     range_radius: [60.0, .inf]
     min_num_points: ${dataset.detection3d.train_min_points_far}
-    time_lag_dim: 4
 num_proposals: 500
 
 datamodule:
-  _target_: autoware_ml.datamodule.t4dataset.detection3d.T4Detection3DDataModule
-  filter_attributes: ${dataset.detection3d.filter_attributes}
+  dataset:
+    _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
+    _partial_: true
+  train_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: false
+      repeat: 1
+  val_sources: ${datamodule.train_sources}
+  test_sources: ${datamodule.train_sources}
   train_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.merge.MergeObjects3D
-        merge_objects: ${dataset.detection3d.merge_objects}
-        name_mapping: ${dataset.detection3d.name_mapping}
-      - _target_: autoware_ml.transforms.boxes3d.loading.LoadAnnotations3D
-        name_mapping: ${dataset.detection3d.name_mapping}
+      - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
+        class_names: ${dataset.detection3d.class_names}
+        ignore_label_index: ${dataset.detection3d.ignore_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
-        sweeps_num: ${train_sweeps_num}
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
+        use_features: [x, y, z, intensity, timestamp_difference]
         remove_close: true
-        sweep_selection: random
-        time_lag_range: [0.05, 0.25]
+        past:
+          _target_: autoware_ml.transforms.point_cloud.sweeps.SweepWindow
+          num: ${train_past_sweeps_num}
+          time_lag_range: [0.05, 0.25]
+          selection: random
       - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
-        time_lag_dim: 4
+        require_time_lag: true
       - _target_: autoware_ml.transforms.point_cloud.geometry.RandomRotateTargetAngle
         p: 0.75
         angle: [0.5, 1.0, 1.5]
@@ -78,34 +83,30 @@ datamodule:
       - ${point_filters.0}
       - ${point_filters.1}
       - _target_: autoware_ml.transforms.common.packing.BuildPointFeatures
-        keys: [coord, strength, time_lag]
-        output_key: points
+        feature_names: [x, y, z, intensity, timestamp_difference]
   test_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
-      - _target_: autoware_ml.transforms.boxes3d.merge.MergeObjects3D
-        merge_objects: ${dataset.detection3d.merge_objects}
-        name_mapping: ${dataset.detection3d.name_mapping}
-      - _target_: autoware_ml.transforms.boxes3d.loading.LoadAnnotations3D
-        name_mapping: ${dataset.detection3d.name_mapping}
+      - _target_: autoware_ml.transforms.boxes3d.loading.LoadDet3DAnnotations
+        class_names: ${dataset.detection3d.class_names}
+        ignore_label_index: ${dataset.detection3d.ignore_index}
         filter_attributes: ${dataset.detection3d.filter_attributes}
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
-        sweeps_num: ${val_sweeps_num}
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
+        use_features: [x, y, z, intensity, timestamp_difference]
         remove_close: true
-        sweep_selection: nearest
-        time_lag_range: [0.05, 0.25]
+        past:
+          _target_: autoware_ml.transforms.point_cloud.sweeps.SweepWindow
+          num: ${val_past_sweeps_num}
+          time_lag_range: [0.05, 0.25]
+          selection: nearest
       - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
-        time_lag_dim: 4
+        require_time_lag: true
       - _target_: autoware_ml.transforms.point_cloud.crop.PointsRangeFilter
         point_cloud_range: ${point_cloud_range}
       - _target_: autoware_ml.transforms.boxes3d.filters.ObjectRangeFilter
         point_cloud_range: ${point_cloud_range}
       - _target_: autoware_ml.transforms.common.packing.BuildPointFeatures
-        keys: [coord, strength, time_lag]
-        output_key: points
+        feature_names: [x, y, z, intensity, timestamp_difference]
   val_transforms:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline: ${merge_lists:${datamodule.test_transforms.pipeline},${point_filters}}
@@ -113,26 +114,25 @@ datamodule:
     _target_: autoware_ml.transforms.base.TransformsCompose
     pipeline:
       - _target_: autoware_ml.transforms.point_cloud.sweeps.LoadPointsFromMultiSweeps
-        sweeps_num: ${val_sweeps_num}
-        load_dim: 5
-        use_dim: [0, 1, 2, 3, 4]
-        time_dim: 4
+        use_features: [x, y, z, intensity, timestamp_difference]
         remove_close: true
-        sweep_selection: nearest
-        time_lag_range: [0.05, 0.25]
+        past:
+          _target_: autoware_ml.transforms.point_cloud.sweeps.SweepWindow
+          num: ${val_past_sweeps_num}
+          time_lag_range: [0.05, 0.25]
+          selection: nearest
       - _target_: autoware_ml.transforms.point_cloud.formatting.PreparePointCloudInput
-        time_lag_dim: 4
+        require_time_lag: true
       - _target_: autoware_ml.transforms.point_cloud.crop.PointsRangeFilter
         point_cloud_range: ${point_cloud_range}
       - _target_: autoware_ml.transforms.common.packing.BuildPointFeatures
-        keys: [coord, strength, time_lag]
-        output_key: points
+        feature_names: [x, y, z, intensity, timestamp_difference]
   train_frame_sampling:
     object_bev_range: [-122.88, -122.88, 122.88, 122.88]
   train_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
-    shuffle: true
+    shuffle: false
   val_dataloader_cfg:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
@@ -165,7 +165,7 @@ model:
     hidden_channel: 128
     num_classes: ${dataset.detection3d.num_classes}
     class_names: ${dataset.detection3d.class_names}
-    dense_heatmap_pooling_classes: [car, truck, bus]
+    dense_heatmap_pooling_classes: ${dataset.detection3d.heatmap_pooling_classes}
     num_decoder_layers: 1
     num_heads: 8
     feedforward_channels: 256
@@ -183,7 +183,7 @@ model:
       voxel_size: [0.96, 0.96, 8.0]
       out_size_factor: 1
       post_center_range: [-132.88, -132.88, -5.0, 132.88, 132.88, 12.0]
-      score_threshold: [0.015, 0.010, 0.010, 0.010, 0.020, 0.020, 0.030, 0.030, 0.020, 0.040, 0.020, 0.020, 0.020]
+      score_threshold: [0.015, 0.010, 0.010, 0.010, 0.020, 0.020, 0.030, 0.030, 0.020, 0.040, 0.020]
       code_size: 10
     assigner:
       _target_: autoware_ml.models.detection3d.task_modules.assigners.HungarianAssigner3D
@@ -231,12 +231,6 @@ model:
         nms_radius: 0.0
         post_max_size: 50
       - class_names: [debris]
-        nms_radius: 0.0
-        post_max_size: 50
-      - class_names: [vehicle_extension]
-        nms_radius: 0.0
-        post_max_size: 50
-      - class_names: [bicycle_rack]
         nms_radius: 0.0
         post_max_size: 50
     loss_cls_weight: 1.0
