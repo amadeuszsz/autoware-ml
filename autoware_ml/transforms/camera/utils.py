@@ -1,54 +1,41 @@
-"""Private helpers shared by camera transform modules."""
+# Copyright 2026 TIER IV, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Shared helpers of the calibration camera transforms."""
 
 from __future__ import annotations
 
-from typing import Any
-
-import numpy as np
-import numpy.typing as npt
+from autoware_ml.utils.calibration import CalibrationData
 
 
-def is_chw_image(image: npt.NDArray) -> bool:
-    """Return whether an image uses channel-first layout."""
-    return image.ndim == 3 and image.shape[0] in (1, 3, 4) and image.shape[-1] not in (1, 3, 4)
+def copy_calibration_data(data: CalibrationData) -> CalibrationData:
+    """Create a deep copy of a calibration data instance.
 
+    CalibrationData is a mutable dataclass, so transforms that update the calibration copy it
+    first and leave the instance of the input sample untouched.
 
-def as_hwc_image_list(images: Any) -> tuple[list[npt.NDArray], dict[str, Any]]:
-    """Normalize image containers to a list of HWC images."""
-    if isinstance(images, list):
-        format_info = {
-            "container": "list",
-            "layout": "chw" if images and is_chw_image(images[0]) else "hwc",
-        }
-        image_list = images
-    elif isinstance(images, np.ndarray) and images.ndim == 4:
-        format_info = {
-            "container": "stack",
-            "layout": "chw" if images.shape[1] in (1, 3, 4) else "hwc",
-        }
-        image_list = [images[index] for index in range(images.shape[0])]
-    else:
-        format_info = {"container": "single", "layout": "chw" if is_chw_image(images) else "hwc"}
-        image_list = [images]
+    Args:
+        data: Calibration data to copy.
 
-    hwc_images = [
-        np.transpose(image, (1, 2, 0)) if format_info["layout"] == "chw" else image
-        for image in image_list
-    ]
-    return hwc_images, format_info
-
-
-def restore_image_container(
-    template: Any, images: list[npt.NDArray], format_info: dict[str, Any]
-) -> Any:
-    """Restore a list of HWC images to the original container type."""
-    restored = [
-        np.transpose(image, (2, 0, 1)) if format_info["layout"] == "chw" else image
-        for image in images
-    ]
-    if format_info["container"] == "list":
-        return restored
-    if format_info["container"] == "stack":
-        return np.stack(restored, axis=0)
-    del template
-    return restored[0]
+    Returns:
+        Independent copy with copied arrays.
+    """
+    return CalibrationData(
+        camera_matrix=data.camera_matrix.copy(),
+        distortion_coefficients=data.distortion_coefficients.copy(),
+        lidar_to_camera_transformation=data.lidar_to_camera_transformation.copy(),
+        distortion_model=data.distortion_model,
+        noise=None if data.noise is None else data.noise.copy(),
+        new_camera_matrix=None if data.new_camera_matrix is None else data.new_camera_matrix.copy(),
+    )

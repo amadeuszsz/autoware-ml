@@ -12,51 +12,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Point-cloud sampling and subsampling transforms."""
+"""Point cloud sampling and subsampling transforms."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
-
 import numpy as np
-import numpy.typing as npt
-from scipy import ndimage
 
+from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.transforms.base import BaseTransform
 
 
 class PointShuffle(BaseTransform):
-    """Randomly permute points and aligned point-wise arrays."""
+    """Randomly permute the points of the sample.
 
-    _required_keys = ["points"]
+    The segmentation labels are reordered with the same permutation, so both stay aligned.
+    Shuffling breaks the leading current frame block, so the point cloud stops tracking
+    num_current_points.
+    """
+
+    _required_fields = ["points"]
 
     def __init__(self, *, p: float | None = None) -> None:
         """Initialize the PointShuffle transform.
 
         Args:
-            p: Probability of applying the transform (``None`` means always apply).
+            p: Probability of applying the transform. None means always apply.
         """
         self.p = p
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Shuffle points and aligned arrays with one shared permutation."""
-        points = input_dict["points"]
-        permutation = np.random.permutation(points.shape[0])
-        for key, value in list(input_dict.items()):
-            if (
-                isinstance(value, np.ndarray)
-                and value.ndim > 0
-                and value.shape[0] == points.shape[0]
-            ):
-                input_dict[key] = value[permutation]
-        return input_dict
+    def transform(self, sample: Sample) -> Sample:
+        """Shuffle the points with one shared permutation.
+
+        Args:
+            sample: Sample with a loaded point cloud.
+
+        Returns:
+            Sample with the shuffled points and aligned segmentation labels.
+        """
+        permutation = np.random.permutation(len(sample.points))
+        return sample.reorder_points(permutation)
 
 
 class RandomDropout(BaseTransform):
-    """Randomly remove points while keeping aligned point-wise arrays consistent."""
+    """Randomly remove a fraction of the points."""
 
-    _required_keys = ["coord"]
+    _required_fields = ["points"]
 
     def __init__(self, *, p: float = 0.5, dropout_ratio: float = 0.2) -> None:
         """Initialize the RandomDropout transform.
@@ -68,120 +68,18 @@ class RandomDropout(BaseTransform):
         self.p = p
         self.dropout_ratio = dropout_ratio
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Randomly drop a subset of points.
+    def transform(self, sample: Sample) -> Sample:
+        """Randomly drop a subset of the points.
 
         Args:
-            input_dict: Sample dictionary updated in place.
+            sample: Sample with a loaded point cloud.
 
         Returns:
-            Updated sample dictionary.
+            Sample with the surviving points and aligned segmentation labels.
         """
-        point_count = input_dict["coord"].shape[0]
+        point_count = len(sample.points)
         keep_count = max(1, int(point_count * (1 - self.dropout_ratio)))
         keep_indices = np.sort(np.random.choice(point_count, keep_count, replace=False))
-
-        for key, value in list(input_dict.items()):
-            if isinstance(value, np.ndarray) and value.shape[0] == point_count:
-                input_dict[key] = value[keep_indices]
-        return input_dict
-
-
-class ElasticDistortion(BaseTransform):
-    """Apply elastic distortion to point coordinates."""
-
-    _required_keys = ["coord"]
-
-    def __init__(
-        self, *, p: float | None = None, distortion_params: Sequence[Sequence[float]]
-    ) -> None:
-        """Initialize the ElasticDistortion transform.
-
-        Args:
-            p: Probability of applying the transform (``None`` means always apply).
-            distortion_params: Sequence of ``[granularity, magnitude]`` pairs.
-        """
-        self.p = p
-        self.distortion_params = [tuple(pair) for pair in distortion_params]
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Apply one or more elastic distortion stages.
-
-        Args:
-            input_dict: Sample dictionary updated in place.
-
-        Returns:
-            Updated sample dictionary.
-        """
-        coord = input_dict["coord"]
-        for granularity, magnitude in self.distortion_params:
-            coord = self._elastic(coord, granularity, magnitude)
-        input_dict["coord"] = coord
-        return input_dict
-
-    def _elastic(
-        self, coords: npt.NDArray[np.float32], granularity: float, magnitude: float
-    ) -> npt.NDArray[np.float32]:
-        """Apply one elastic distortion stage to point coordinates."""
-        blur_x = np.ones((3, 1, 1, 1), dtype=np.float32) / 3
-        blur_y = np.ones((1, 3, 1, 1), dtype=np.float32) / 3
-        blur_z = np.ones((1, 1, 3, 1), dtype=np.float32) / 3
-
-        coords_min = coords.min(axis=0) - granularity * 3
-        coords_max = coords.max(axis=0) + granularity * 3
-        noise_dim = ((coords_max - coords_min) / granularity).astype(int) + 1
-        noise = np.random.randn(noise_dim[0], noise_dim[1], noise_dim[2], 3).astype(np.float32)
-
-        for _ in range(2):
-            noise = ndimage.convolve(noise, blur_x, mode="constant", cval=0)
-            noise = ndimage.convolve(noise, blur_y, mode="constant", cval=0)
-            noise = ndimage.convolve(noise, blur_z, mode="constant", cval=0)
-
-        axes = [
-            np.linspace(coords_min[index], coords_max[index], noise_dim[index], dtype=np.float32)
-            for index in range(3)
-        ]
-        interpolated = np.stack(
-            [_trilinear_interpolate(axes, noise[..., channel], coords) for channel in range(3)],
-            axis=1,
-        )
-        return coords + interpolated * magnitude
-
-
-def _trilinear_interpolate(
-    axes: Sequence[npt.NDArray[np.float32]],
-    values: npt.NDArray[np.float32],
-    coords: npt.NDArray[np.float32],
-) -> npt.NDArray[np.float32]:
-    """Interpolate a dense 3D grid at arbitrary point coordinates."""
-    x = np.interp(coords[:, 0], axes[0], np.arange(axes[0].size))
-    y = np.interp(coords[:, 1], axes[1], np.arange(axes[1].size))
-    z = np.interp(coords[:, 2], axes[2], np.arange(axes[2].size))
-
-    x0 = np.clip(np.floor(x).astype(int), 0, axes[0].size - 1)
-    y0 = np.clip(np.floor(y).astype(int), 0, axes[1].size - 1)
-    z0 = np.clip(np.floor(z).astype(int), 0, axes[2].size - 1)
-    x1 = np.clip(x0 + 1, 0, axes[0].size - 1)
-    y1 = np.clip(y0 + 1, 0, axes[1].size - 1)
-    z1 = np.clip(z0 + 1, 0, axes[2].size - 1)
-
-    xd = x - x0
-    yd = y - y0
-    zd = z - z0
-
-    c000 = values[x0, y0, z0]
-    c001 = values[x0, y0, z1]
-    c010 = values[x0, y1, z0]
-    c011 = values[x0, y1, z1]
-    c100 = values[x1, y0, z0]
-    c101 = values[x1, y0, z1]
-    c110 = values[x1, y1, z0]
-    c111 = values[x1, y1, z1]
-
-    c00 = c000 * (1 - xd) + c100 * xd
-    c01 = c001 * (1 - xd) + c101 * xd
-    c10 = c010 * (1 - xd) + c110 * xd
-    c11 = c011 * (1 - xd) + c111 * xd
-    c0 = c00 * (1 - yd) + c10 * yd
-    c1 = c01 * (1 - yd) + c11 * yd
-    return c0 * (1 - zd) + c1 * zd
+        mask = np.zeros(point_count, dtype=bool)
+        mask[keep_indices] = True
+        return sample.filter_points(mask)

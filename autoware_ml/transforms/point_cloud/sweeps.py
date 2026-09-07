@@ -12,226 +12,335 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Point-cloud sweep loading transforms."""
+"""Point cloud sweep loading transforms."""
 
 from __future__ import annotations
 
-import os
-from collections.abc import Mapping, Sequence
-from typing import Any
+from collections.abc import Sequence
+from enum import StrEnum
+from typing import Annotated
 
 import numpy as np
-import numpy.typing as npt
+from jaxtyping import Float32
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
+from autoware_ml.databases.schemas.lidar_frames import LidarFrameDataModel
+from autoware_ml.datamodule.samples.point_cloud import PointCloud
+from autoware_ml.datamodule.samples.sample import Sample
 from autoware_ml.transforms.base import BaseTransform
+from autoware_ml.transforms.point_cloud.loading import (
+    coerce_feature_names,
+    keyframe_lidar_frame,
+    load_frame_points,
+    select_raw_features,
+)
+from autoware_ml.types.geometry import PointFeatureName
+
+# A stored sweep paired with its signed time lag, the current frame timestamp minus its own.
+LaggedFrame = tuple[float, LidarFrameDataModel]
 
 
-SWEEP_SELECTIONS = frozenset({"nearest", "random"})
+class SweepSelection(StrEnum):
+    """
+    How the appended sweeps are picked among the eligible stored frames.
+
+    Attributes:
+      NEAREST: The frames closest in time to the current frame, which is what evaluation and
+        deployment see.
+      RANDOM: A uniform sample without replacement, which varies the temporal baseline during
+        training so the network reads the time lag instead of assuming a fixed frame interval.
+    """
+
+    NEAREST = "nearest"
+    RANDOM = "random"
+
+
+class SweepWindow(BaseModel):
+    """
+    Sweeps appended from one side of the current frame.
+
+    time_lag_range bounds the distance in seconds between an eligible stored frame and the
+    current frame. Frames outside it are unavailable, exactly like the frames a scene does not
+    have before its first or after its last sample, and an unavailable frame contributes no
+    points.
+
+    Attributes:
+      num: Number of sweeps appended when enough frames are eligible.
+      time_lag_range: Inclusive [min, max] distance in seconds, with 0 < min < max. The
+        current frame owns lag 0, so a zero minimum would let a sweep masquerade as it.
+      selection: How the appended sweeps are picked among the eligible frames.
+    """
+
+    model_config = ConfigDict(frozen=True, strict=True)
+
+    num: int = Field(ge=1)
+    time_lag_range: Annotated[tuple[float, float], BeforeValidator(tuple)]
+    selection: Annotated[SweepSelection, BeforeValidator(SweepSelection)]
+
+    @model_validator(mode="after")
+    def validate_time_lag_range(self) -> SweepWindow:
+        """
+        Validate the ordering of the time lag bounds.
+
+        Returns:
+          SweepWindow: The validated window.
+        """
+
+        if self.min_time_lag <= 0.0 or self.min_time_lag >= self.max_time_lag:
+            raise ValueError(
+                f"Expected 0 < min time lag < max time lag, got {list(self.time_lag_range)}."
+            )
+        return self
+
+    @property
+    def min_time_lag(self) -> float:
+        """Smallest distance in seconds an eligible frame may have."""
+        return self.time_lag_range[0]
+
+    @property
+    def max_time_lag(self) -> float:
+        """Largest distance in seconds an eligible frame may have."""
+        return self.time_lag_range[1]
+
+
+def _distance(lagged_frame: LaggedFrame) -> float:
+    """Distance in seconds between a stored sweep and the current frame."""
+    return abs(lagged_frame[0])
 
 
 class LoadPointsFromMultiSweeps(BaseTransform):
-    """Append historical sweep points to the current point-cloud frame.
+    """Load the current frame and append stored sweep points from the sample record.
 
-    When ``time_dim`` is set, the transform overwrites that raw feature column
-    with the per-point time lag relative to the current frame (``0`` for the
-    current frame, ``key_timestamp - sweep_timestamp`` in seconds for sweeps)
-    before applying ``use_dim``. In that mode the transform must be the point
-    loader for the sample so the raw column layout is known.
+    This is the single point loading transform. Without a past or a future window it loads the
+    current frame alone and the sweep arguments must stay unset, so a single frame pipeline
+    declares no meaningless sweep knobs.
 
-    The current frame is always the leading block of the output and its size is
-    exposed as ``num_current_points`` so label pipelines can pad the unlabeled
-    sweep points.
+    The stored frames of a record are split by their capture time into the frames before and
+    the frames after the current frame, and each window declares what is appended from its
+    side. When use_features contains timestamp_difference, every point carries the current
+    frame timestamp minus its own capture timestamp: 0 for the current frame, positive for past
+    sweeps and negative for future sweeps. The current frame is always the leading block of the
+    output and its size is exposed as num_current_points so label pipelines can pad the
+    unlabeled sweep points. The past sweeps follow it nearest first, then the future sweeps
+    nearest first.
 
-    Which stored sweeps are appended is declared, not inferred. ``time_lag_range``
-    bounds the age of an eligible sweep in seconds, and ``sweep_selection`` picks
-    among the eligible ones: ``"nearest"`` takes the most recent, which is what
-    evaluation and deployment see, and ``"random"`` samples them, which varies the
-    temporal baseline during training so the network has to read the time lag
-    instead of assuming a fixed frame interval. Sweeps outside the window count as
-    unavailable, exactly like the missing sweep of a scene's first frame.
-
+    A sweep that is unavailable, because the scene ends, the dataset flagged the frame invalid
+    or its distance falls outside the window, contributes no points. Nothing is duplicated or
+    synthesised in its place, so every split sees the same rule.
     """
-
-    _optional_keys = ["points"]
 
     def __init__(
         self,
         *,
-        sweeps_num: int,
-        load_dim: int = 5,
-        use_dim: Sequence[int] | None = None,
-        time_dim: int | None = None,
-        sweep_selection: str,
-        time_lag_range: Sequence[float],
-        pad_empty_sweeps: bool = False,
+        use_features: Sequence[str | PointFeatureName],
+        past: SweepWindow | None = None,
+        future: SweepWindow | None = None,
         remove_close: bool = False,
         close_radius: float = 1.0,
     ) -> None:
         """Initialize the LoadPointsFromMultiSweeps transform.
 
         Args:
-            sweeps_num: Number of sweeps included in the output including the
-                current frame.
-            load_dim: Number of features stored per point in sweep files.
-            use_dim: Selected feature dimensions preserved in the loaded tensor.
-            time_dim: Optional raw feature column overwritten with the time lag
-                relative to the current frame before ``use_dim`` selection.
-            sweep_selection: How to pick the appended sweeps among the eligible
-                entries: ``"nearest"`` takes the most recent ones, ``"random"``
-                samples them uniformly without replacement.
-            time_lag_range: Inclusive ``[min, max]`` age in seconds an eligible
-                sweep may have, with ``0 < min < max``. Entries outside it are
-                treated as unavailable.
-            pad_empty_sweeps: Whether to repeat the current frame when no sweeps exist.
-                With ``time_dim`` set the copies carry the minimum time lag, so
-                current-frame selections never count them.
-            remove_close: Whether to drop sweep points close to the origin.
-            close_radius: Half-width in meters of the removed region when
-                ``remove_close`` is enabled.
+            use_features: Feature columns of the loaded point cloud, starting with x, y, and z.
+                When timestamp_difference is included, the transform computes it per point.
+            past: Sweeps appended from the frames captured before the current frame, none
+                when omitted.
+            future: Sweeps appended from the frames captured after the current frame, none
+                when omitted.
+            remove_close: Whether to drop sweep points close to the origin. Requires a window.
+            close_radius: Half width in meters of the removed region when remove_close is
+                enabled.
         """
-        self.sweeps_num = sweeps_num
-        self.load_dim = load_dim
-        self.use_dim = tuple(use_dim) if use_dim is not None else tuple(range(min(load_dim, 4)))
-        if time_dim is not None and not 0 <= time_dim < load_dim:
-            raise ValueError(f"time_dim must be within [0, {load_dim}), got {time_dim}.")
-        self.time_dim = time_dim
-        if sweep_selection not in SWEEP_SELECTIONS:
+        self.use_features = coerce_feature_names(use_features)
+        self.raw_features = tuple(
+            feature_name
+            for feature_name in self.use_features
+            if feature_name != PointFeatureName.TIMESTAMP_DIFFERENCE
+        )
+        self._check_window("past", past)
+        self._check_window("future", future)
+        if past is None and future is None and remove_close:
             raise ValueError(
-                f"sweep_selection must be one of {sorted(SWEEP_SELECTIONS)}, "
-                f"got {sweep_selection!r}."
+                "A single frame load appends no sweeps, so remove_close must stay unset."
             )
-        if len(time_lag_range) != 2:
-            raise ValueError(f"time_lag_range must contain [min, max], got {time_lag_range}.")
-        min_time_lag, max_time_lag = (float(value) for value in time_lag_range)
-        if min_time_lag <= 0.0 or min_time_lag >= max_time_lag:
-            raise ValueError(
-                f"Expected 0 < min time lag < max time lag, got {time_lag_range}. The current "
-                "frame owns lag 0, a zero minimum would let a zero-lag sweep masquerade as it."
-            )
-        self.sweep_selection = sweep_selection
-        self.min_time_lag = min_time_lag
-        self.max_time_lag = max_time_lag
-        self.pad_empty_sweeps = pad_empty_sweeps
+        self.past = past
+        self.future = future
         self.remove_close = remove_close
         self.close_radius = close_radius
 
-    def apply_defaults(self, input_dict: dict[str, Any]) -> None:
-        """Load the current-frame point cloud when it is not present yet."""
-        if "points" in input_dict:
-            return
-        if "lidar_path" not in input_dict:
-            raise KeyError("LoadPointsFromMultiSweeps requires 'points' or 'lidar_path'")
-        if "idx_begin" in input_dict or "length" in input_dict:
-            raise ValueError(
-                "LoadPointsFromMultiSweeps loads whole frames and does not support the "
-                "per-sensor 'idx_begin'/'length' slicing of the sample."
+    @staticmethod
+    def _check_window(name: str, window: SweepWindow | None) -> None:
+        """Reject a window that is not a SweepWindow, such as a mapping Hydra did not build.
+
+        Args:
+            name: Argument name for the error message.
+            window: Configured window.
+        """
+        if window is not None and not isinstance(window, SweepWindow):
+            raise TypeError(f"{name} must be a SweepWindow or None, got {type(window).__name__}.")
+
+    def transform(self, sample: Sample) -> Sample:
+        """Load the current frame and append the selected sweep points.
+
+        Args:
+            sample: Sample holding the dataset record.
+
+        Returns:
+            Sample with the loaded multi sweep point cloud.
+        """
+        keyframe = keyframe_lidar_frame(sample)
+        current_features = self._build_frame_features(
+            sample=sample, lidar_frame=keyframe, time_lag=0.0
+        )
+        past_frames, future_frames = self._split_stored_frames(sample, keyframe)
+        selected_sweeps = [
+            *self._select_sweeps(self.past, past_frames),
+            *self._select_sweeps(self.future, future_frames),
+        ]
+
+        feature_blocks = [current_features]
+        for time_lag, sweep_frame in selected_sweeps:
+            sweep_features = self._build_frame_features(
+                sample=sample, lidar_frame=sweep_frame, time_lag=time_lag
             )
-
-        load_dim = int(input_dict.get("num_pts_feats", self.load_dim))
-        points = np.fromfile(input_dict["lidar_path"], dtype=np.float32).reshape(-1, load_dim)
-        if self.time_dim is None:
-            points = points[:, self.use_dim]
-        input_dict["points"] = points.astype(np.float32)
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Append sweep points to the current frame."""
-        points = np.asarray(input_dict["points"], dtype=np.float32)
-        if self.time_dim is not None:
-            if points.shape[1] != self.load_dim:
-                raise ValueError(
-                    "LoadPointsFromMultiSweeps with time_dim must load the raw point layout: "
-                    f"expected {self.load_dim} columns, got {points.shape[1]}. The transform "
-                    "must be the point loader for the sample."
-                )
-            points = points.copy()
-            points[:, self.time_dim] = 0.0
-
-        input_dict["num_current_points"] = points.shape[0]
-        sweep_entries = list(input_dict.get("sweeps", []))
-        if not sweep_entries:
-            if self.pad_empty_sweeps and self.sweeps_num > 1:
-                padding = np.tile(points, (self.sweeps_num - 1, 1))
-                if self.time_dim is not None:
-                    # Padded copies stand in for sweeps, so they carry the youngest
-                    # admissible lag and never masquerade as current-frame points.
-                    padding[:, self.time_dim] = self.min_time_lag
-                points = np.concatenate([points, padding], axis=0)
-            input_dict["points"] = self._select_dims(points)
-            return input_dict
-
-        needed = max(0, self.sweeps_num - 1)
-        key_timestamp = self._key_timestamp(input_dict)
-        selected_sweeps = self._select_sweeps(sweep_entries, needed, key_timestamp)
-        sweep_points = [points]
-        for time_lag, sweep in selected_sweeps:
-            sweep_array = self._load_sweep_points(sweep).copy()
-            if self.time_dim is not None:
-                sweep_array[:, self.time_dim] = time_lag
             if self.remove_close:
-                sweep_array = self._remove_close_points(sweep_array)
-            rotation = np.asarray(sweep.get("sensor2lidar_rotation", np.eye(3)), dtype=np.float32)
-            translation = np.asarray(
-                sweep.get("sensor2lidar_translation", np.zeros(3)), dtype=np.float32
-            )
-            sweep_array[:, :3] = sweep_array[:, :3] @ rotation.T + translation
-            sweep_points.append(sweep_array)
+                sweep_features = self._remove_close_points(sweep_features)
+            feature_blocks.append(self._transform_sweep_to_keyframe(sweep_features, sweep_frame))
 
-        input_dict["points"] = self._select_dims(np.concatenate(sweep_points, axis=0))
-        return input_dict
+        point_cloud = PointCloud(
+            features=np.ascontiguousarray(np.concatenate(feature_blocks, axis=0), dtype=np.float32),
+            feature_names=self.use_features,
+            num_current_points=current_features.shape[0],
+        )
+        return sample.replace(points=point_cloud)
+
+    def _build_frame_features(
+        self, sample: Sample, lidar_frame: LidarFrameDataModel, time_lag: float
+    ) -> Float32[np.ndarray, "num_points num_features"]:
+        """Load one frame and assemble its feature columns in the configured order.
+
+        Args:
+            sample: Sample holding the dataset record.
+            lidar_frame: Lidar frame to load.
+            time_lag: Time lag stamped on the timestamp_difference column when configured.
+
+        Returns:
+            Float32[np.ndarray, "num_points num_features"]: Feature matrix of the frame.
+        """
+        raw_points = load_frame_points(sample.data_root, lidar_frame)
+        raw_columns = select_raw_features(raw_points, self.raw_features)
+        if PointFeatureName.TIMESTAMP_DIFFERENCE not in self.use_features:
+            return raw_columns
+
+        features = np.empty((raw_points.shape[0], len(self.use_features)), dtype=np.float32)
+        raw_cursor = 0
+        for column, feature_name in enumerate(self.use_features):
+            if feature_name == PointFeatureName.TIMESTAMP_DIFFERENCE:
+                features[:, column] = time_lag
+            else:
+                features[:, column] = raw_columns[:, raw_cursor]
+                raw_cursor += 1
+        return features
 
     @staticmethod
-    def _key_timestamp(input_dict: Mapping[str, Any]) -> float:
-        """Return the current frame's capture time, which every sweep age is measured against."""
-        if input_dict.get("timestamp") is None:
-            raise KeyError("LoadPointsFromMultiSweeps requires 'timestamp' to age the sweeps.")
-        return float(input_dict["timestamp"])
+    def _split_stored_frames(
+        sample: Sample, keyframe: LidarFrameDataModel
+    ) -> tuple[list[LaggedFrame], list[LaggedFrame]]:
+        """Pair every stored sweep with its signed time lag and split them by side.
 
-    def _select_sweeps(
-        self, sweep_entries: Sequence[Mapping[str, Any]], needed: int, key_timestamp: float
-    ) -> list[tuple[float, Mapping[str, Any]]]:
-        """Return the sweeps to append, newest first, paired with their age in seconds.
+        The frames after the first are the stored sweeps of the sample, whatever their keyframe
+        flag says about the annotation of the dataset. A stored sweep sharing the timestamp of
+        the current frame is rejected, every consumer identifies the current frame by lag 0.
 
-        Entries outside ``time_lag_range`` are unavailable, so a scene whose previous frames were
-        dropped yields fewer sweeps rather than a stale one.
+        Args:
+            sample: Sample holding the dataset record.
+            keyframe: Lidar frame of the sample.
+
+        Returns:
+            tuple[list[LaggedFrame], list[LaggedFrame]]: Frames captured before the current
+                frame and frames captured after it, in stored order.
         """
-        if needed == 0:
+        key_timestamp = keyframe.lidar_timestamp_seconds
+        past_frames: list[LaggedFrame] = []
+        future_frames: list[LaggedFrame] = []
+        for sweep_frame in sample.record.lidar_frames[1:]:
+            time_lag = key_timestamp - sweep_frame.lidar_timestamp_seconds
+            if time_lag == 0.0:
+                raise ValueError(
+                    f"Sample {sample.meta.sample_id} stores sweep {sweep_frame.lidar_frame_id} "
+                    "at the timestamp of its current frame."
+                )
+            side = past_frames if time_lag > 0.0 else future_frames
+            side.append((time_lag, sweep_frame))
+        return past_frames, future_frames
+
+    @staticmethod
+    def _select_sweeps(
+        window: SweepWindow | None, lagged_frames: Sequence[LaggedFrame]
+    ) -> list[LaggedFrame]:
+        """Return the sweeps a window appends from one side, nearest first.
+
+        Frames whose distance falls outside the window are unavailable, so a scene whose
+        neighbouring frames were dropped yields fewer sweeps rather than a stale one.
+
+        Args:
+            window: Window declared for this side, None when nothing is appended from it.
+            lagged_frames: Stored sweeps of this side with their signed time lag.
+
+        Returns:
+            list[LaggedFrame]: Selected sweeps with their signed time lag.
+        """
+        if window is None:
             return []
-        eligible = []
-        for sweep in sweep_entries:
-            if sweep.get("timestamp") is None:
-                raise KeyError("LoadPointsFromMultiSweeps requires sweep 'timestamp'.")
-            time_lag = key_timestamp - float(sweep["timestamp"])
-            if self.min_time_lag <= time_lag <= self.max_time_lag:
-                eligible.append((time_lag, sweep))
-        eligible.sort(key=lambda entry: entry[0])
-        if self.sweep_selection == "random" and len(eligible) > needed:
-            indices = np.random.choice(len(eligible), needed, replace=False)
-            return sorted((eligible[index] for index in indices), key=lambda entry: entry[0])
-        return eligible[:needed]
+        eligible = [
+            lagged_frame
+            for lagged_frame in lagged_frames
+            if window.min_time_lag <= _distance(lagged_frame) <= window.max_time_lag
+        ]
+        eligible.sort(key=_distance)
+        if window.selection is SweepSelection.RANDOM and len(eligible) > window.num:
+            indices = np.random.choice(len(eligible), window.num, replace=False)
+            return sorted((eligible[index] for index in indices), key=_distance)
+        return eligible[: window.num]
 
-    def _select_dims(self, points: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
-        """Apply ``use_dim`` selection deferred to the end in time-lag mode."""
-        if self.time_dim is None:
-            return points
-        return points[:, self.use_dim]
+    @staticmethod
+    def _transform_sweep_to_keyframe(
+        features: Float32[np.ndarray, "num_points num_features"],
+        sweep_frame: LidarFrameDataModel,
+    ) -> Float32[np.ndarray, "num_points num_features"]:
+        """Transform sweep point coordinates into the keyframe lidar frame.
 
-    def _load_sweep_points(self, sweep: Mapping[str, Any]) -> npt.NDArray[np.float32]:
-        """Load one sweep point cloud from memory or from disk."""
-        if "points" in sweep:
-            points = np.asarray(sweep["points"], dtype=np.float32)
-        else:
-            lidar_path = os.fspath(sweep["lidar_path"])
-            points = np.fromfile(lidar_path, dtype=np.float32).reshape(-1, self.load_dim)
-        if self.time_dim is None:
-            points = points[:, self.use_dim]
-        return points
+        Args:
+            features: Feature matrix of the sweep with the coordinates in the first three
+                columns.
+            sweep_frame: Lidar frame the points were loaded from.
 
-    def _remove_close_points(self, points: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+        Returns:
+            Float32[np.ndarray, "num_points num_features"]: Feature matrix with transformed
+                coordinates.
+        """
+        sweep_to_keyframe = np.linalg.inv(sweep_frame.lidar_sensor_to_lidar_sweep_matrix).astype(
+            np.float32
+        )
+        features = features.copy()
+        features[:, :3] = features[:, :3] @ sweep_to_keyframe[:3, :3].T + sweep_to_keyframe[:3, 3]
+        return features
+
+    def _remove_close_points(
+        self, features: Float32[np.ndarray, "num_points num_features"]
+    ) -> Float32[np.ndarray, "num_kept_points num_features"]:
         """Remove points close to the origin in the xy plane.
 
-        The removed region is the axis-aligned box |x|, |y| < close_radius
+        The removed region is the axis aligned box |x|, |y| < close_radius.
+
+        Args:
+            features: Feature matrix with the coordinates in the first three columns.
+
+        Returns:
+            Float32[np.ndarray, "num_kept_points num_features"]: Feature matrix without the
+                close points.
         """
-        close = (np.abs(points[:, 0]) < self.close_radius) & (
-            np.abs(points[:, 1]) < self.close_radius
+        close = (np.abs(features[:, 0]) < self.close_radius) & (
+            np.abs(features[:, 1]) < self.close_radius
         )
-        return points[~close]
+        return features[~close]

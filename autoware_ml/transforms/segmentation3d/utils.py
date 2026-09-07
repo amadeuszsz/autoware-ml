@@ -17,17 +17,33 @@
 from __future__ import annotations
 
 import numpy as np
-import numpy.typing as npt
+from jaxtyping import Float32, Int64
 
 
 def project_range(
-    points: npt.NDArray[np.float32], height: int, width: int, fov_up_rad: float, fov_down_rad: float
-) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
-    """Project 3D points into range-view row and column indices."""
-    depth = np.linalg.norm(points[:, :3], ord=2, axis=1)
+    coord: Float32[np.ndarray, "num_points 3"],
+    height: int,
+    width: int,
+    fov_up_rad: float,
+    fov_down_rad: float,
+) -> tuple[Int64[np.ndarray, " num_points"], Int64[np.ndarray, " num_points"]]:
+    """Project point coordinates into range view row and column indices.
+
+    Args:
+        coord: Point coordinates.
+        height: Range image height in pixels.
+        width: Range image width in pixels.
+        fov_up_rad: Upper vertical field of view in radians.
+        fov_down_rad: Lower vertical field of view in radians.
+
+    Returns:
+        tuple[Int64[np.ndarray, " num_points"], Int64[np.ndarray, " num_points"]]: Row and
+            column index of every point.
+    """
+    depth = np.linalg.norm(coord, ord=2, axis=1)
     depth = np.clip(depth, a_min=1e-6, a_max=None)
-    yaw = -np.arctan2(points[:, 1], points[:, 0])
-    pitch = np.arcsin(np.clip(points[:, 2] / depth, -1.0, 1.0))
+    yaw = -np.arctan2(coord[:, 1], coord[:, 0])
+    pitch = np.arcsin(np.clip(coord[:, 2] / depth, -1.0, 1.0))
     fov = abs(fov_down_rad) + abs(fov_up_rad)
 
     proj_x = 0.5 * (yaw / np.pi + 1.0) * width

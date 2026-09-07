@@ -13,68 +13,40 @@
 # limitations under the License.
 
 
-"""Per-point time lag of a densified point cloud.
+"""Current frame selection of a densified point cloud.
 
-Point loaders place the current frame first and stamp every point with the seconds elapsed since it
-was captured: ``0`` for the current frame, positive for points appended from earlier sweeps. Any
-transform whose decision must concern the current frame alone selects its points with the mask built
-here.
-
-The lag lives in one of two layouts, mirroring the two shapes a sample takes across the pipelines:
-packed, as one column of ``points``, and split, as its own ``time_lag`` field once
-``PreparePointCloudInput`` has separated the point features. Which column holds it depends on the
-raw corpus layout, so consumers declare the column instead of guessing it.
+Point loaders place the current frame first and record its size as num_current_points, which
+every row preserving transform keeps up to date. Any transform whose decision must concern the
+current frame alone selects its points with the mask built here, whatever features the cloud
+carries.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
-
 import numpy as np
-import numpy.typing as npt
+from jaxtyping import Bool
 
-TIME_LAG_KEY = "time_lag"
+from autoware_ml.datamodule.samples.point_cloud import PointCloud
 
 
-def current_frame_mask(
-    input_dict: Mapping[str, Any], time_lag_dim: int | None
-) -> npt.NDArray[np.bool_] | None:
+def current_frame_mask(point_cloud: PointCloud) -> Bool[np.ndarray, " num_points"]:
     """Return the mask selecting the points captured in the current frame.
 
     Args:
-        input_dict: Sample holding the point cloud, either split into fields (``time_lag``) or
-            packed (``points``).
-        time_lag_dim: Column of ``points`` holding the time lag, or ``None`` when the pipeline
-            declares that its cloud carries no time lag at all.
+        point_cloud: Point cloud of the sample.
 
     Returns:
-        Boolean mask of shape ``(num_points,)``, or ``None`` when ``time_lag_dim`` is ``None``:
-        every point then belongs to the current frame and no selection is needed.
+        Boolean mask of the leading current frame block.
 
     Raises:
-        ValueError: If ``time_lag_dim`` is ``None`` although the sample carries a time lag, or if a
-            lag is declared but the sample provides neither layout to read it from.
+        ValueError: If the point cloud no longer tracks its current frame block.
     """
-    if time_lag_dim is None:
-        if TIME_LAG_KEY in input_dict:
-            raise ValueError(
-                f"time_lag_dim is None but the sample carries a '{TIME_LAG_KEY}' field. Declare "
-                "the time-lag column so current-frame points can be told apart from sweep points."
-            )
-        return None
-
-    if TIME_LAG_KEY in input_dict:
-        return np.asarray(input_dict[TIME_LAG_KEY]).reshape(-1) == 0
-
-    if "points" not in input_dict:
+    num_current_points = point_cloud.num_current_points
+    if num_current_points is None:
         raise ValueError(
-            f"A time lag was declared (time_lag_dim={time_lag_dim}) but the sample carries neither "
-            f"'{TIME_LAG_KEY}' nor 'points' to read it from."
+            "The point cloud does not track its current frame block anymore, a transform "
+            "reordered its rows before the current frame was selected."
         )
-    points = np.asarray(input_dict["points"])
-    if not 0 <= time_lag_dim < points.shape[1]:
-        raise ValueError(
-            f"time_lag_dim={time_lag_dim} is outside the {points.shape[1]} point features."
-        )
-    return points[:, time_lag_dim] == 0
+    mask = np.zeros(len(point_cloud), dtype=bool)
+    mask[:num_current_points] = True
+    return mask

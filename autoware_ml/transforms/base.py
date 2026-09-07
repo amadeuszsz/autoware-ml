@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Base classes and composition utilities for data transforms.
+"""Base classes and composition utilities for typed sample transforms.
 
-This module defines the core transform protocol used across Autoware-ML data
-pipelines and provides sequential composition helpers.
+Every transform maps a Sample to a new Sample. Transforms never mutate their input, they build
+the output through the copy helpers of the sample models.
 """
 
 from abc import ABC, abstractmethod
@@ -24,96 +24,73 @@ from typing import Any
 
 import numpy as np
 
+from autoware_ml.datamodule.samples.sample import Sample
+
 
 class BaseTransform(ABC):
-    """Abstract base class for dict-to-dict data transformations.
+    """Abstract base class for sample transforms.
 
-    Class Attributes (override in subclasses):
-        p: Probability of applying the transform (0.0=never, 1.0=always).
-           Set to None for transforms that always run.
-        _required_keys: List of keys that must exist in input_dict.
-        _optional_keys: List of keys that may be missing (triggers apply_defaults).
-
-    Subclasses should document their key contracts in the class docstring:
-        - Required keys: Keys that must exist (KeyError raised otherwise)
-        - Optional keys: Keys that are used if present (apply_defaults called if missing)
-        - Generated keys: Keys added/modified by the transform
+    Class attributes to override in subclasses:
+        p: Probability of applying the transform. None means the transform always runs.
+        _required_fields: Sample fields that must be set before the transform runs.
     """
 
-    p: float | None = None  # None means always run (no probability)
-    _required_keys: Sequence[str] = ()
-    _optional_keys: Sequence[str] = ()
+    p: float | None = None
+    _required_fields: Sequence[str] = ()
     pre_transform: Any = None
 
-    def __call__(self, input_dict: dict[str, Any], context: Any = None) -> dict[str, Any]:
-        """Execute transform with probability and key validation.
-
-        Order of operations:
-            1. Validate required keys (raises KeyError if any missing)
-            2. Handle optional keys (call apply_defaults if any missing)
-            3. Check probability (skip if not triggered)
-            4. Execute the actual transform
+    def __call__(self, sample: Sample, context: Any = None) -> Sample:
+        """Execute the transform with probability and field validation.
 
         Args:
-            input_dict: Sample dictionary passed to the transform.
+            sample: Sample passed to the transform.
             context: Optional dataset pipeline context.
 
         Returns:
-            Updated sample dictionary.
+            Transformed sample.
         """
         self._context = context
-
-        # 1. Validate required keys (raises error if any missing)
-        self._validate_required_keys(input_dict)
-
-        # 2. Handle optional keys (call apply_defaults if any missing)
-        self._handle_optional_keys(input_dict)
-
-        # 3. Check probability (skip if not triggered)
+        self._validate_required_fields(sample)
         if not self._should_apply():
-            return self.on_skip(input_dict)
-
-        # 4. Execute the actual transform
-        return self.transform(input_dict)
+            return self.on_skip(sample)
+        output = self.transform(sample)
+        if not isinstance(output, Sample):
+            raise TypeError(
+                f"{self.__class__.__name__} must return a Sample, got {type(output).__name__}."
+            )
+        return output
 
     @property
     def context(self) -> Any:
         """Return the active execution context for the current transform call.
 
         Returns:
-            Pipeline context associated with the current sample, or ``None``
-            when the transform is executed outside a dataset pipeline.
+            Pipeline context associated with the current sample, or None when the transform is
+            executed outside a dataset pipeline.
         """
         return getattr(self, "_context", None)
 
-    def _validate_required_keys(self, input_dict: dict[str, Any]) -> None:
-        """Raise ``KeyError`` when any required key is missing.
+    def _validate_required_fields(self, sample: Sample) -> None:
+        """Raise when any required sample field is not set.
 
         Args:
-            input_dict: Input mapping validated before transform execution.
+            sample: Sample validated before transform execution.
 
         Raises:
-            KeyError: If a required key defined by the transform is absent.
+            ValueError: If a required field of the transform is not set on the sample.
         """
-        for key in self._required_keys:
-            if key not in input_dict:
-                raise KeyError(f"{self.__class__.__name__}: Missing required key '{key}'")
-
-    def _handle_optional_keys(self, input_dict: dict[str, Any]) -> None:
-        """Populate missing optional keys before executing the transform.
-
-        Args:
-            input_dict: Input mapping validated before transform execution.
-        """
-        missing = [key for key in self._optional_keys if key not in input_dict]
-        if missing:
-            self.apply_defaults(input_dict)
+        for field_name in self._required_fields:
+            if getattr(sample, field_name) is None:
+                raise ValueError(
+                    f"{self.__class__.__name__}: The sample field '{field_name}' must be set "
+                    f"before this transform runs."
+                )
 
     def _should_apply(self) -> bool:
-        """Determine if transform should be applied based on probability.
+        """Determine if the transform should be applied based on its probability.
 
         Returns:
-            True if transform should be applied, False to skip.
+            True if the transform should be applied, False to skip.
         """
         if self.p is None:
             return True
@@ -123,86 +100,70 @@ class BaseTransform(ABC):
             return True
         return np.random.rand() < self.p
 
-    def apply_defaults(self, input_dict: dict[str, Any]) -> None:
-        """Set default values for missing optional keys. Override in subclasses.
-
-        Base implementation raises error - subclasses with optional keys MUST override.
-        Classes with no optional keys don't need to override (empty list never triggers).
+    def on_skip(self, sample: Sample) -> Sample:
+        """Handle a sample when the transform is skipped due to probability.
 
         Args:
-            input_dict: The input dictionary to modify in-place with default values.
-        """
-        raise NotImplementedError(
-            f"{self.__class__.__name__}: Missing optional keys but apply_defaults() not implemented"
-        )
-
-    def on_skip(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Called when transform is skipped due to probability.
-
-        Override for custom behavior when transform is skipped.
-        Default implementation returns input unchanged.
-
-        Args:
-            input_dict: The input dictionary.
+            sample: The input sample.
 
         Returns:
-            The (possibly modified) input dictionary.
+            The sample forwarded to the next transform.
         """
-        return input_dict
+        return sample
 
     @abstractmethod
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Process input dictionary and return updated mapping.
+    def transform(self, sample: Sample) -> Sample:
+        """Process the sample and return a new one.
 
         Args:
-            input_dict: Dictionary with required keys present, optional keys
-                        populated by apply_defaults() if they were missing.
+            sample: Sample with every required field set.
 
         Returns:
-            Updated dictionary (may be the same object modified in-place).
+            Transformed sample.
         """
         raise NotImplementedError
+
+    def __repr__(self) -> str:
+        """Return the class name of the transform.
+
+        Returns:
+            Class name of the transform.
+        """
+        return f"{self.__class__.__name__}()"
 
 
 class TransformsCompose:
     """Apply a sequence of transforms in order.
 
-    The composed transform forwards one sample dictionary through every
-    configured transform and returns the final result.
+    The composed transform forwards one sample through every configured transform and returns
+    the final result.
     """
 
-    def __init__(self, pipeline: Sequence["BaseTransform"] = ()):
+    def __init__(self, pipeline: Sequence[BaseTransform] = ()):
         """Initialize the transform composition.
 
         Args:
-            pipeline: Ordered transforms applied to each input dictionary.
+            pipeline: Ordered transforms applied to each sample.
         """
         self.pipeline = list(pipeline)
 
-    def __call__(self, input_dict: dict[str, Any], context: Any = None) -> dict[str, Any]:
-        """Apply each transform sequentially, merging updates.
+    def __call__(self, sample: Sample, context: Any = None) -> Sample:
+        """Apply each transform sequentially.
 
         Args:
-            input_dict: Input mapping passed through the configured transforms.
+            sample: Sample passed through the configured transforms.
             context: Optional pipeline context forwarded to each transform.
 
         Returns:
-            Transformed mapping after all pipeline stages have been applied.
+            Transformed sample after all pipeline stages have been applied.
         """
-        if not isinstance(input_dict, dict):
+        if not isinstance(sample, Sample):
             raise TypeError(
-                f"{self.__class__.__name__} input must be a dict, got {type(input_dict).__name__}."
+                f"{self.__class__.__name__} input must be a Sample, got {type(sample).__name__}."
             )
         for transform in self.pipeline:
-            output = transform(input_dict, context=context)
-            if not isinstance(output, dict):
-                raise TypeError(
-                    f"{transform.__class__.__name__} must return a dict, "
-                    f"got {type(output).__name__}."
-                )
-            input_dict |= output
-
-        return input_dict
+            sample = transform(sample, context=context)
+        return sample
 
     def __repr__(self) -> str:
         """Return a formatted string representation of the composition.
