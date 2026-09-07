@@ -5,10 +5,11 @@ The code is modified from:
 https://github.com/open-mmlab/mmdetection3d/blob/main/mmdet3d/structures/bbox_3d/utils.py
 """
 
-from jaxtyping import Float32
+from jaxtyping import Bool, Float32
 from torch import Tensor
 import torch
 
+from autoware_ml.types.geometry import Box3DFieldIndex
 from autoware_ml.types.spatial import RotationAxis
 
 
@@ -91,6 +92,104 @@ def rotate_points_3d(
     # over the matrix column index j): out[a, i, k] = sum_j R_a[k, j] * point[a, i, j].
     points_new = torch.einsum("aij,kja->aik", points, rotation_matrices)
     return points_new
+
+
+def boxes3d_corners(
+    box_params: Float32[Tensor, "num_bboxes num_box_fields"],
+    yaw_axis: RotationAxis = RotationAxis.Z,
+) -> Float32[Tensor, "num_bboxes 8 3"]:
+    """
+    Convert 3D bounding box parameters to their 8 corners in clockwise order, in the form of
+    (x0y0z0, x0y0z1, x0y1z1, x0y1z0, x1y0z0, x1y0z1, x1y1z1, x1y1z0).
+
+    Args:
+        box_params (Float32[Tensor, "num_bboxes num_box_fields"]): Box parameters following
+            Box3DFieldIndex, with the center at the gravity center of the box.
+        yaw_axis (RotationAxis): The rotation axis of the yaw angle.
+
+    Returns:
+        Float32[Tensor, "num_bboxes 8 3"]: The 8 corners of each box.
+    """
+    tensor_device = box_params.device
+    tensor_dtype = box_params.dtype
+    if box_params.numel() == 0:
+        return torch.empty([0, 8, 3], device=tensor_device, dtype=tensor_dtype)
+
+    dims = box_params[:, [Box3DFieldIndex.LENGTH, Box3DFieldIndex.WIDTH, Box3DFieldIndex.HEIGHT]]
+    corners_norm = torch.stack(torch.unravel_index(torch.arange(8), [2] * 3), dim=1).to(
+        device=tensor_device, dtype=tensor_dtype
+    )
+    corners_norm = corners_norm[[0, 1, 3, 2, 4, 5, 7, 6]]
+    # Use relative origin (0.5, 0.5, 0.5), where the center of the box is at (0.5, 0.5, 0.5)
+    # in the normalized box coordinate system
+    corners_norm = corners_norm - dims.new_tensor([0.5, 0.5, 0.5])
+    corners = dims.view([-1, 1, 3]) * corners_norm.reshape([1, 8, 3])
+
+    rotation_matrices = create_axis_rotation_matrices(
+        box_params[:, Box3DFieldIndex.YAW], axis=yaw_axis, clockwise=False
+    )
+    corners = rotate_points_3d(points=corners, rotation_matrices=rotation_matrices)
+    corners += box_params[:, :3].view(-1, 1, 3)
+    return corners
+
+
+def boxes3d_surfaces(
+    box_params: Float32[Tensor, "num_bboxes num_box_fields"],
+    yaw_axis: RotationAxis = RotationAxis.Z,
+) -> Float32[Tensor, "num_bboxes 6 4 3"]:
+    """
+    Convert 3D bounding box parameters to their 6 surfaces, each described by 4 corners whose
+    normal vectors point to the inside of the box.
+
+    Args:
+        box_params (Float32[Tensor, "num_bboxes num_box_fields"]): Box parameters following
+            Box3DFieldIndex, with the center at the gravity center of the box.
+        yaw_axis (RotationAxis): The rotation axis of the yaw angle.
+
+    Returns:
+        Float32[Tensor, "num_bboxes 6 4 3"]: The surfaces of each box.
+    """
+    corners = boxes3d_corners(box_params, yaw_axis=yaw_axis)
+    surfaces = torch.stack(
+        [
+            corners[:, [0, 1, 2, 3]],  # front surface
+            corners[:, [7, 6, 5, 4]],  # back surface
+            corners[:, [0, 3, 7, 4]],  # bottom surface
+            corners[:, [1, 5, 6, 2]],  # top surface
+            corners[:, [0, 4, 5, 1]],  # left surface
+            corners[:, [3, 2, 6, 7]],  # right surface
+        ],
+        dim=1,
+    )
+    return surfaces
+
+
+def points_in_boxes_3d(
+    points: Float32[Tensor, "num_points 3"],
+    box_params: Float32[Tensor, "num_bboxes num_box_fields"],
+    yaw_axis: RotationAxis = RotationAxis.Z,
+) -> Bool[Tensor, "num_bboxes num_points"]:
+    """
+    Check which points lie inside each 3D bounding box.
+
+    Args:
+        points (Float32[Tensor, "num_points 3"]): Points with shape of [num_points, 3].
+        box_params (Float32[Tensor, "num_bboxes num_box_fields"]): Box parameters following
+            Box3DFieldIndex, with the center at the gravity center of the box.
+        yaw_axis (RotationAxis): The rotation axis of the yaw angle.
+
+    Returns:
+        Bool[Tensor, "num_bboxes num_points"]: A mask indicating whether each point is inside
+            each box.
+    """
+    if box_params.numel() == 0 or points.numel() == 0:
+        return torch.zeros(
+            (box_params.shape[0], points.shape[0]),
+            dtype=torch.bool,
+            device=box_params.device,
+        )
+    surfaces = boxes3d_surfaces(box_params, yaw_axis=yaw_axis)
+    return points_in_convex_polygon_3d(points, surfaces).bool()
 
 
 def surface_equ_3d(
