@@ -28,6 +28,7 @@ or the critical set.
 from __future__ import annotations
 
 from math import inf
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -47,25 +48,6 @@ from autoware_ml.metrics.geometry.reachability import (
 )
 from autoware_ml.types.metrics import AgentKind
 
-# Final det class to reachable-set kind.
-DEFAULT_KINDS: dict[str, AgentKind] = {
-    "car": AgentKind.WHEELED,
-    "truck": AgentKind.WHEELED,
-    "bus": AgentKind.WHEELED,
-    "train": AgentKind.WHEELED,
-    "motorcycle": AgentKind.WHEELED,
-    "pedestrian": AgentKind.LIVING,
-    "animal": AgentKind.LIVING,
-    "bicycle": AgentKind.LIVING,
-    "barrier": AgentKind.STATIC,
-    "traffic_cone": AgentKind.STATIC,
-    "debris": AgentKind.STATIC,
-    "bicycle_rack": AgentKind.STATIC,
-    "vehicle_extension": AgentKind.STATIC,
-}
-# Living "reasonable run" speeds (m/s). Wheeled speed comes from the lanelet map.
-DEFAULT_LIVING_SPEEDS: dict[str, float] = {"pedestrian": 3.0, "animal": 4.0, "bicycle": 6.0}
-
 
 class CollisionTTC:
     """Per-box reachability TTC for one detection frame.
@@ -73,16 +55,18 @@ class CollisionTTC:
     Args:
         class_names: Ordered final class names (label index to name).
         map_provider: Resolves a ``scene_token`` to its lanelet map.
-        region: Drivable region tokens the wheeled fronts are clipped to.
-        params: Reachability parameters (horizon, dt, curvature bound).
-        kinds: Class name to reachable-set kind, defaults to the built-in taxonomy
-            mapping. Kind names are read into :class:`AgentKind` here.
-        living_speeds: Living class name to run speed in m/s, defaults to the built-in speeds.
-        max_speed_mps: Off-map fallback speed for ego and wheeled agents. On the
-            map they take the ``speed_limit`` of the lanelet they are in.
         vehicle: Ego body dimensions, a platform property with no default (ego has no
             detection box), measured from the rear axle the ego pose refers to.
             Object bodies come from their box.
+        kinds: Class name to reachable-set kind, one entry per class name. The detection
+            taxonomy of the database carries this table, kind names are read into
+            :class:`AgentKind` here.
+        living_speeds: Living class name to run speed in m/s, one entry per living class.
+            The detection taxonomy of the database carries this table.
+        region: Drivable region tokens the wheeled fronts are clipped to.
+        params: Reachability parameters (horizon, dt, curvature bound).
+        max_speed_mps: Off-map fallback speed for ego and wheeled agents. On the
+            map they take the ``speed_limit`` of the lanelet they are in.
     """
 
     def __init__(
@@ -91,10 +75,10 @@ class CollisionTTC:
         map_provider: LaneletMapProvider,
         *,
         vehicle: VehicleGeometry,
+        kinds: Mapping[str, AgentKind | str],
+        living_speeds: Mapping[str, float],
         region: tuple[str, ...] = DEFAULT_DRIVABLE_REGION,
         params: ReachabilityParams | None = None,
-        kinds: dict[str, AgentKind] | None = None,
-        living_speeds: dict[str, float] | None = None,
         max_speed_mps: float = 16.7,
     ) -> None:
         """Validate the class-to-kind mapping and the living run speeds."""
@@ -102,9 +86,8 @@ class CollisionTTC:
         self.map_provider = map_provider
         self.region = tuple(region)
         self.params = params or ReachabilityParams()
-        kinds = DEFAULT_KINDS if kinds is None else kinds
         self.kinds = {name: AgentKind(kind) for name, kind in kinds.items()}
-        self.living_speeds = dict(DEFAULT_LIVING_SPEEDS if living_speeds is None else living_speeds)
+        self.living_speeds = {name: float(speed) for name, speed in living_speeds.items()}
         self.max_speed_mps = float(max_speed_mps)
         self.vehicle = vehicle
         unmapped = sorted(set(self.class_names) - set(self.kinds))

@@ -13,7 +13,7 @@ penalty.
 Reported whole-scene and per class (over points whose ground truth is that
 class). Run in a grouped suite the per-class values become per-group with
 intra-group confusion counted as correct, e.g. error clusters on
-``grouped_flat_surface`` are phantom obstacles on the drivable area.
+``grouped_drivable_ground`` are phantom obstacles on the drivable area.
 """
 
 from __future__ import annotations
