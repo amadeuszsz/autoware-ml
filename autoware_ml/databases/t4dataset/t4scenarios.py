@@ -16,104 +16,131 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-import yaml
-from typing import Sequence
-from types import MappingProxyType
+from typing import Mapping, Sequence
 
+import yaml
 from pydantic import model_validator
 
+from autoware_ml.databases.scenarios import DatasetParams, ScenarioData, Scenarios
 from autoware_ml.types.dataset import SplitType
-from autoware_ml.databases.scenarios import ScenarioData, Scenarios, DatasetParams
 
 logger = logging.getLogger(__name__)
+
+_SPLITS = (SplitType.TRAIN, SplitType.VAL, SplitType.TEST)
 
 
 class T4Scenarios(Scenarios):
     """
     T4Scenarios class inherits from Scenarios and defines the logic for building
-    scenario data for T4Dataset.
+    scenario data for T4dataset. Every dataset is described by one yaml file below the
+    scenario root, named after the dataset, holding the scenario entries of every split.
     """
 
     @model_validator(mode="after")
     def build_scenarios(self) -> T4Scenarios:
         """
-        Build scenarios from database scenarios, and
+        Build scenarios from the scenario lists of every dataset, and
         overwrite the scenario_data attribute.
 
         Returns:
           T4Scenarios: T4Scenarios class instance.
         """
 
-        scenario_data = defaultdict(list)
-        for dataset_param in self.dataset_params:
-            db_yaml_path = self.scenario_root_path / (dataset_param.dataset_name + ".yaml")
-            logger.info(f"Loading database scenarios from {db_yaml_path}")
-            with open(db_yaml_path, "r") as f:
-                db_scenarios: MappingProxyType[str, Sequence[str]] = yaml.safe_load(f)
+        scenario_data: dict[SplitType, list[ScenarioData]] = defaultdict(list)
+        for dataset_params in self.dataset_params:
+            db_yaml_path = self.scenario_root_path / f"{dataset_params.dataset_name}.yaml"
+            if not db_yaml_path.is_file():
+                raise FileNotFoundError(f"Scenario list {db_yaml_path} does not exist.")
+            logger.info(f"Loading scenario list {db_yaml_path}")
+            with open(db_yaml_path, "r") as file:
+                db_scenarios = yaml.safe_load(file)
+            if not isinstance(db_scenarios, Mapping):
+                raise ValueError(f"Scenario list {db_yaml_path} must hold a mapping of splits.")
 
-            scenario_splits = self._build_scenario_splits(db_scenarios, dataset_param)
-            for split, scenarios in scenario_splits.items():
+            for split, scenarios in self._build_scenario_splits(
+                db_scenarios, dataset_params
+            ).items():
                 scenario_data[split] += scenarios
 
-        object.__setattr__(self, "scenario_data", scenario_data)
+        object.__setattr__(self, "scenario_data", dict(scenario_data))
         for split, scenarios in scenario_data.items():
             logger.info(f"Loaded total of {len(scenarios)} scenarios for split {split}")
         return self
 
     @staticmethod
-    def _build_scenario_data(scenario_id: str, dataset_params: DatasetParams) -> ScenarioData:
+    def _build_scenario_data(scenario_entry: str, dataset_params: DatasetParams) -> ScenarioData:
         """
-        Build scenario data from a scenario ID and a
-        database version.
+        Build scenario data from one scenario list entry.
+
+        An entry is either <scenario_id>/<version> or
+        <scenario_id>/<version>/<location>/<vehicle_type>/<status>.
 
         Args:
-          scenario_id: Scenario ID.
-          dataset_params: Dataset parameters.
+          scenario_entry: Scenario list entry.
+          dataset_params: Parameters of the dataset the entry belongs to.
 
         Returns:
           ScenarioData: Scenario data.
         """
 
-        dataset_scene_info = scenario_id.split("/")
-        if len(dataset_scene_info) == 5:
-            # TODO (KokSeang): Traffic cone and barrier status will be used in another version.
-            scenario_id, version, city, vehicle_type, _ = dataset_scene_info
-        elif len(dataset_scene_info) == 2:
-            scenario_id, version = dataset_scene_info
-            city = vehicle_type = None
+        parts = scenario_entry.split("/")
+        if len(parts) == 5:
+            scenario_id, version, location, vehicle_type, _ = parts
+        elif len(parts) == 2:
+            scenario_id, version = parts
+            location = vehicle_type = None
         else:
-            raise ValueError(f"Invalid scenario ID: {scenario_id}")
+            raise ValueError(
+                f"Invalid scenario entry {scenario_entry!r} of dataset "
+                f"{dataset_params.dataset_name}, expected <scenario_id>/<version> or "
+                "<scenario_id>/<version>/<location>/<vehicle_type>/<status>."
+            )
 
-        return ScenarioData(
-            dataset_name=dataset_params.dataset_name,
+        return ScenarioData.from_dataset_params(
+            dataset_params,
             scenario_id=scenario_id,
             scenario_version=version,
             vehicle_type=vehicle_type,
-            location=city,
-            max_sweeps=dataset_params.max_sweeps,
-            sample_steps=dataset_params.sample_steps,
+            location=location,
         )
 
     def _build_scenario_splits(
-        self, db_scenarios: MappingProxyType[str, Sequence[str]], dataset_params: DatasetParams
-    ) -> MappingProxyType[SplitType, Sequence[ScenarioData]]:
+        self, db_scenarios: Mapping[str, Sequence[str]], dataset_params: DatasetParams
+    ) -> Mapping[SplitType, Sequence[ScenarioData]]:
         """
-        Build splits from a database scenarios.
+        Build the scenario data of every split from one scenario list. The list names every
+        split with a list of string entries, an empty list for a split without scenarios, and
+        may carry metadata keys besides the splits.
 
         Args:
-          db_scenarios: Dictionary of split type to a list of scenario IDs.
-          dataset_param: Dataset parameters.
+          db_scenarios: Dictionary of split name to scenario entries.
+          dataset_params: Parameters of the dataset the list belongs to.
 
         Returns:
-          MappingProxyType[SplitType, Sequence[ScenarioData]]: Dictionary of SplitType to
-          a list of ScenarioData for the corresponding split.
+          Mapping[SplitType, Sequence[ScenarioData]]: Dictionary of split to scenario data.
         """
 
-        scenario_splits = {}
-        for split in [SplitType.TRAIN, SplitType.VAL, SplitType.TEST]:
-            selected_scenarios = db_scenarios.get(split, [])
+        scenario_splits: dict[SplitType, list[ScenarioData]] = {}
+        for split in _SPLITS:
+            if split.value not in db_scenarios:
+                raise ValueError(
+                    f"The scenario list of dataset {dataset_params.dataset_name} names no "
+                    f"{split.value} split."
+                )
+            entries = db_scenarios[split.value]
+            if not isinstance(entries, list):
+                raise ValueError(
+                    f"Split {split.value} of dataset {dataset_params.dataset_name} must be a list "
+                    f"of scenario entries, got {type(entries).__name__}."
+                )
+            for entry in entries:
+                if not isinstance(entry, str):
+                    raise ValueError(
+                        f"Split {split.value} of dataset {dataset_params.dataset_name} holds the "
+                        f"non string entry {entry!r}."
+                    )
             scenario_splits[split] = [
-                self._build_scenario_data(scenario_id=scenario_id, dataset_params=dataset_params)
-                for scenario_id in selected_scenarios
+                self._build_scenario_data(scenario_entry=entry, dataset_params=dataset_params)
+                for entry in entries
             ]
         return scenario_splits

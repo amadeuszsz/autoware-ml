@@ -177,9 +177,11 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/c8/be/8fed28dd0a180dca19e72c233cbf58efa36df055e5b9d90d64fd1740b828/pydantic_core-2.41.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/7b/88/4ab71c769b64e3bf692254debb8476ebbaa0f9a847cdb8efe652960b0c2c/pypcd4-1.4.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/49/b3/d8482e8cacc8ea15a356efea13d22ce1c5914a9ee36622ba250523240bf2/pyquaternion-0.9.9-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/3e/28/900b15eb541e3225eb0b0bbddef575336fa7500490b90094eae61e929996/python_neo_lzf-0.3.5-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/0e/93/c8c361bf0a2fe50f828f32def460e8b8a14b93955d3fd302b1a9b63b19e4/pytorch_lightning-2.6.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/99/781fe0c827be2742bcc775efefccb3b048a3a9c6ce9aec0cbf4a101677e5/pytz-2026.1.post1-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
@@ -199,7 +201,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/49/4b/359f28a903c13438ef59ebeee215fb25da53066db67b305c125f1c6d2a25/sqlparse-0.5.5-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0b/c9/584bc9651441b4ba60cc4d557d8a547b5aff901af35bda3a4ee30c819b82/starlette-1.0.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl
-      - pypi: git+https://github.com/tier4/t4-devkit.git?rev=v0.6.0#32d3d4e8a39cdaa688633c6bcb6d88ad553ebbd2
+      - pypi: git+https://github.com/tier4/t4-devkit.git?rev=v0.8.0#f49f47829c83acb751e1dec1141b075bc7f9b51d
       - pypi: https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl
       - pypi: https://pypi.nvidia.com/tensorrt-cu12/tensorrt_cu12-10.16.0.72.tar.gz
       - pypi: https://pypi.nvidia.com/tensorrt-cu12-bindings/tensorrt_cu12_bindings-10.16.0.72-cp311-none-manylinux_2_28_x86_64.whl
@@ -446,11 +448,13 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/f7/27/a2fc51a4a122dfd1015e921ae9d22fee3d20b0b8080d9a704578bf9deece/pymdown_extensions-10.21.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/7b/88/4ab71c769b64e3bf692254debb8476ebbaa0f9a847cdb8efe652960b0c2c/pypcd4-1.4.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/49/b3/d8482e8cacc8ea15a356efea13d22ce1c5914a9ee36622ba250523240bf2/pyquaternion-0.9.9-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3b/ab/b3226f0bd7cdcf710fbede2b3548584366da3b19b5021e74f5bde2a8fa3f/pytest-9.0.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/67/0f/019d3949a40280f6193b62bc010177d4ce702d0fce424322286488569cd3/python_discovery-1.2.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/3e/28/900b15eb541e3225eb0b0bbddef575336fa7500490b90094eae61e929996/python_neo_lzf-0.3.5-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/0e/93/c8c361bf0a2fe50f828f32def460e8b8a14b93955d3fd302b1a9b63b19e4/pytorch_lightning-2.6.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/10/99/781fe0c827be2742bcc775efefccb3b048a3a9c6ce9aec0cbf4a101677e5/pytz-2026.1.post1-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
@@ -470,7 +474,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/49/4b/359f28a903c13438ef59ebeee215fb25da53066db67b305c125f1c6d2a25/sqlparse-0.5.5-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0b/c9/584bc9651441b4ba60cc4d557d8a547b5aff901af35bda3a4ee30c819b82/starlette-1.0.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl
-      - pypi: git+https://github.com/tier4/t4-devkit.git?rev=v0.6.0#32d3d4e8a39cdaa688633c6bcb6d88ad553ebbd2
+      - pypi: git+https://github.com/tier4/t4-devkit.git?rev=v0.8.0#f49f47829c83acb751e1dec1141b075bc7f9b51d
       - pypi: https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl
       - pypi: https://pypi.nvidia.com/tensorrt-cu12/tensorrt_cu12-10.16.0.72.tar.gz
       - pypi: https://pypi.nvidia.com/tensorrt-cu12-bindings/tensorrt_cu12_bindings-10.16.0.72-cp311-none-manylinux_2_28_x86_64.whl
@@ -3353,6 +3357,18 @@ packages:
   - railroad-diagrams ; extra == 'diagrams'
   - jinja2 ; extra == 'diagrams'
   requires_python: '>=3.9'
+- pypi: https://files.pythonhosted.org/packages/7b/88/4ab71c769b64e3bf692254debb8476ebbaa0f9a847cdb8efe652960b0c2c/pypcd4-1.4.3-py3-none-any.whl
+  name: pypcd4
+  version: 1.4.3
+  sha256: 4d39073ef9f4945922561ad1b5246c008dfe110af2931dea963cafb1e0717d4f
+  requires_dist:
+  - numpy>=1.21.0
+  - pydantic>=1.10.8,<3.0.0
+  - python-neo-lzf>=0.3.5
+  - mypy ; extra == 'dev'
+  - ruff ; extra == 'dev'
+  - setuptools-scm ; extra == 'dev'
+  requires_python: '>=3.8.2'
 - pypi: https://files.pythonhosted.org/packages/49/b3/d8482e8cacc8ea15a356efea13d22ce1c5914a9ee36622ba250523240bf2/pyquaternion-0.9.9-py3-none-any.whl
   name: pyquaternion
   version: 0.9.9
@@ -3439,6 +3455,11 @@ packages:
   requires_dist:
   - click>=5.0 ; extra == 'cli'
   requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/3e/28/900b15eb541e3225eb0b0bbddef575336fa7500490b90094eae61e929996/python_neo_lzf-0.3.5-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
+  name: python-neo-lzf
+  version: 0.3.5
+  sha256: cc917542baa1cf38733f57dd4703d1f627bc9e391af44e63b8b557fa0b424457
+  requires_python: '>=3.7'
 - pypi: https://files.pythonhosted.org/packages/0e/93/c8c361bf0a2fe50f828f32def460e8b8a14b93955d3fd302b1a9b63b19e4/pytorch_lightning-2.6.1-py3-none-any.whl
   name: pytorch-lightning
   version: 2.6.1
@@ -3869,21 +3890,22 @@ packages:
   purls: []
   size: 24008591
   timestamp: 1765578833462
-- pypi: git+https://github.com/tier4/t4-devkit.git?rev=v0.6.0#32d3d4e8a39cdaa688633c6bcb6d88ad553ebbd2
+- pypi: git+https://github.com/tier4/t4-devkit.git?rev=v0.8.0#f49f47829c83acb751e1dec1141b075bc7f9b51d
   name: t4-devkit
-  version: 0.6.0
+  version: 0.8.0
   requires_dist:
-  - rerun-sdk>=0.20.0,<0.28.0
+  - rerun-sdk>=0.20.0
   - pyquaternion>=0.9.9
   - matplotlib>=3.9.2
-  - shapely<2.0.0 ; python_full_version == '3.10.*'
-  - shapely>=2.0.0 ; python_full_version >= '3.11'
+  - shapely>=1.8.5.post1
   - pycocotools>=2.0.8
   - pyyaml>=6.0.2
   - typer>=0.15.3
   - tabulate>=0.9.0
   - tqdm>=4.67.1
   - returns>=0.26.0
+  - pyarrow<24.0.0
+  - pypcd4>=1.4.3,<2
   requires_python: '>=3.10,<3.13'
 - pypi: https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl
   name: tabulate

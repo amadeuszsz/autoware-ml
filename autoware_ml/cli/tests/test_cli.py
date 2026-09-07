@@ -316,6 +316,29 @@ class TestCliCommands:
         )
         assert result.exit_code != 0
 
+    def test_generate_dataset_dispatches_to_runtime_module(self) -> None:
+        with patch("autoware_ml.cli.cli.run_lazy_script") as run_lazy_script_mock:
+            result = self.runner.invoke(
+                app,
+                [
+                    "generate-dataset",
+                    "--config-name",
+                    "default_t4dataset_generator",
+                    "database.num_workers=4",
+                ],
+            )
+
+        assert result.exit_code == 0
+        run_lazy_script_mock.assert_called_once_with(
+            cli.CLI_RUNTIME_MODULE,
+            "run_hydra_entrypoint",
+            entrypoint_module=cli.GENERATE_DATASET_ENTRYPOINT_MODULE,
+            config_name="default_t4dataset_generator",
+            stage=None,
+            extra_args=["database.num_workers=4"],
+            config_prefix=cli.GENERATOR_CONFIG_PREFIX,
+        )
+
     def test_deploy_requires_weights(self) -> None:
         result = self.runner.invoke(app, ["deploy", "--config-name", SAMPLE_CONFIG_NAME])
         assert result.exit_code != 0
@@ -503,33 +526,6 @@ class TestCliCommands:
             config_name=SAMPLE_CONFIG_NAME,
             export_dir=None,
             override=False,
-        )
-
-    def test_create_dataset_runs_runner(self) -> None:
-        with patch("autoware_ml.cli.cli.run_lazy_script") as run_lazy_script_mock:
-            result = self.runner.invoke(
-                app,
-                [
-                    "create-dataset",
-                    "--dataset",
-                    "nuscenes",
-                    "--task",
-                    "calibration_status",
-                    "--root-path",
-                    "/data/nuscenes",
-                    "--out-dir",
-                    "/tmp/out",
-                ],
-            )
-
-        assert result.exit_code == 0
-        run_lazy_script_mock.assert_called_once_with(
-            "autoware_ml.scripts.create_dataset",
-            "main",
-            dataset="nuscenes",
-            tasks=["calibration_status"],
-            root_path="/data/nuscenes",
-            out_dir="/tmp/out",
         )
 
     def test_session_start_runs_script(self) -> None:

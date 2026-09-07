@@ -4,7 +4,7 @@ icon: lucide/table
 
 # Dataset Schema
 
-The output schema lives in the `autoware_ml/databases/schemas/` package. It is split into a top-level table definition and reusable nested data models that can be shared across dataset families. Every database implementation emits `Sequence[DatasetRecord]` from `process_scenario_records()` and persists rows as a Polars `DataFrame` (typically Parquet) using `DatasetTableSchema`.
+The output schema lives in the `autoware_ml/databases/schemas/` package. It is split into a top-level table definition and reusable nested data models that can be shared across dataset families. A database emits `Sequence[DatasetRecord]` from its record generator, persists the rows as a Polars `DataFrame` in Parquet using `DatasetTableSchema`, and reads them back through `DatasetRecord.load_from_dictionary()`.
 
 ## Base building blocks (`base_schemas.py`)
 
@@ -15,7 +15,7 @@ The output schema lives in the `autoware_ml/databases/schemas/` package. It is s
 ## Top-level table (`dataset_schemas.py`)
 
 - **`DatasetTableSchema`** - a frozen dataclass whose class-level attributes are `DatasetTableColumn` entries. Call `DatasetTableSchema.to_polars_schema()` to get a `pl.Schema` for constructing or validating a Polars `DataFrame`.
-- **`DatasetRecord`** - a frozen Pydantic model (implementing `DataModelInterface`) representing a single row. One record is emitted per sample/frame by `process_scenario_records()`.
+- **`DatasetRecord`** - a frozen Pydantic model (implementing `DataModelInterface`) representing a single row. One record is emitted per annotated sample.
 
 ```python
 class DatasetTableSchema:
@@ -30,6 +30,7 @@ class DatasetTableSchema:
 
     # Nested sensor data columns
     LIDAR_FRAMES = DatasetTableColumn("lidar_frames", pl.List(pl.Struct(...)))
+    CAMERA_FRAMES = DatasetTableColumn("camera_frames", pl.List(pl.Struct(...)))
     LIDAR_SOURCES = DatasetTableColumn("lidar_sources", pl.List(pl.Struct(...)))
     # Annotation fields
     CATEGORY_MAPPING = DatasetTableColumn("category_mapping", pl.Struct(...))
@@ -47,6 +48,7 @@ class DatasetRecord(BaseModel, DataModelInterface):
     vehicle_type: str | None
     scenario_name: str
     lidar_frames: Sequence[LidarFrameDataModel]
+    camera_frames: Sequence[CameraFrameDataModel] | None
     lidar_sources: Sequence[LidarSourceDataModel] | None
     category_mapping: CategoryMappingDataModel | None
     boxes_3d: Sequence[Box3DDataModel] | None
@@ -68,28 +70,51 @@ class DatasetRecord(BaseModel, DataModelInterface):
 | `vehicle_type`      | `str \| None`                            | `String`       | Type of vehicle used for data collection           |
 | `scenario_name`     | `str`                                    | `String`       | Human-readable name of the scenario scene          |
 | `lidar_frames`      | `Sequence[LidarFrameDataModel]`          | `List(Struct)` | Keyframe and sweep LiDAR frame metadata per sample |
+| `camera_frames`     | `Sequence[CameraFrameDataModel] \| None` | `List(Struct)` | Camera image metadata and calibration per sample   |
 | `lidar_sources`     | `Sequence[LidarSourceDataModel] \| None` | `List(Struct)` | Per-sensor calibration metadata for LiDAR sources  |
 | `category_mapping`  | `CategoryMappingDataModel \| None`       | `Struct`       | Mapping between category names and indices         |
 | `boxes_3d`          | `Sequence[Box3DDataModel] \| None`       | `List(Struct)` | 3D box annotations for the sample/frame            |
 
 ### `lidar_frames` struct fields
 
-Each list entry is a `LidarFrameDataModel` covering one keyframe or sweep:
+Each list entry is a `LidarFrameDataModel`. The first entry is the frame of the sample and the
+following entries are its sweeps, the frames captured before it nearest first and then the
+frames captured after it nearest first.
 
 | Field                                   | Polars type           | Description                                                |
 | --------------------------------------- | --------------------- | ---------------------------------------------------------- |
 | `lidar_frame_id`                        | `String`              | Sample-data token for this frame                           |
-| `lidar_keyframe`                        | `Boolean`             | `True` for the main keyframe, `False` for sweeps           |
+| `lidar_keyframe`                        | `Boolean`             | Whether the dataset annotates the frame                    |
 | `lidar_sensor_id`                       | `String`              | Calibrated-sensor token                                    |
 | `lidar_sensor_channel_name`             | `String`              | LiDAR channel name (e.g. `LIDAR_TOP`)                      |
 | `lidar_timestamp_seconds`               | `Float64`             | Frame timestamp in seconds                                 |
-| `lidar_pointcloud_path`                 | `String`              | Absolute path to the point cloud file                      |
+| `lidar_pointcloud_path`                 | `String`              | Point cloud path relative to the database root             |
 | `lidar_pointcloud_source_path`          | `String`              | Path to per-point metadata (or null)                       |
-| `lidar_pointcloud_num_features`         | `Int32`               | Number of features per point (configured on the database)  |
+| `lidar_pointcloud_num_features`         | `Int32`               | Number of features per point (declared per dataset)        |
 | `lidar_sensor_to_ego_pose_matrix`       | `Array(Float32, 4x4)` | Sensor-to-ego transform                                    |
 | `lidar_frame_ego_pose_to_global_matrix` | `Array(Float32, 4x4)` | Ego-to-global transform for this frame                     |
-| `lidar_sensor_to_lidar_sweep_matrices`  | `Array(Float32, 4x4)` | Sensor-to-sweep transform                                  |
+| `lidar_sensor_to_lidar_sweep_matrix`    | `Array(Float32, 4x4)` | Sensor-to-sweep transform                                  |
 | `lidar_pointcloud_semantic_mask_path`   | `String`              | LiDAR segmentation mask path (or null)                     |
+
+### `camera_frames` struct fields
+
+Each list entry is a `CameraFrameDataModel` describing one camera image of the sample:
+
+| Field                                    | Polars type           | Description                                      |
+| ---------------------------------------- | --------------------- | ------------------------------------------------ |
+| `camera_frame_id`                        | `String`              | Sample-data token for this camera frame          |
+| `camera_keyframe`                        | `Boolean`             | Whether the frame is a keyframe                  |
+| `camera_sensor_id`                       | `String`              | Calibrated-sensor token                          |
+| `camera_sensor_channel_name`             | `String`              | Camera channel name (e.g. `CAM_FRONT`)           |
+| `camera_timestamp_seconds`               | `Float64`             | Frame timestamp in seconds                       |
+| `camera_image_path`                      | `String`              | Image path relative to the database root         |
+| `camera_image_width`                     | `Int32`               | Image width in pixels                            |
+| `camera_image_height`                    | `Int32`               | Image height in pixels                           |
+| `camera_intrinsic_matrix`                | `Array(Float32, 3x3)` | Camera intrinsic matrix                          |
+| `camera_distortion_coefficients`         | `List(Float64)`       | Distortion coefficients, empty when undistorted  |
+| `camera_distortion_model`                | `String`              | Distortion model name, empty when unrecorded     |
+| `camera_sensor_to_ego_pose_matrix`       | `Array(Float32, 4x4)` | Sensor-to-ego transform                          |
+| `camera_frame_ego_pose_to_global_matrix` | `Array(Float32, 4x4)` | Ego-to-global transform for this frame           |
 
 ### `lidar_sources` struct fields
 
@@ -114,6 +139,7 @@ Each list entry is a `LidarSourceDataModel` describing one LiDAR sensor in the s
 | Module                    | Schema class                   | Data model                 | Purpose                                                 |
 | ------------------------- | ------------------------------ | -------------------------- | ------------------------------------------------------- |
 | `lidar_frames.py`         | `LidarFrameDatasetSchema`      | `LidarFrameDataModel`      | Point cloud paths, poses, and sweep transforms          |
+| `camera_frames.py`        | `CameraFrameDatasetSchema`     | `CameraFrameDataModel`     | Image paths, intrinsics, distortion, and camera poses   |
 | `lidar_sources.py`        | `LidarSourceDatasetSchema`     | `LidarSourceDataModel`     | LiDAR sensor channel name, token, and extrinsics        |
 | `category_mapping.py`     | `CategoryMappingDatasetSchema` | `CategoryMappingDataModel` | Parallel lists of category names and indices            |
 | `box3d_schemas.py`        | `Box3DDatasetSchema`           | `Box3DDataModel`           | Per-object 3D box parameters and metadata               |
@@ -128,8 +154,8 @@ Each list entry is a `Box3DDataModel` with the following struct fields:
 | `box3d_params`                | `Array(Float32, 10)`    | 3D box vector in `Box3DFieldIndex` order: `(x, y, z, l, w, h, yaw, vx, vy, vz)`  |
 | `box3d_instance_id`           | `String`                | Instance identifier for the box                                                  |
 | `box3d_dataset_label_name`    | `String`                | Original dataset label name                                                      |
-| `box3d_label_name`            | `String`                | Normalized training/evaluation label name                                        |
-| `box3d_label_index`           | `Int32`                 | Class index of `box3d_label_name`                                                |
+| `box3d_label_name`            | `String`                | Fine label name of the family vocabulary                                         |
+| `box3d_label_index`           | `Int32`                 | Class index at the taxonomy level, or the ignore index                           |
 | `box3d_num_lidar_points`      | `Int32`                 | Number of LiDAR points in the box                                                |
 | `box3d_num_radar_points`      | `Int32`                 | Number of radar points in the box                                                |
 | `box3d_valid`                 | `Boolean`               | Validity flag for this annotation                                                |

@@ -34,7 +34,6 @@ from autoware_ml.utils.cli.helpers import (
     complete_path_value,
     complete_session_command_value,
     complete_session_name_value,
-    parse_extra_args,
     run_lazy_script,
 )
 
@@ -56,6 +55,8 @@ session_app = typer.Typer(
 )
 
 TASK_CONFIG_PREFIX = "tasks"
+GENERATOR_CONFIG_PREFIX = "generators"
+GENERATE_DATASET_ENTRYPOINT_MODULE = "autoware_ml.scripts.generate_dataset"
 TRAIN_ENTRYPOINT_MODULE = "autoware_ml.scripts.train"
 DEPLOY_ENTRYPOINT_MODULE = "autoware_ml.scripts.deploy"
 TEST_ENTRYPOINT_MODULE = "autoware_ml.scripts.test"
@@ -200,6 +201,54 @@ def complete_session_name(incomplete: str) -> list[str]:
         Completion candidates for managed session names.
     """
     return complete_session_name_value(incomplete)
+
+
+def complete_generator_config(incomplete: str) -> list[str]:
+    """Complete generator config names bundled with the package.
+
+    Args:
+        incomplete: Current completion prefix entered by the user.
+
+    Returns:
+        Completion candidates for generator configs.
+    """
+    return complete_config_value(incomplete, GENERATOR_CONFIG_PREFIX)
+
+
+@app.command(
+    name="generate-dataset",
+    cls=OptionFirstTyperCommand,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def generate_dataset(
+    ctx: typer.Context,
+    config_name: Annotated[
+        str,
+        typer.Option(
+            "--config-name",
+            help="Generator config name or YAML config path",
+            autocompletion=complete_generator_config,
+        ),
+    ],
+) -> None:
+    """Generate the record table of a database through the Hydra-backed entrypoint.
+
+    The configured database reads the annotations of its scenario lists and writes the
+    record table named after its hash. Extra arguments are Hydra overrides.
+
+    Args:
+        ctx: Typer context containing additional Hydra overrides.
+        config_name: Generator config name or config file path.
+    """
+    run_lazy_script(
+        CLI_RUNTIME_MODULE,
+        "run_hydra_entrypoint",
+        entrypoint_module=GENERATE_DATASET_ENTRYPOINT_MODULE,
+        config_name=config_name,
+        stage=None,
+        extra_args=ctx.args,
+        config_prefix=GENERATOR_CONFIG_PREFIX,
+    )
 
 
 @app.command(
@@ -518,51 +567,6 @@ def mlflow_export(
         config_name=config_name,
         export_dir=export_dir,
         override=override,
-    )
-
-
-@app.command(
-    name="create-dataset",
-    cls=OptionFirstTyperCommand,
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def create_dataset(
-    ctx: typer.Context,
-    dataset: Annotated[
-        str,
-        typer.Option("--dataset", help="Dataset name (e.g., nuscenes, nuscenes_mini)"),
-    ],
-    task: Annotated[list[str], typer.Option("--task", help="Task name (can be repeated)")],
-    root_path: Annotated[
-        str,
-        typer.Option(
-            "--root-path",
-            help="Root path of the dataset",
-            autocompletion=complete_directory_path,
-        ),
-    ],
-    out_dir: Annotated[
-        str,
-        typer.Option(
-            "--out-dir",
-            help="Output directory for info files",
-            autocompletion=complete_directory_path,
-        ),
-    ],
-) -> None:
-    """Generate dataset info files with specified tasks.
-
-    Requires dataset name and at least one task.
-    """
-
-    run_lazy_script(
-        "autoware_ml.scripts.create_dataset",
-        "main",
-        dataset=dataset,
-        tasks=task,
-        root_path=root_path,
-        out_dir=out_dir,
-        **parse_extra_args(ctx.args),
     )
 
 

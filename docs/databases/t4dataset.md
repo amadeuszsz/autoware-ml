@@ -4,128 +4,76 @@ icon: lucide/database
 
 # T4Dataset
 
-This module implements the database layer for the **T4** annotation format, built on top of the abstract base classes in the [database module](design.md).
+This module implements the database layer for the **T4** annotation format, built on top of
+the abstract base classes in the [database module](design.md).
 
 ## Summary
 
 | Property     | Value                                                       |
 | ------------ | ----------------------------------------------------------- |
 | Format       | JSON (T4 annotation tables via `t4-devkit`)                 |
-| Annotations  | 3D bounding boxes                                           |
-| Modality     | Multiple LiDAR (+ cameras in source data, not yet exported) |
+| Annotations  | 3D bounding boxes and point wise semantic masks             |
+| Modality     | Multiple LiDAR and cameras                                  |
 | Dependencies | `t4-devkit`, `polars`, `numpy`                              |
-| Input        | Scenario YAML files and T4 annotation directories           |
-| Output       | Sequence of dataset rows saved as Parquet via Polars        |
+| Input        | Scenario list yaml files and T4 annotation directories      |
+| Output       | Record table saved as Parquet via Polars                    |
 
 ## Module relationships
 
-| Module                   | Role                                                                                              | Depends on                                                                              |
-| ------------------------ | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `t4scenarios.py`         | `T4Scenarios` extends `Scenarios`: reads scenario YAML files and builds per-split scenario data   | `scenarios`                                                                             |
-| `t4records_generator.py` | `T4RecordsGenerator` reads T4 annotations via `t4-devkit` and builds `T4SampleRecord` per sample  | `scenarios`, `schemas`, `t4-devkit`                                                     |
-| `t4sample_records.py`    | `T4SampleRecord` holds intermediate per-sample data and converts to the unified dataset row model | `schemas`                                                                               |
-| `t4dataset.py`           | `T4Dataset` extends `BaseDatabase`: orchestrates parallel record generation across scenarios      | `base_database`, `t4scenarios`, `t4records_generator`, `scenarios`, `schemas`, `polars` |
+| Module                   | Role                                                                                         |
+| ------------------------ | -------------------------------------------------------------------------------------------- |
+| `t4scenarios.py`         | `T4Scenarios` extends `Scenarios`: reads the scenario list of every dataset per split        |
+| `t4records_generator.py` | `T4RecordsGenerator` reads one scenario through `t4-devkit` and builds one record per sample |
+| `t4database.py`          | `T4Database` extends `BaseDatabase`: one worker generates the records of one scenario        |
 
-```mermaid
-classDiagram
-    direction TB
+## Scenario lists
 
-    class polars {
-        <<external>>
-        DataFrame
-        Schema
-    }
+A dataset is described by one yaml file named after it below the scenario root, with the
+scenario entries of every split:
 
-    class t4_devkit {
-        <<external>>
-        Tier4
-        Sample
-        SampleData
-        CalibratedSensor
-    }
-
-    class scenarios {
-        <<databases>>
-        Scenarios
-        ScenarioData
-        DatasetParams
-    }
-
-    class schemas {
-        <<databases>>
-        Dataset row model
-        DatasetTableSchema
-        LidarFrameDataModel
-        LidarSourceDataModel
-        CategoryMappingDataModel
-        Box3DDataModel
-        Box3DDatasetSchema
-        FrameBasicMetadata
-    }
-
-    class BaseDatabase {
-        <<databases>>
-        get_polars_schema()
-        get_unique_scenario_data()
-        process_scenario_records()
-    }
-
-    class T4Scenarios {
-        build_scenarios()
-        _build_scenario_data()
-        _build_scenario_splits()
-    }
-
-    class T4RecordsGenerator {
-        generate_dataset_records()
-        extract_t4_sample_record()
-        _extract_lidar_frame()
-        _extract_lidar_sweeps()
-        _extract_lidar_sources()
-        _extract_category_mapping()
-    }
-
-    class T4SampleRecord {
-        to_dataset_record()
-    }
-
-    class T4Dataset {
-        process_scenario_records()
-        _run_t4records_generator()
-    }
-
-    T4Scenarios --|> scenarios : extends Scenarios
-
-    T4Dataset --|> BaseDatabase : extends
-    T4Dataset --> T4Scenarios : scenario groups
-    T4Dataset --> T4RecordsGenerator : creates per scenario
-    T4Dataset --> polars : writes Parquet via DataFrame
-
-    T4RecordsGenerator --> T4Scenarios : reads ScenarioData
-    T4RecordsGenerator --> T4SampleRecord : builds per sample
-    T4RecordsGenerator --> schemas : uses FrameBasicMetadata, LidarFrameDataModel, ...
-    T4RecordsGenerator --> t4_devkit : reads T4 annotations
-
-    T4SampleRecord --> schemas : converts to dataset row model
-
-    T4Dataset --> schemas : record.to_dictionary() to Parquet
-    schemas --> polars : DataFrame with DatasetTableSchema
+```yaml
+train:
+  - <scenario_id>/<version>/<location>/<vehicle_type>/<status>
+val:
+  - <scenario_id>/<version>
+test: []
 ```
+
+The short and the annotated entry forms may be mixed. The location and the vehicle type of
+an annotated entry are written into every record of the scenario. The scenario root is the
+task directory of the perception-devops checkout, so the scenario lists live outside this
+repository and the database config only names the datasets and their parameters.
+
+## What the generator decides
+
+- which samples are kept: every sample, every n-th sample, or only the masked samples of a
+  dataset labelled at a lower rate than it was recorded
+- how many lidar frames before and after each sample it carries, with the transform from the
+  sample's sensor frame into every sweep composed in double precision
+- the calibration of every lidar sensor of the scene, the segmentation category table, and
+  every camera image of the sample with its intrinsics, distortion and poses
+- the fine label and the class index of every box, baked through the taxonomy and the box
+  pipelines of the database, and optionally the recounted number of lidar points inside
+  every box
+
+Every path in a record is relative to the database root. A missing file, a point cloud
+whose size does not match the declared feature count, or a mask whose length does not match
+the point count stops the run.
 
 ## Output table schema
 
-`T4Dataset.process_scenario_records()` produces a list of `DatasetRecord` objects and persists them as a Polars `DataFrame` written to Parquet. For the complete table layout and nested struct definitions, see [Dataset Schema](schemas.md).
-
-Each row corresponds to one `DatasetRecord` (a frozen Pydantic model). The Parquet file is cached under the database's `cache_path` with a filename derived from the database hash for reproducibility.
+`T4Database.process_scenario_records()` produces `DatasetRecord` objects and persists them as
+a Polars `DataFrame` written to Parquet, named after the database hash. For the complete
+table layout and nested struct definitions, see [Dataset Schema](schemas.md).
 
 ## Implementation
 
-| Path                                                     | Description                                                      |
-| -------------------------------------------------------- | -----------------------------------------------------------------|
-| `autoware_ml/databases/t4dataset/t4scenarios.py`         | T4 scenario YAML parsing and split construction                  |
-| `autoware_ml/databases/t4dataset/t4records_generator.py` | T4 annotation reading and per-sample extraction                  |
-| `autoware_ml/databases/t4dataset/t4sample_records.py`    | Intermediate `T4SampleRecord` to unified dataset row conversion  |
-| `autoware_ml/databases/t4dataset/t4dataset.py`           | T4 database orchestration with parallel processing               |
+| Path                                                     | Description                                       |
+| -------------------------------------------------------- | ------------------------------------------------- |
+| `autoware_ml/databases/t4dataset/t4scenarios.py`         | T4 scenario list parsing and split construction   |
+| `autoware_ml/databases/t4dataset/t4records_generator.py` | T4 annotation reading and per sample extraction   |
+| `autoware_ml/databases/t4dataset/t4database.py`          | T4 database orchestration with parallel workers   |
+| `autoware_ml/configs/database/t4dataset/`                | Database, scenario group and pipeline configs     |
 
 ## Acknowledgment
 

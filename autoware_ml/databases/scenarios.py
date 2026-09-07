@@ -12,14 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Scenario metadata of a database.
+
+A database is described by immutable scenario objects: the parameters of every dataset it
+holds, the scenarios of every split, and the group a scenario list belongs to. Every object
+has a deterministic string form, which is what the database hash is built from, so any
+change here selects a different record table.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence, Mapping, Annotated
+from typing import Annotated, Mapping, Sequence
 
-from pydantic import BaseModel, ConfigDict, BeforeValidator, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
-from autoware_ml.types.dataset import SplitType
+from autoware_ml.types.dataset import SplitType, SweepDirection
 
 
 def path_adapter(path: str | Path) -> Path:
@@ -44,39 +52,49 @@ PathAdapter = Annotated[Path, BeforeValidator(path_adapter)]
 
 class DatasetParams(BaseModel):
     """
-    Parameters for a dataset, for example, max_sweeps and sampling steps
-    when preprocessing it.
+    Parameters of one dataset, applied to every scenario listed for it.
 
     Attributes:
-      dataset_name: Name of the dataset.
-      max_sweeps: Maximum number of sweeps to include.
-      sample_steps: Number of steps to sample.
+      dataset_name: Name of the dataset, the directory below the database root and the stem
+        of its scenario list.
+      max_past_sweeps: Maximum number of lidar frames captured before a sample stored with
+        it.
+      max_future_sweeps: Maximum number of lidar frames captured after a sample stored with
+        it.
+      sample_steps: Keep every n-th sample of a scenario.
+      lidar_pointcloud_num_features: Number of float32 features per point in the point
+        cloud files of the dataset.
+      semantic_masks: Whether only the samples carrying a semantic segmentation mask are
+        kept, so a corpus labelled at a lower rate than it was recorded trains on its
+        labelled samples only.
     """
 
     model_config = ConfigDict(frozen=True, strict=True)
 
     dataset_name: str
-    max_sweeps: int
-    sample_steps: int
+    max_past_sweeps: int = Field(ge=0)
+    max_future_sweeps: int = Field(ge=0)
+    sample_steps: int = Field(ge=1)
+    lidar_pointcloud_num_features: int = Field(ge=3)
+    semantic_masks: bool = False
 
     def __str__(self) -> str:
-        """String representation of the database version."""
+        """String representation of the dataset parameters."""
         return (
             f"DatasetParams(dataset_name={self.dataset_name}, "
-            f"max_sweeps={self.max_sweeps}, "
-            f"sample_steps={self.sample_steps})"
+            f"max_past_sweeps={self.max_past_sweeps}, "
+            f"max_future_sweeps={self.max_future_sweeps}, "
+            f"sample_steps={self.sample_steps}, "
+            f"lidar_pointcloud_num_features={self.lidar_pointcloud_num_features}, "
+            f"semantic_masks={self.semantic_masks})"
         )
 
-    def __eq__(self, other: DatasetParams) -> bool:
-        """Compare two database versions by their version and settings."""
-        return (
-            self.dataset_name == other.dataset_name
-            and self.max_sweeps == other.max_sweeps
-            and self.sample_steps == other.sample_steps
-        )
+    def __eq__(self, other: object) -> bool:
+        """Compare two dataset parameter sets by their string form."""
+        return isinstance(other, DatasetParams) and str(self) == str(other)
 
     def __hash__(self) -> int:
-        """Hash the database version by its version and settings."""
+        """Hash the dataset parameters by their string form."""
         return hash(str(self))
 
 
@@ -90,22 +108,80 @@ class ScenarioData(BaseModel):
       dataset_name: Name of the dataset.
       scenario_id: ID of the scenario.
       scenario_version: Version of the scenario.
-      max_sweeps: Maximum number of sweeps to include.
+      max_past_sweeps: Maximum number of lidar frames captured before a sample stored with
+        it.
+      max_future_sweeps: Maximum number of lidar frames captured after a sample stored with
+        it.
       sample_steps: Number of steps to sample.
+      lidar_pointcloud_num_features: Number of float32 features per point.
+      semantic_masks: Whether only the samples carrying a semantic mask are kept.
       vehicle_type: Type of the vehicle.
       location: Location of the scenario.
     """
 
-    # Set model config to frozen and strict
     model_config = ConfigDict(frozen=True, strict=True)
 
     dataset_name: str
     scenario_id: str
     scenario_version: str
-    max_sweeps: int
+    max_past_sweeps: int
+    max_future_sweeps: int
     sample_steps: int
+    lidar_pointcloud_num_features: int
+    semantic_masks: bool
     vehicle_type: str | None = None
     location: str | None = None
+
+    def max_sweeps(self, direction: SweepDirection) -> int:
+        """
+        Maximum number of lidar frames stored with a sample on one side of it.
+
+        Args:
+          direction: Side of the sample.
+
+        Returns:
+          int: Maximum number of stored frames in that direction.
+        """
+
+        if direction is SweepDirection.PAST:
+            return self.max_past_sweeps
+        return self.max_future_sweeps
+
+    @classmethod
+    def from_dataset_params(
+        cls,
+        dataset_params: DatasetParams,
+        scenario_id: str,
+        scenario_version: str,
+        vehicle_type: str | None,
+        location: str | None,
+    ) -> ScenarioData:
+        """
+        Build the scenario data of one scenario from the parameters of its dataset.
+
+        Args:
+          dataset_params: Parameters of the dataset the scenario belongs to.
+          scenario_id: ID of the scenario.
+          scenario_version: Version of the scenario.
+          vehicle_type: Type of the vehicle, or None when the scenario list does not say.
+          location: Location of the scenario, or None when the scenario list does not say.
+
+        Returns:
+          ScenarioData: Scenario data.
+        """
+
+        return cls(
+            dataset_name=dataset_params.dataset_name,
+            scenario_id=scenario_id,
+            scenario_version=scenario_version,
+            max_past_sweeps=dataset_params.max_past_sweeps,
+            max_future_sweeps=dataset_params.max_future_sweeps,
+            sample_steps=dataset_params.sample_steps,
+            lidar_pointcloud_num_features=dataset_params.lidar_pointcloud_num_features,
+            semantic_masks=dataset_params.semantic_masks,
+            vehicle_type=vehicle_type,
+            location=location,
+        )
 
     def __str__(self) -> str:
         """
@@ -119,38 +195,21 @@ class ScenarioData(BaseModel):
             f"ScenarioData(dataset_name={self.dataset_name}, "
             f"scenario_id={self.scenario_id}, "
             f"scenario_version={self.scenario_version}, "
-            f"max_sweeps={self.max_sweeps}, "
+            f"max_past_sweeps={self.max_past_sweeps}, "
+            f"max_future_sweeps={self.max_future_sweeps}, "
             f"sample_steps={self.sample_steps}, "
+            f"lidar_pointcloud_num_features={self.lidar_pointcloud_num_features}, "
+            f"semantic_masks={self.semantic_masks}, "
             f"vehicle_type={self.vehicle_type}, "
             f"location={self.location})"
         )
 
-    def __eq__(self, other: ScenarioData) -> bool:
-        """
-        Compare two scenario data by their version and scenario IDs.
-
-        Returns:
-          bool: True if the scenario data are equal, False otherwise.
-        """
-
-        return (
-            self.dataset_name == other.dataset_name
-            and self.scenario_id == other.scenario_id
-            and self.scenario_version == other.scenario_version
-            and self.max_sweeps == other.max_sweeps
-            and self.sample_steps == other.sample_steps
-            and self.vehicle_type == other.vehicle_type
-            and self.location == other.location
-        )
+    def __eq__(self, other: object) -> bool:
+        """Compare two scenario data by their string form."""
+        return isinstance(other, ScenarioData) and str(self) == str(other)
 
     def __hash__(self) -> int:
-        """
-        Hash the scenario data by its version and scenario IDs.
-
-        Returns:
-          int: Hash of the scenario data.
-        """
-
+        """Hash the scenario data by its string form."""
         return hash(str(self))
 
 
@@ -164,10 +223,9 @@ class Scenarios(BaseModel):
       scenario_data: Dictionary of split type to a list of ScenarioData.
     """
 
-    # Set model config to frozen and strict
     model_config = ConfigDict(frozen=True, strict=True)
 
-    scenario_root_path: PathAdapter  # Root path where the scenario yaml files are stored
+    scenario_root_path: PathAdapter
     dataset_params: Sequence[DatasetParams]
     scenario_data: Mapping[SplitType, Sequence[ScenarioData]] | None = None
 
@@ -179,39 +237,23 @@ class Scenarios(BaseModel):
           str: String representation of the scenarios.
         """
 
-        string = f"Scenarios(scenario_root_path={str(self.scenario_root_path)}"
-        string += "dataset_params=("
-        for dataset_param in self.dataset_params:
-            string += f"{dataset_param}, "
-        string += "), "
-        string += "scenario_data=("
-        for split, scenario_data in self.scenario_data.items():
-            string += f"{split}: {scenario_data}, "
-        string += "))"
-        return string
-
-    def __eq__(self, other: Scenarios) -> bool:
-        """
-        Compare two scenarios by their version and scenario IDs.
-
-        Returns:
-          bool: True if the scenarios are equal, False otherwise.
-        """
-
+        dataset_params = ", ".join(str(dataset_param) for dataset_param in self.dataset_params)
+        scenario_data = ", ".join(
+            f"{split}: [{', '.join(str(scenario) for scenario in scenarios)}]"
+            for split, scenarios in self.scenario_data.items()
+        )
         return (
-            self.scenario_root_path == other.scenario_root_path
-            and self.dataset_params == other.dataset_params
-            and self.scenario_data == other.scenario_data
+            f"{self.__class__.__name__}(scenario_root_path={self.scenario_root_path}, "
+            f"dataset_params=[{dataset_params}], "
+            f"scenario_data=({scenario_data}))"
         )
 
+    def __eq__(self, other: object) -> bool:
+        """Compare two scenario sets by their string form."""
+        return isinstance(other, Scenarios) and str(self) == str(other)
+
     def __hash__(self) -> int:
-        """
-        Hash the scenarios by their version and scenario IDs.
-
-        Returns:
-          int: Hash of the scenarios.
-        """
-
+        """Hash the scenarios by their string form."""
         return hash(str(self))
 
     @model_validator(mode="after")

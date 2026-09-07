@@ -12,154 +12,82 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Protocol of a dataset database.
+
+A database turns the raw annotations of the scenarios it lists into a record table, a
+parquet file named after the hash of the database definition, and reads that table back.
+Training and the generation entrypoint only depend on this protocol.
+"""
+
 from __future__ import annotations
 
-from abc import abstractmethod
-from typing import Mapping, Sequence, Protocol
-from types import MappingProxyType
+from pathlib import Path
+from typing import Mapping, Protocol, Sequence
 
 import polars as pl
 
-from autoware_ml.databases.scenarios import Scenarios, ScenarioData
+from autoware_ml.databases.scenarios import ScenarioData, Scenarios
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord
+from autoware_ml.databases.taxonomy import DatabaseTaxonomy
 
 
 class DatabaseInterface(Protocol):
     """Protocol for database classes that defines the common interface for every dataset type."""
 
-    @abstractmethod
     def __str__(self) -> str:
-        """
-        String representation of the database.
+        """String representation of the database, the input of the database hash."""
+        ...
 
-        Returns:
-          str: String representation of the database.
-        """
-
-        raise NotImplementedError("Database must define __str__!")
-
-    @abstractmethod
     def __hash__(self) -> int:
-        """
-        Hash the database by its version and scenario IDs.
+        """Hash the database by its string representation."""
+        ...
 
-        Returns:
-          int: Hash of the database.
-        """
-
-        raise NotImplementedError("Database must define __hash__!")
-
-    @abstractmethod
-    def __eq__(self, other: DatabaseInterface) -> bool:
-        """
-        Compare two databases by their version and scenario IDs.
-
-        Returns:
-          bool: True if the databases are equal, False otherwise.
-        """
-
-        raise NotImplementedError("Database must define __eq__!")
+    def __eq__(self, other: object) -> bool:
+        """Compare two databases by their string representation."""
+        ...
 
     @property
-    @abstractmethod
     def version(self) -> str:
-        """
-        Get the version of the database.
-
-        Returns:
-          str: Version of the database.
-        """
-
-        raise NotImplementedError("Database must define version!")
+        """Version of the database."""
+        ...
 
     @property
-    @abstractmethod
-    def scenarios(self) -> MappingProxyType[str, Scenarios]:
-        """
-        Get the scenarios for each scenario group.
-
-        Returns:
-          MappingProxyType[str, Scenarios]: Dictionary of scenario group name to scenarios.
-        """
-
-        raise NotImplementedError("Database must define scenarios!")
-
-    @abstractmethod
-    def get_unique_scenario_data(self) -> MappingProxyType[str, ScenarioData]:
-        """
-        Get all scenario data from all scenario groups and keep their order the same.
-
-        Returns:
-          MappingProxyType[str, ScenarioData]: Dictionary of scenario ID to scenario data.
-        """
-
-        raise NotImplementedError("Database must define get_unique_scenario_data!")
-
-    @abstractmethod
-    def load_scenario_records(self) -> Sequence[DatasetRecord]:
-        """
-        Load scenario records from the database.
-
-        Returns:
-          Sequence[DatasetRecord]: Sequence of dataset records.
-        """
-
-        raise NotImplementedError("Database must define load_scenario_records!")
-
-    @abstractmethod
-    def process_scenario_records(self) -> None:
-        """
-        Process scenario records from the database.
-
-        Returns:
-          Sequence[DatasetRecord]: Sequence of dataset records.
-        """
-
-        raise NotImplementedError("Subclasses must define process_scenario_records method!")
+    def root_path(self) -> Path:
+        """Root directory the record paths resolve against."""
+        ...
 
     @property
-    @abstractmethod
-    def label_remapper(self) -> Mapping[str, str] | None:
-        """
-        Get the label remapper in the database.
-
-        Returns:
-          Mapping[str, str] | None: Label remapper in the database.
-        """
-
-        raise NotImplementedError("Database must define label_remapper!")
+    def scenarios(self) -> Mapping[str, Scenarios]:
+        """Scenarios of every scenario group, keyed by group name."""
+        ...
 
     @property
-    @abstractmethod
-    def ignore_label_index(self) -> int:
-        """
-        Get the ignore label index in the database.
-
-        Returns:
-          int: Ignore label index in the database.
-        """
-
-        raise NotImplementedError("Database must define ignore_label_index!")
+    def taxonomy(self) -> DatabaseTaxonomy:
+        """Taxonomies the box labels are baked with and the mask categories are resolved with."""
+        ...
 
     @property
-    @abstractmethod
     def database_hash(self) -> str:
-        """
-        Get a hash for the database based on its version and scenarios.
+        """Hash of the database definition and the table schema."""
+        ...
 
-        Returns:
-          str: Hash of the database.
-        """
+    @property
+    def cache_file_path(self) -> Path:
+        """Record table file of the database."""
+        ...
 
-        raise NotImplementedError("Database must define database_hash!")
+    def get_unique_scenario_data(self) -> Mapping[str, ScenarioData]:
+        """Scenario data of every scenario across all groups, keyed by scenario ID."""
+        ...
 
-    @abstractmethod
+    def process_scenario_records(self) -> None:
+        """Generate the record table of the database unless it exists."""
+        ...
+
     def load_polars_scenario_dataframe(self) -> pl.DataFrame:
-        """
-        Load scenario records as a Polars DataFrame from the database.
+        """Load the record table of the database as a dataframe."""
+        ...
 
-        Returns:
-          pl.DataFrame: Polars DataFrame of dataset records.
-        """
-
-        raise NotImplementedError("Database must define load_polars_scenario_dataframe!")
+    def load_scenario_records(self) -> Sequence[DatasetRecord]:
+        """Load the record table of the database as dataset records."""
+        ...

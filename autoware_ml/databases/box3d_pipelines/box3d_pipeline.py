@@ -15,14 +15,28 @@
 from typing import Sequence
 
 from autoware_ml.databases.schemas.box3d_schemas import Box3DDataModel
+from autoware_ml.databases.taxonomy import LabelTaxonomy
 
 
 class Box3DPipeline:
-    """Base class for box 3D pipelines."""
+    """
+    Base class for box 3D pipelines. A pipeline runs on boxes carrying their fine label name,
+    after the vocabulary resolved the raw names and before the class indices of the level are
+    assigned.
+    """
 
-    def __call__(self, boxes3d_data_model: Sequence[Box3DDataModel]) -> Box3DDataModel:
+    def __call__(self, boxes3d_data_model: Sequence[Box3DDataModel]) -> Sequence[Box3DDataModel]:
         """Process the boxes 3D."""
         raise NotImplementedError("Subclass must implement this method")
+
+    def validate_taxonomy(self, taxonomy: LabelTaxonomy) -> None:
+        """
+        Check that the pipeline is consistent with the taxonomy the boxes are baked with. A
+        pipeline whose behaviour depends on label names rejects a taxonomy it would corrupt.
+
+        Args:
+          taxonomy: Taxonomy the boxes are baked with.
+        """
 
     def __str__(self) -> str:
         """

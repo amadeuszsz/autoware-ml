@@ -1,0 +1,9 @@
+# @package _global_
+
+# Root of the data mount the record paths resolve against.
+data_root_path: ${oc.env:AUTOWARE_ML_DATA_PATH}
+# Directory the record tables are written to. They index the datasets and stay small, so
+# they live below the workspace, which is mounted read-write while the data mount is read only.
+cache_root_path: ${working_dir}/.cache
+# Directory holding the perception-devops checkout with the scenario lists.
+working_dir: /workspace

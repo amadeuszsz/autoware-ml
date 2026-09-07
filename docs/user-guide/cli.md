@@ -12,19 +12,54 @@ Bash completion is installed automatically by the Docker image build and by
 
 ## Commands
 
-| Command          | Purpose                                            |
-| ---------------- | -------------------------------------------------- |
-| `train`          | Train models using PyTorch Lightning               |
-| `test`           | Evaluate models from a checkpoint                  |
-| `deploy`         | Export models to ONNX and TensorRT                 |
-| `mlflow ui`      | Launch the MLflow tracking UI                      |
-| `mlflow export`  | Export one experiment into its own MLflow store    |
-| `session start`  | Start a managed background task                    |
-| `session attach` | View live terminal output from a background task   |
-| `session detach` | Disconnect raw tmux clients from a managed session |
-| `session ls`     | List managed background tasks                      |
-| `session stop`   | Stop a managed background task                     |
-| `create-dataset` | Generate dataset info files                        |
+| Command            | Purpose                                            |
+| ------------------ | -------------------------------------------------- |
+| `generate-dataset` | Generate the record table of a database            |
+| `train`            | Train models using PyTorch Lightning               |
+| `test`             | Evaluate models from a checkpoint                  |
+| `deploy`           | Export models to ONNX and TensorRT                 |
+| `mlflow ui`        | Launch the MLflow tracking UI                      |
+| `mlflow export`    | Export one experiment into its own MLflow store    |
+| `session start`    | Start a managed background task                    |
+| `session attach`   | View live terminal output from a background task   |
+| `session detach`   | Disconnect raw tmux clients from a managed session |
+| `session ls`       | List managed background tasks                      |
+| `session stop`     | Stop a managed background task                     |
+
+## generate-dataset
+
+Generate the record table of a database ahead of training. Training generates a missing
+table itself, this command builds it once, for example on a machine with many cores.
+
+```bash
+autoware-ml generate-dataset --config-name <generator_config> [hydra_overrides...]
+```
+
+**Arguments:**
+
+- `--config-name`: Name of a config under `configs/generators/`, or a YAML config path
+
+All remaining arguments are passed to Hydra as overrides. The scenario lists are read from the
+perception-devops checkout below `working_dir` and the table is written below the `.cache`
+directory of the workspace, see [database design](../databases/design.md).
+
+**Example:**
+
+```bash
+autoware-ml generate-dataset --config-name default_t4dataset_generator \
+    database=t4dataset/t4dataset_j6gen2_base \
+    database.num_workers=32
+```
+
+A database binds the online taxonomy. A task that trains another level overrides the taxonomy
+group and the box pipelines of its database, and the same overrides build the table it reads:
+
+```bash
+autoware-ml generate-dataset --config-name default_t4dataset_generator \
+    database=t4dataset/t4dataset_j6gen2_segdet3d \
+    database/t4dataset/taxonomy@database.taxonomy=offline \
+    database/t4dataset/box3d_pipelines@database.box3d_pipelines=trailer_class_box3d_pipelines
+```
 
 ## train
 
@@ -228,40 +263,4 @@ Stop the tracked task and close its managed session.
 
 ```bash
 autoware-ml session stop --name <session_name>
-```
-
-## create-dataset
-
-Generate preprocessed info files for a dataset.
-
-```bash
-autoware-ml create-dataset \
-    --dataset <name> \
-    --task <task> \
-    --root-path <path> \
-    --out-dir <path> \
-    [options...]
-```
-
-**Arguments:**
-
-- `--dataset`: Dataset name
-- `--task`: Task name (can be repeated for multiple tasks)
-- `--root-path`: Dataset root directory
-- `--out-dir`: Output directory for info files
-
-**Options:**
-
-- `--version`: Dataset version
-- `--max-sweeps`: Max LiDAR sweeps to include
-- `--info-prefix`: Prefix for output files
-
-**Example:**
-
-```bash
-autoware-ml create-dataset \
-    --dataset nuscenes \
-    --task my_task \
-    --root-path /path/to/dataset \
-    --out-dir /path/to/output
 ```

@@ -6,51 +6,97 @@ from typing import Sequence, Tuple, Set
 from types import MappingProxyType
 
 import numpy as np
-import numpy.typing as npt
+from jaxtyping import Float64
 from shapely.geometry import Polygon
 
 from autoware_ml.types.geometry import Box3DFieldIndex
 from autoware_ml.databases.box3d_pipelines.box3d_pipeline import Box3DPipeline
 from autoware_ml.databases.schemas.box3d_schemas import Box3DDataModel
+from autoware_ml.databases.taxonomy import LabelTaxonomy
 
 
 class Box3DMerger(Box3DPipeline):
     """
-    Base class for merging 3D bounding boxes.
+    Base class for merging 3D bounding boxes. The merger runs on fine label names: a pair of
+    boxes carrying the two source labels of a target is replaced by one box carrying the
+    target label, and the class index of the level is assigned afterwards.
     """
 
     def __init__(
         self,
         target_labels: MappingProxyType[str, Sequence[str]],
         proximity_distance_threshold: float,
-        class_names: Sequence[str],
     ):
         """
         Initialize Box3DMerger.
 
         Args:
-          target_classes: Mapping of the target classes to the list of source classes.
+          target_labels: Mapping of the target fine label to its two source fine labels. The
+            target is one of the two sources, the other source is absorbed into it.
           proximity_distance_threshold: Proximity distance threshold to check if two boxes are
             close to each other.
-          class_names: List of class names in the database, used for category mapping.
         """
         super().__init__()
         self.target_labels = target_labels
         self.proximity_distance_threshold = proximity_distance_threshold
-        self.class_names = class_names
-        self.label_indices = {label_name: index for index, label_name in enumerate(class_names)}
 
-        # Check if target labels are valid, it supports only two source labels for each target label
         for target_label, source_labels in self.target_labels.items():
             if len(source_labels) != 2:
                 raise ValueError(
                     f"Source labels for target label {target_label} "
                     f"must have exactly 2 labels, but it's {len(source_labels)}"
                 )
+            if target_label not in source_labels:
+                raise ValueError(
+                    f"Target label {target_label} must be one of its source labels "
+                    f"{list(source_labels)}."
+                )
 
-        assert self.proximity_distance_threshold > 0, (
-            "Proximity distance threshold must be positive"
-        )
+        if self.proximity_distance_threshold <= 0:
+            raise ValueError("Proximity distance threshold must be positive")
+
+    def absorbed_labels(self) -> Set[str]:
+        """
+        Fine labels the merger folds into another label.
+
+        Returns:
+          Set[str]: Source labels that differ from their target.
+        """
+
+        return {
+            source_label
+            for target_label, source_labels in self.target_labels.items()
+            for source_label in source_labels
+            if source_label != target_label
+        }
+
+    def validate_taxonomy(self, taxonomy: LabelTaxonomy) -> None:
+        """
+        Reject a source label the vocabulary does not know, so a misspelled label cannot
+        disable the merger, and a level that trains an absorbed label apart from its target,
+        because the merge would move boxes between classes.
+
+        Args:
+          taxonomy: Taxonomy the boxes are baked with.
+        """
+
+        fine_names = set(taxonomy.vocabulary.fine_names)
+        source_labels = {label for labels in self.target_labels.values() for label in labels}
+        unknown_sources = sorted(source_labels - fine_names)
+        if unknown_sources:
+            raise ValueError(
+                f"Merger source labels {unknown_sources} are not fine labels of the vocabulary."
+            )
+        for target_label, labels in self.target_labels.items():
+            target_class = taxonomy.class_name(target_label)
+            for source_label in labels:
+                source_class = taxonomy.class_name(source_label)
+                if source_class is not None and source_class != target_class:
+                    raise ValueError(
+                        f"The merger folds {source_label!r} into {target_label!r}, but the "
+                        f"taxonomy trains them apart as {source_class!r} and {target_class!r}. "
+                        "Use the pipelines that keep them."
+                    )
 
     def __call__(self, boxes3d_data_model: Sequence[Box3DDataModel]) -> Sequence[Box3DDataModel]:
         """
@@ -69,14 +115,16 @@ class Box3DMerger(Box3DPipeline):
         return new_boxes3d_data_model
 
     def _check_boxes_overlap(
-        self, first_box3d: npt.NDArray[np.float32], second_box3d: npt.NDArray[np.float32]
+        self,
+        first_box3d: Float64[np.ndarray, " num_box_fields"],
+        second_box3d: Float64[np.ndarray, " num_box_fields"],
     ) -> bool:
         """
         Check if two 3D bounding boxes overlap in 2D projection.
 
         Args:
-          first_box3d (len(Box3DFieldIndex), ): Bounding box 1, please check Box3DFieldIndex for the field indices.
-          second_box3d (len(Box3DFieldIndex), ): Bounding box 2, please check Box3DFieldIndex for the field indices.
+          first_box3d: Bounding box 1, please check Box3DFieldIndex for the field indices.
+          second_box3d: Bounding box 2, please check Box3DFieldIndex for the field indices.
 
         Returns:
           bool: True if the two boxes overlap, False otherwise.
@@ -125,14 +173,16 @@ class Box3DMerger(Box3DPipeline):
         return polygon_1.intersects(polygon_2)
 
     def _check_boxes_proximity(
-        self, first_box3d: npt.NDArray[np.float32], second_box3d: npt.NDArray[np.float32]
+        self,
+        first_box3d: Float64[np.ndarray, " num_box_fields"],
+        second_box3d: Float64[np.ndarray, " num_box_fields"],
     ) -> bool:
         """
         Check if two 3D bounding boxes are close to each other by
           checking distance between their front and back face centers.
         Args:
-          first_box3d (len(Box3DFieldIndex), ): Bounding box 1, please check Box3DFieldIndex for the field indices.
-          second_box3d (len(Box3DFieldIndex), ): Bounding box 2, please check Box3DFieldIndex for the field indices.
+          first_box3d: Bounding box 1, please check Box3DFieldIndex for the field indices.
+          second_box3d: Bounding box 2, please check Box3DFieldIndex for the field indices.
 
         Returns:
           bool: True if the two boxes are close to each other, False otherwise.
@@ -167,14 +217,16 @@ class Box3DMerger(Box3DPipeline):
         return False
 
     def match_boxes_3d(
-        self, boxes3d_params: npt.NDArray[np.float32], boxes3d_label_names: Sequence[str]
+        self,
+        boxes3d_params: Float64[np.ndarray, "num_boxes num_box_fields"],
+        boxes3d_label_names: Sequence[str],
     ) -> MappingProxyType[str, Sequence[Tuple[int, int]]]:
         """
         Match 3D bounding boxes based on the target labels and source labels.
 
         Args:
-          boxes3d_params (N, len(Box3DFieldIndex)): 3D bounding boxes, please check Box3DFieldIndex for the field indices.
-          boxes3d_label_names (N, ): 3D bounding box label names.
+          boxes3d_params: 3D bounding boxes, please check Box3DFieldIndex for the field indices.
+          boxes3d_label_names: 3D bounding box label names.
 
         Returns:
           MappingProxyType[str, Sequence[Tuple[int, int]]]: Mapping of target labels to matched pairs of box indices.
@@ -250,13 +302,15 @@ class Box3DMerger(Box3DPipeline):
                     second_box3d=boxes3d_data_model[box3d_idx_2].box3d_params,
                 )
 
-                # Always pick the first box's instance ID and dataset label name
+                # Always pick the first box's instance ID and dataset label name. The class
+                # index of the level is assigned after the pipelines, so the merged box keeps
+                # the placeholder index of the first box.
                 merged_box3d_instance_id = boxes3d_data_model[box3d_idx_1].box3d_instance_id
                 merged_box3d_dataset_label_name = boxes3d_data_model[
                     box3d_idx_1
                 ].box3d_dataset_label_name
                 merged_box3d_label_name = target_label
-                merged_box3d_label_index = self.label_indices[target_label]
+                merged_box3d_label_index = boxes3d_data_model[box3d_idx_1].box3d_label_index
                 merged_box3d_num_lidar_points = (
                     boxes3d_data_model[box3d_idx_1].box3d_num_lidar_points
                     + boxes3d_data_model[box3d_idx_2].box3d_num_lidar_points
@@ -295,9 +349,9 @@ class Box3DMerger(Box3DPipeline):
 
     def merge_boxes_3d(
         self,
-        first_box3d: npt.NDArray[np.float32],
-        second_box3d: npt.NDArray[np.float32],
-    ) -> npt.NDArray[np.float32]:
+        first_box3d: Float64[np.ndarray, " num_box_fields"],
+        second_box3d: Float64[np.ndarray, " num_box_fields"],
+    ) -> Float64[np.ndarray, " num_box_fields"]:
         """
         Merge two 3D bounding boxes. This function is implemented in the subclass.
         Args:
@@ -305,7 +359,7 @@ class Box3DMerger(Box3DPipeline):
           second_box3d: Second 3D bounding box.
 
         Returns:
-          npt.NDArray[np.float32]: Merged 3D bounding box.
+          Float64[np.ndarray, " num_box_fields"]: Merged 3D bounding box.
         """
 
         raise NotImplementedError("Subclass must implement this method")
@@ -322,22 +376,19 @@ class Box3DExtendLongerMerger(Box3DMerger):
         self,
         target_labels: MappingProxyType[str, Sequence[str]],
         proximity_distance_threshold: float,
-        class_names: Sequence[str],
     ):
         """
         Initialize Box3DExtendLongerMerger.
 
         Args:
-          target_labels: Mapping of the target classes to the list of source classes.
+          target_labels: Mapping of the target fine label to its two source fine labels.
           proximity_distance_threshold: Proximity distance threshold to check if two boxes are
             close to each other.
-          class_names: List of class names in the database, used for category mapping.
         """
 
         super().__init__(
             target_labels=target_labels,
             proximity_distance_threshold=proximity_distance_threshold,
-            class_names=class_names,
         )
 
     def __str__(self) -> str:
@@ -347,24 +398,33 @@ class Box3DExtendLongerMerger(Box3DMerger):
         Returns:
           str: String representation of the pipeline.
         """
+        target_labels = ", ".join(
+            f"{target_label}: {list(source_labels)}"
+            for target_label, source_labels in sorted(self.target_labels.items())
+        )
         return (
-            f"{self.__class__.__name__}(target_labels={self.target_labels}, "
-            f"proximity_distance_threshold={self.proximity_distance_threshold}, "
-            f"class_names={self.class_names})"
+            f"{self.__class__.__name__}(target_labels=({target_labels}), "
+            f"proximity_distance_threshold={self.proximity_distance_threshold})"
         )
 
     @staticmethod
     def _get_box_faces(
-        box: npt.NDArray[np.float32],
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
+        box: Float64[np.ndarray, " num_box_fields"],
+    ) -> Tuple[
+        Float64[np.ndarray, " 2"],
+        Float64[np.ndarray, " 2"],
+        Float64[np.ndarray, " 2"],
+        float,
+        float,
+    ]:
         """
         Get the faces of a 3D bounding box.
 
         Args:
-          box (len(Box3DFieldIndex), ): Bounding box, please check Box3DFieldIndex for the field indices.
+          box: Bounding box, please check Box3DFieldIndex for the field indices.
 
         Returns:
-          Tuple[np.ndarray, np.ndarray, np.ndarray, float, float]: Center, face1 center, face2 center, length, width.
+          Tuple of the center, face1 center, face2 center, length, and width.
         """
 
         x, y, length, width, yaw = (
@@ -399,9 +459,9 @@ class Box3DExtendLongerMerger(Box3DMerger):
 
     def merge_boxes_3d(
         self,
-        first_box3d: npt.NDArray[np.float32],
-        second_box3d: npt.NDArray[np.float32],
-    ) -> npt.NDArray[np.float32]:
+        first_box3d: Float64[np.ndarray, " num_box_fields"],
+        second_box3d: Float64[np.ndarray, " num_box_fields"],
+    ) -> Float64[np.ndarray, " num_box_fields"]:
         """
         Gives impression of merging two 3D bounding boxes by elongating the larger box.
 
@@ -410,11 +470,12 @@ class Box3DExtendLongerMerger(Box3DMerger):
         larger box. Then, the larger box is elongated upto that point.
 
         Args:
-          first_box3d (len(Box3DFieldIndex), ): Bounding box 1, please check Box3DFieldIndex for the field indices.
-          second_box3d (len(Box3DFieldIndex), ): Bounding box 2, please check Box3DFieldIndex for the field indices.
+          first_box3d: Bounding box 1, please check Box3DFieldIndex for the field indices.
+          second_box3d: Bounding box 2, please check Box3DFieldIndex for the field indices.
 
         Returns:
-          npt.NDArray[np.float32]: Merged 3D bounding box, please check Box3DFieldIndex for the field indices.
+          Float64[np.ndarray, " num_box_fields"]: Merged 3D bounding box, please check
+            Box3DFieldIndex for the field indices.
         """
         # Identify the centers and faces of both boxes
         box1_center, box1_face1, box1_face2, length_1, width_1 = self._get_box_faces(first_box3d)
