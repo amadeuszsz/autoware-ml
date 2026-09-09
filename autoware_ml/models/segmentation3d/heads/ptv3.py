@@ -331,10 +331,57 @@ def concat_point_frames(points: Sequence[torch.Tensor]) -> tuple[torch.Tensor, t
     return torch.cat(list(points), dim=0), frame_ids
 
 
+def voxel_labels(
+    point_voxel_indices: torch.Tensor,
+    segment: torch.Tensor,
+    *,
+    num_voxels: int,
+    num_classes: int,
+    ignore_index: int,
+    sample: bool,
+) -> torch.Tensor:
+    """Reduce the labels of the points of every voxel to the label supervising it.
+
+    A voxel predicts one class for all of its points, so it takes one label. Sampling draws
+    it from the label distribution of the voxel, which over the training steps supervises the
+    voxel in proportion to how its points are labelled. Otherwise the majority label wins,
+    which is the label that scores the most points of the voxel and keeps the reduction
+    deterministic. A voxel whose points are all ignored stays ignored.
+
+    Args:
+        point_voxel_indices: Voxel row of every point.
+        segment: Segmentation label of every point.
+        num_voxels: Number of voxels of the batch.
+        num_classes: Number of classes the head predicts.
+        ignore_index: Label of the points that carry no supervision.
+        sample: Whether to draw the label instead of taking the majority.
+
+    Returns:
+        Label of every voxel of shape ``(num_voxels,)``.
+    """
+    labelled = assigned_point_mask(point_voxel_indices) & (segment != ignore_index)
+    counts = torch.zeros((num_voxels, num_classes), dtype=torch.float32, device=segment.device)
+    counts.index_put_(
+        (point_voxel_indices[labelled], segment[labelled]),
+        torch.ones(int(labelled.sum()), dtype=torch.float32, device=segment.device),
+        accumulate=True,
+    )
+    supervised = counts.sum(dim=1) > 0
+    labels = torch.full((num_voxels,), ignore_index, dtype=torch.long, device=segment.device)
+    if sample:
+        labels[supervised] = torch.multinomial(counts[supervised], num_samples=1).squeeze(1)
+    else:
+        labels[supervised] = counts[supervised].argmax(dim=1)
+    return labels
+
+
 def segmentation_point_loss(
     head: PTv3SegDecoderHead, seg_logits: torch.Tensor, processed: ProcessedBatch
 ) -> dict[str, torch.Tensor]:
-    """Compute the segmentation losses with every in-grid point supervising its voxel.
+    """Compute the segmentation losses with one term per voxel.
+
+    Weighting the loss by the points of a voxel would follow the point density, which grows
+    towards the sensor, so every voxel is supervised once wherever it lies.
 
     Args:
         head: Segmentation head owning the losses.
@@ -346,10 +393,15 @@ def segmentation_point_loss(
         Dictionary with the segmentation losses.
     """
     check_voxel_budget(processed.resolve("num_dropped_voxels"))
-    point_voxel_indices = processed.resolve("point_voxel_indices")
-    assigned = assigned_point_mask(point_voxel_indices)
-    point_logits = gather_point_logits(seg_logits, point_voxel_indices, assigned)
-    return head.loss(point_logits, processed.resolve("segment")[assigned])
+    labels = voxel_labels(
+        processed.resolve("point_voxel_indices"),
+        processed.resolve("segment"),
+        num_voxels=seg_logits.shape[0],
+        num_classes=seg_logits.shape[1],
+        ignore_index=head.ignore_index,
+        sample=head.training,
+    )
+    return head.loss(seg_logits, labels)
 
 
 def segmentation_eval_output(seg_logits: torch.Tensor, processed: ProcessedBatch) -> dict[str, Any]:

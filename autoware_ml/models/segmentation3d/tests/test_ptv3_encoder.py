@@ -37,6 +37,7 @@ from autoware_ml.models.segmentation3d.heads.ptv3 import (
     segmentation_eval_output,
     segmentation_point_loss,
     segmentation_predict_outputs,
+    voxel_labels,
 )
 from autoware_ml.models.segmentation3d.ptv3 import (
     PTv3SegmentationModel,
@@ -391,7 +392,7 @@ def _seg_processed(
 
 
 def test_point_loss_and_eval_output_work_at_the_point_level() -> None:
-    """Losses use every point's voxel logits; eval keeps current-frame points only."""
+    """The loss runs on the voxel labels; eval keeps current-frame points only."""
     head = build_seg_head(num_classes=3, dec_depths=(0,))
 
     voxel_logits = torch.tensor(
@@ -428,6 +429,82 @@ def test_point_loss_and_eval_output_work_at_the_point_level() -> None:
     assert torch.equal(frame["target"], torch.tensor([0, 1]))
     assert torch.equal(frame["coord"], points[:2, :3])
     assert frame["scores"].shape == (2, 3)
+
+
+def test_voxel_labels_take_the_majority_of_the_voxel_outside_training() -> None:
+    """The label that scores the most points of the voxel supervises it."""
+    labels = voxel_labels(
+        torch.tensor([0, 0, 0, 1], dtype=torch.long),
+        torch.tensor([2, 2, 1, 1], dtype=torch.long),
+        num_voxels=2,
+        num_classes=3,
+        ignore_index=-1,
+        sample=False,
+    )
+
+    assert torch.equal(labels, torch.tensor([2, 1]))
+
+
+def test_voxel_labels_are_drawn_from_the_voxel_distribution_in_training() -> None:
+    """Sampling supervises a voxel in proportion to how its points are labelled."""
+    point_voxel_indices = torch.zeros(4, dtype=torch.long)
+    segment = torch.tensor([0, 0, 0, 1], dtype=torch.long)
+
+    torch.manual_seed(0)
+    drawn = [
+        int(
+            voxel_labels(
+                point_voxel_indices,
+                segment,
+                num_voxels=1,
+                num_classes=2,
+                ignore_index=-1,
+                sample=True,
+            )[0]
+        )
+        for _ in range(400)
+    ]
+
+    assert set(drawn) == {0, 1}
+    assert 0.6 < drawn.count(0) / len(drawn) < 0.9
+
+
+def test_voxel_labels_keep_ignore_where_no_point_carries_supervision() -> None:
+    """A voxel holding only ignored points is not supervised, in either mode."""
+    point_voxel_indices = torch.tensor([0, 1, 1], dtype=torch.long)
+    segment = torch.tensor([-1, -1, 2], dtype=torch.long)
+
+    for sample in (False, True):
+        labels = voxel_labels(
+            point_voxel_indices,
+            segment,
+            num_voxels=3,
+            num_classes=3,
+            ignore_index=-1,
+            sample=sample,
+        )
+        assert torch.equal(labels, torch.tensor([-1, 2, -1])), sample
+
+
+def test_points_of_a_voxel_do_not_weight_the_loss() -> None:
+    """Repeating a label inside a voxel leaves the loss unchanged."""
+    head = build_seg_head(num_classes=3, dec_depths=(0,)).eval()
+    voxel_logits = torch.tensor([[3.0, 0.1, 0.2], [0.2, 2.5, 0.1]], dtype=torch.float32)
+    dense = _seg_processed(
+        [torch.zeros((5, 5), dtype=torch.float32)],
+        torch.tensor([0, 0, 0, 0, 1], dtype=torch.long),
+        segment_frames=[torch.tensor([0, 0, 0, 0, 1], dtype=torch.long)],
+    )
+    sparse = _seg_processed(
+        [torch.zeros((2, 5), dtype=torch.float32)],
+        torch.tensor([0, 1], dtype=torch.long),
+        segment_frames=[torch.tensor([0, 1], dtype=torch.long)],
+    )
+
+    assert torch.allclose(
+        segmentation_point_loss(head, voxel_logits, dense)["loss"],
+        segmentation_point_loss(head, voxel_logits, sparse)["loss"],
+    )
 
 
 def test_voxel_budget_overflow_raises() -> None:

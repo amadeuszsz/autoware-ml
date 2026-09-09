@@ -176,7 +176,7 @@ class PTv3SegmentationModel(PTv3BaseModel):
     ) -> dict[str, torch.Tensor]:
         """Compute segmentation losses against point-level targets.
 
-        Every point inside the voxel grid supervises the logits of its voxel.
+        Every voxel is supervised once by the label reduced from the points it holds.
         Quality metrics (mIoU, accuracy) are produced at epoch end by the
         configured metrics through :meth:`build_eval_output`, not here.
 
