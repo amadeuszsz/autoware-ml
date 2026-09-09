@@ -141,7 +141,7 @@ features, `(x, y, z, intensity, time_lag)` in the bundled configs.
 | Base input             | Shape         | Meaning                                                                |
 | ---------------------- | ------------- | ---------------------------------------------------------------------- |
 | `voxels`               | `[N_0, P, C]` | Padded voxel points, `P` = max points per voxel, `C` = point features. |
-| `num_points_per_voxel` | `[N_0]`       | Valid points per voxel, the divisor of the in-graph point average.     |
+| `num_points_per_voxel` | `[N_0]`       | Valid points per voxel, the padded slots the graph reduces over.       |
 | `grid_coord`           | `[N_0, 3]`    | Integer voxel coordinates.                                             |
 | `serialized_order`     | `[O, N_0]`    | Serialization order of the input voxels.                               |
 | `serialized_inverse`   | `[O, N_0]`    | Inverse of `serialized_order`.                                         |

@@ -21,7 +21,7 @@ from autoware_ml.models.segmentation3d.encoders.ptv3 import (
     build_serialized_pooling_meta,
     collect_encoder_stage_points,
 )
-from autoware_ml.models.segmentation3d.encoders.voxel import MeanVoxelFeatureEncoder
+from autoware_ml.models.segmentation3d.encoders.voxel import SweepSplitVoxelFeatureEncoder
 from autoware_ml.utils.deploy import ExportSpec
 from autoware_ml.utils.point_cloud.batching import batch_to_offset
 from autoware_ml.utils.point_cloud.structures import (
@@ -132,7 +132,7 @@ class PTv3BaseModel(BaseModel):
         """
         super().__init__(**kwargs)
         self.encoder = encoder
-        self.voxel_encoder = MeanVoxelFeatureEncoder()
+        self.voxel_encoder = SweepSplitVoxelFeatureEncoder()
         self.grid_size = grid_size
         self.point_cloud_range = (
             tuple(float(v) for v in point_cloud_range) if point_cloud_range is not None else None
@@ -362,7 +362,7 @@ def make_serialized_pooling_from_flat_inputs(
 
 def _run_ptv3_encoder_export(
     encoder: PointTransformerV3Encoder,
-    voxel_encoder: MeanVoxelFeatureEncoder,
+    voxel_encoder: SweepSplitVoxelFeatureEncoder,
     voxels: torch.Tensor,
     num_points: torch.Tensor,
     grid_coord: torch.Tensor,
@@ -604,7 +604,7 @@ class _PTv3EncoderExportModule(nn.Module):
     def __init__(
         self,
         encoder: PointTransformerV3Encoder,
-        voxel_encoder: MeanVoxelFeatureEncoder,
+        voxel_encoder: SweepSplitVoxelFeatureEncoder,
         sparse_shape: torch.Tensor,
         serialized_depth: torch.Tensor,
     ) -> None:

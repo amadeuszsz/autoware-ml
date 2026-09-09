@@ -20,7 +20,7 @@ from torch.onnx.operators import shape_as_tensor
 
 from autoware_ml.metrics.detection3d.eval_output import detection_eval_output
 from autoware_ml.models.segmentation3d.encoders.ptv3 import PointTransformerV3Encoder
-from autoware_ml.models.segmentation3d.encoders.voxel import MeanVoxelFeatureEncoder
+from autoware_ml.models.segmentation3d.encoders.voxel import SweepSplitVoxelFeatureEncoder
 from autoware_ml.preprocessing.base import ProcessedBatch
 from autoware_ml.models.segmentation3d.ptv3_base import (
     SERIALIZED_POOLING_FIELDS,
@@ -367,7 +367,7 @@ class _PTv3DetectionExportModule(nn.Module):
     def __init__(
         self,
         encoder: PointTransformerV3Encoder,
-        voxel_encoder: MeanVoxelFeatureEncoder,
+        voxel_encoder: SweepSplitVoxelFeatureEncoder,
         bev_neck: PTv3DetBEVNeck,
         bbox_head: nn.Module,
         sparse_shape: torch.Tensor,

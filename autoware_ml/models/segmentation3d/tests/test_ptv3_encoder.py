@@ -31,7 +31,7 @@ from autoware_ml.models.segmentation3d.encoders.ptv3 import (
     SerializedPooling,
     build_serialized_pooling_meta,
 )
-from autoware_ml.models.segmentation3d.encoders.voxel import MeanVoxelFeatureEncoder
+from autoware_ml.models.segmentation3d.encoders.voxel import SweepSplitVoxelFeatureEncoder
 from autoware_ml.models.segmentation3d.heads.ptv3 import (
     check_voxel_budget,
     segmentation_eval_output,
@@ -163,7 +163,7 @@ def test_build_export_module_disables_flash_attention_without_mutating_live_enco
     ):
         export_module = _PTv3SegmentationExportModule(
             encoder=encoder.prepare_for_export(("z", "z-trans")),
-            voxel_encoder=MeanVoxelFeatureEncoder(),
+            voxel_encoder=SweepSplitVoxelFeatureEncoder(),
             seg3d_head=nn.Linear(4, 2),
             sparse_shape=torch.tensor([64, 64, 64], dtype=torch.long),
             serialized_depth=torch.tensor(6, dtype=torch.long),
@@ -389,6 +389,67 @@ def _seg_processed(
             ),
         ),
     )
+
+
+def _split_voxels() -> tuple[torch.Tensor, torch.Tensor]:
+    """Build three voxels: current and sweep returns, sweep only, current only."""
+    voxels = torch.zeros(3, 4, 5)
+    voxels[0, 0] = torch.tensor([1.0, 0.0, 0.0, 0.5, 0.0])
+    voxels[0, 1] = torch.tensor([2.0, 0.0, 0.0, 0.7, 0.1])
+    voxels[1, 0] = torch.tensor([5.0, 0.0, 0.0, 0.2, 0.1])
+    voxels[2, 0] = torch.tensor([9.0, 1.0, 0.0, 0.4, 0.0])
+    voxels[2, 1] = torch.tensor([9.2, 1.0, 0.0, 0.6, 0.0])
+    return voxels, torch.tensor([2, 1, 2], dtype=torch.int32)
+
+
+def test_voxel_encoder_places_the_voxel_on_its_current_frame_returns() -> None:
+    """The current returns give the position, the sweep returns their offset from it."""
+    features = SweepSplitVoxelFeatureEncoder()(*_split_voxels())
+
+    assert features.shape == (3, 11)
+    # Current and sweep returns: the current point positions the voxel.
+    assert torch.allclose(features[0, :5], torch.tensor([1.0, 0.0, 0.0, 0.5, 0.0]))
+    assert torch.allclose(features[0, 5:8], torch.tensor([1.0, 0.0, 0.0]))
+    assert torch.allclose(features[0, 8:], torch.tensor([0.7, 0.5, 0.1]))
+    # Current returns only: nothing to report about sweeps.
+    assert torch.allclose(features[2, :5], torch.tensor([9.1, 1.0, 0.0, 0.5, 0.0]))
+    assert torch.allclose(features[2, 5:], torch.zeros(6))
+
+
+def test_voxel_encoder_falls_back_to_the_sweep_returns_and_reports_their_lag() -> None:
+    """A voxel nothing was measured in during the current frame says so through its lag."""
+    features = SweepSplitVoxelFeatureEncoder()(*_split_voxels())
+
+    assert torch.allclose(features[1, :5], torch.tensor([5.0, 0.0, 0.0, 0.2, 0.1]))
+    assert torch.allclose(features[1, 5:8], torch.zeros(3))
+    assert float(features[1, 9]) == 1.0
+
+
+def test_voxel_encoder_keeps_the_average_over_every_point_recoverable() -> None:
+    """Splitting the returns reparametrizes the voxel, it does not drop information."""
+    voxels, num_points = _split_voxels()
+    features = SweepSplitVoxelFeatureEncoder()(voxels, num_points)
+
+    filled = torch.arange(voxels.shape[1]).unsqueeze(0) < num_points.long().unsqueeze(1)
+    expected = (voxels * filled.unsqueeze(-1)).sum(dim=1) / num_points.unsqueeze(1)
+    share = features[:, 9:10]
+    assert torch.allclose(features[:, :3] + share * features[:, 5:8], expected[:, :3])
+
+
+def test_voxel_encoder_ignores_the_padded_slots() -> None:
+    """Padding is zero, which reads as a current return unless the point count is honoured."""
+    voxels, num_points = _split_voxels()
+    padded = SweepSplitVoxelFeatureEncoder()(voxels, num_points)
+    voxels[1, 1] = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0])
+
+    assert torch.allclose(SweepSplitVoxelFeatureEncoder()(voxels, num_points), padded)
+
+
+def test_voxel_encoder_rejects_a_point_layout_without_the_time_lag() -> None:
+    with pytest.raises(ValueError, match="time_lag"):
+        SweepSplitVoxelFeatureEncoder()(
+            torch.zeros(2, 3, 4), torch.tensor([1, 1], dtype=torch.int32)
+        )
 
 
 def test_point_loss_and_eval_output_work_at_the_point_level() -> None:

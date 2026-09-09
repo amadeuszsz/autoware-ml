@@ -29,7 +29,7 @@ import torch.nn as nn
 
 from autoware_ml.models.segmentation3d.encoders.ptv3 import PointTransformerV3Encoder
 from autoware_ml.preprocessing.base import ProcessedBatch
-from autoware_ml.models.segmentation3d.encoders.voxel import MeanVoxelFeatureEncoder
+from autoware_ml.models.segmentation3d.encoders.voxel import SweepSplitVoxelFeatureEncoder
 from autoware_ml.models.segmentation3d.heads.ptv3 import (
     PTv3SegDecoderHead,
     segmentation_eval_output,
@@ -57,7 +57,7 @@ class _PTv3SegmentationExportModule(nn.Module):
     def __init__(
         self,
         encoder: PointTransformerV3Encoder,
-        voxel_encoder: MeanVoxelFeatureEncoder,
+        voxel_encoder: SweepSplitVoxelFeatureEncoder,
         seg3d_head: PTv3SegDecoderHead,
         sparse_shape: torch.Tensor,
         serialized_depth: torch.Tensor,

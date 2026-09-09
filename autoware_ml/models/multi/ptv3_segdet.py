@@ -40,7 +40,7 @@ from autoware_ml.preprocessing.base import ProcessedBatch
 from autoware_ml.metrics.detection3d.eval_output import detection_eval_output
 from autoware_ml.models.detection3d.ptv3 import PTv3DetBEVNeck, build_det_head_export_spec
 from autoware_ml.models.segmentation3d.encoders.ptv3 import PointTransformerV3Encoder
-from autoware_ml.models.segmentation3d.encoders.voxel import MeanVoxelFeatureEncoder
+from autoware_ml.models.segmentation3d.encoders.voxel import SweepSplitVoxelFeatureEncoder
 from autoware_ml.models.segmentation3d.heads.ptv3 import (
     PTv3SegDecoderHead,
     segmentation_eval_output,
@@ -375,7 +375,7 @@ class _PTv3SegDetExportModule(nn.Module):
     def __init__(
         self,
         encoder: PointTransformerV3Encoder,
-        voxel_encoder: MeanVoxelFeatureEncoder,
+        voxel_encoder: SweepSplitVoxelFeatureEncoder,
         seg3d_head: PTv3SegDecoderHead,
         bev_neck: PTv3DetBEVNeck,
         bbox_head: nn.Module,

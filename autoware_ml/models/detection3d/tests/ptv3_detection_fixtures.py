@@ -52,7 +52,7 @@ POINT_CLOUD_RANGE = [0.0, 0.0, -2.0, 8.0, 8.0, 2.0]
 def build_ptv3_encoder() -> PointTransformerV3Encoder:
     """Return a small PTv3 encoder suitable for unit tests."""
     return PointTransformerV3Encoder(
-        in_channels=5,
+        in_channels=11,
         order=("z",),
         stride=(2,),
         enc_depths=(1, 1),
@@ -309,7 +309,7 @@ def build_litept_encoder() -> LitePTEncoder:
     that does (1), with no base-level order at all.
     """
     return LitePTEncoder(
-        in_channels=5,
+        in_channels=11,
         order=("z",),
         stride=(2, 2),
         enc_depths=(1, 1, 1),
