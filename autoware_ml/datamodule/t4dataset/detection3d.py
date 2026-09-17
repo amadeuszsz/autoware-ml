@@ -4,7 +4,7 @@ import polars as pl
 from autoware_ml.databases.schemas.dataset_schemas import DatasetTableSchema
 from autoware_ml.databases.schemas.box3d_schemas import Box3DDatasetSchema
 from autoware_ml.datamodule.base_dataset_task import BaseDatasetTask
-from autoware_ml.dataclasses.batch.sample_batch import ModelGTBatch, ModelGTSample
+from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
 from autoware_ml.geometry.bbox_3d.lidar_bbox3d import LidarBBoxes3D
 from autoware_ml.types.geometry import Box3DFieldIndex, Box3DCenterCoordinateType
 
@@ -138,7 +138,9 @@ class T4Detection3DTask(BaseDatasetTask):
 
         return ModelGTSample(
             lidar_point_cloud_samples=None,
+            image_samples=None,
             point_cloud_data=None,
+            camera_image_data=None,
             detection3d_gt_bboxes_3d=detection3d_bboxes_3d,
             segmentation3d_gt_sample=None,
         )
