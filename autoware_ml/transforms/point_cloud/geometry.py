@@ -14,11 +14,35 @@ from torch import Tensor
 
 from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
 from autoware_ml.dataclasses.geometry.transformation import LiDARTransformationSample
+from autoware_ml.geometry.cameras.base_images import BaseImages
 from autoware_ml.geometry.points.base_points import BasePoints
 from autoware_ml.transforms.base import BaseTransform
 from autoware_ml.transforms.geometry3d import rotation_matrix
 from autoware_ml.types.spatial import RotationAxis, BEVDirection
 from autoware_ml.types.geometry import TransformationName
+
+
+def update_camera_image_data(
+    camera_image_data: BaseImages | None,
+    lidar_transformation_sample: LiDARTransformationSample,
+) -> BaseImages | None:
+    """Follow a lidar space augmentation with the calibration of the cameras.
+
+    The points moved, the cameras did not, so the lidar to camera matrices take the inverse of
+    the augmentation to keep projecting the points onto the same pixels.
+
+    Args:
+        camera_image_data: Images of the sample, None when the sample carries no camera.
+        lidar_transformation_sample: The augmentation applied to the points.
+
+    Returns:
+        BaseImages | None: The images with the updated calibration, None when there are none.
+    """
+    if camera_image_data is None:
+        return None
+    return camera_image_data.update_lidar_transformation_matrices(
+        torch.linalg.inv(lidar_transformation_sample.transformation_matrix)
+    )
 
 
 class RotationScaleTranslationData(BaseModel):
@@ -145,14 +169,22 @@ class GlobalRotScaleTrans(BaseTransform):
             model_gt_sample.detection3d_gt_bboxes_3d.scale(scale_factor)
             model_gt_sample.detection3d_gt_bboxes_3d.translate(translation_vector)
 
+        # Follow the lidar augmentation with the camera calibration so the projection holds
+        camera_image_data = update_camera_image_data(
+            model_gt_sample.camera_image_data, lidar_transformation_sample
+        )
+
         # Create the composed transformation matrix in the ModelGTSample if it exists
         if model_gt_sample.lidar_transformation_sample is not None:
-            lidar_transformation_sample = lidar_transformation_sample.create_composed_lidar_transformation_sample(
-                previous_lidar_transformation_sample=model_gt_sample.lidar_transformation_sample
+            lidar_transformation_sample = (
+                lidar_transformation_sample.create_composed_lidar_transformation_sample(
+                    previous_lidar_transformation_sample=model_gt_sample.lidar_transformation_sample
+                )
             )
 
         return model_gt_sample._replace(
-            lidar_transformation_sample=lidar_transformation_sample
+            lidar_transformation_sample=lidar_transformation_sample,
+            camera_image_data=camera_image_data,
         )
 
 
@@ -277,14 +309,22 @@ class GlobalBEVRandomFlip(BaseTransform):
             transformation_order=transformation_order,
         )
 
+        # Follow the lidar augmentation with the camera calibration so the projection holds
+        camera_image_data = update_camera_image_data(
+            model_gt_sample.camera_image_data, lidar_transformation_sample
+        )
+
         # Update the lidar transformation sample in the ModelGTSample if it exists
         if model_gt_sample.lidar_transformation_sample is not None:
-            lidar_transformation_sample = lidar_transformation_sample.create_composed_lidar_transformation_sample(
-                previous_lidar_transformation_sample=model_gt_sample.lidar_transformation_sample
+            lidar_transformation_sample = (
+                lidar_transformation_sample.create_composed_lidar_transformation_sample(
+                    previous_lidar_transformation_sample=model_gt_sample.lidar_transformation_sample
+                )
             )
 
         return model_gt_sample._replace(
-            lidar_transformation_sample=lidar_transformation_sample
+            lidar_transformation_sample=lidar_transformation_sample,
+            camera_image_data=camera_image_data,
         )
 
 
@@ -354,5 +394,39 @@ class PointsRandomShuffle(BaseTransform):
         return model_gt_sample._replace(
             segmentation3d_gt_sample=model_gt_sample.segmentation3d_gt_sample.reorder_labels(
                 permutation
+            )
+        )
+
+
+class CropBoxInner(BaseTransform):
+    """Remove the points that fall inside a 3D box, for example the ego vehicle chassis."""
+
+    _required_keys = ["point_cloud_data"]
+
+    def __init__(self, crop_box: Sequence[float]) -> None:
+        """Initialize the CropBoxInner transform.
+
+        Args:
+            crop_box: Box bounds [x_min, y_min, z_min, x_max, y_max, z_max].
+        """
+        super().__init__(probability=None)
+        if len(crop_box) != 6:
+            raise ValueError(f"crop_box must have 6 elements, got {len(crop_box)}")
+        self.crop_box = torch.tensor(crop_box, dtype=torch.float32)
+
+    def transform(self, model_gt_sample: ModelGTSample) -> ModelGTSample:
+        """Keep only the points outside the configured box."""
+        # This is checked in the _validate_required_keys()
+        point_cloud_data: BasePoints = model_gt_sample.point_cloud_data  # type: ignore[reportOptionalMemberAccess]
+
+        keep_mask = ~point_cloud_data.in_range_3d(self.crop_box)
+        point_cloud_data.remove_points(keep_mask)
+        if model_gt_sample.segmentation3d_gt_sample is None:
+            return model_gt_sample
+
+        # Drop the labels of the points the crop removed so both stay aligned
+        return model_gt_sample._replace(
+            segmentation3d_gt_sample=model_gt_sample.segmentation3d_gt_sample.remove_labels(
+                keep_mask
             )
         )

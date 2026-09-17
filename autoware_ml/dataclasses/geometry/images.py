@@ -13,7 +13,7 @@ class ImageGTBatch(NamedTuple):
     """Named tuple to represent pointcloud features in a batch size with their batch indices."""
 
     images: Float32[Tensor, "batch_size num_cameras num_channels height width"]
-    depth_maps: Float32[Tensor, "batch_size num_cameras 1 height width"] | None
+    depth_maps: Float32[Tensor, "batch_size*num_cameras num_depth_channels height width"] | None
     camera_intrinsics: Float32[Tensor, "batch_size num_cameras 3 3"]
     image_augmentation_matrices: Float32[Tensor, "batch_size num_cameras 4 4"]
     lidar2images: Float32[Tensor, "batch_size num_cameras 4 4"]
@@ -56,7 +56,7 @@ class ImageGTBatch(NamedTuple):
         if len(samples_with_depth) == 0:
             depth_maps = None
         elif len(samples_with_depth) == len(images_gt_samples):
-            depth_maps = torch.stack(samples_with_depth)
+            depth_maps = torch.cat(samples_with_depth, dim=0)
         else:
             raise ValueError(
                 "All samples must either carry depth images or none of them, got "
