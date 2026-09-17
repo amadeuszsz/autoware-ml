@@ -6,14 +6,11 @@ from typing import Sequence
 import polars as pl
 from torch.utils.data import Dataset
 
-from autoware_ml.datamodule.multi_task.dataclasses.multi_task_samples import (
-    MultiTaskGTSample,
-    MultiTaskGTBatch,
-)
-from autoware_ml.transforms.multi_task.base import MultiTaskTransformsCompose
+from autoware_ml.dataclasses.batch.sample_batch import ModelGTBatch, ModelGTSample
+from autoware_ml.transforms.base import TransformsCompose
 
 
-class MultiTaskBaseDataset(Dataset):
+class BaseDataset(Dataset):
     """Multi-task dataset interface that can be shared by multiple databases."""
 
     def __init__(
@@ -21,7 +18,7 @@ class MultiTaskBaseDataset(Dataset):
         database_root_path: str,
         max_num_3d_gt_bboxes: int,
         dataset_records_dataframe: pl.DataFrame | None,
-        transforms: MultiTaskTransformsCompose | None,
+        transforms: TransformsCompose | None,
     ) -> None:
         """
         Initialize the multi-task dataset interface.
@@ -51,17 +48,17 @@ class MultiTaskBaseDataset(Dataset):
             raise ValueError("Dataset records dataframe is not available.")
         return len(self.dataset_records_dataframe)
 
-    def __getitem__(self, index: int) -> MultiTaskGTSample:
+    def __getitem__(self, index: int) -> ModelGTSample:
         """Load and transform one dataset sample.
 
         Args:
             index: Sample index.
 
         Returns:
-            Transformed MultiTaskGTSample instance.
+            Transformed ModelGTSample instance.
         """
-        multi_task_gt_sample = self.get_data_sample(index)
-        return self.apply_transforms(multi_task_gt_sample)
+        model_gt_sample = self.get_data_sample(index)
+        return self.apply_transforms(model_gt_sample)
 
     def assign_dataset_records(self, dataset_records_dataframe: pl.DataFrame) -> None:
         """Assign the dataset records dataframe.
@@ -72,41 +69,41 @@ class MultiTaskBaseDataset(Dataset):
         self.dataset_records_dataframe = dataset_records_dataframe
 
     @abstractmethod
-    def get_data_sample(self, index: int) -> MultiTaskGTSample:
+    def get_data_sample(self, index: int) -> ModelGTSample:
         """Return raw metadata for a given dataset index.
 
         Args:
             index: Index of the sample.
 
         Returns:
-            MultiTaskGTSample instance consumed by the transform pipeline.
+            ModelGTSample instance consumed by the transform pipeline.
         """
         raise NotImplementedError("Dataset must implement get_data_sample")
 
     def apply_transforms(
         self,
-        multi_task_gt_sample: MultiTaskGTSample,
-    ) -> MultiTaskGTSample:
+        model_gt_sample: ModelGTSample,
+    ) -> ModelGTSample:
         """Apply a specific transform pipeline to a metadata sample.
 
         Args:
-            multi_task_gt_sample: MultiTaskGTSample instance.
+            model_gt_sample: ModelGTSample instance.
 
         Returns:
-            Transformed MultiTaskGTSample instance.
+            Transformed ModelGTSample instance.
         """
         if self.transforms is None:
-            return multi_task_gt_sample
-        return self.transforms(multi_task_gt_sample)
+            return model_gt_sample
+        return self.transforms(model_gt_sample)
 
-    def collate_fn(self, batch: Sequence[MultiTaskGTSample]) -> MultiTaskGTBatch:
+    def collate_fn(self, batch: Sequence[ModelGTSample]) -> ModelGTBatch:
         """
-        Collate a batch of MultiTaskGTSample into a MultiTaskGTBatch.
+        Collate a batch of ModelGTSample into a ModelGTBatch.
         Args:
-          batch: List of MultiTaskGTSample instances to be collated.
+          batch: List of ModelGTSample instances to be collated.
         Returns:
-          MultiTaskGTBatch: Collated multi-task GT batch.
+          ModelGTBatch: Collated multi-task GT batch.
         """
-        return MultiTaskGTBatch.collate_gt_samples(
+        return ModelGTBatch.collate_gt_samples(
             gt_samples=batch, max_num_3d_gt_bboxes=self.max_num_3d_gt_bboxes
         )

@@ -9,22 +9,19 @@ import torch
 
 from autoware_ml.databases.schemas.lidar_frames import LidarFrameDatasetSchema
 from autoware_ml.databases.schemas.dataset_schemas import DatasetTableSchema
-from autoware_ml.datamodule.multi_task.dataclasses.multi_task_samples import (
-    LiDARPointCloudSample,
-    MultiTaskGTSample,
+from autoware_ml.dataclasses.batch.sample_batch import ModelGTBatch, ModelGTSample
+from autoware_ml.datamodule.base_dataset import (
+    BaseDataset,
 )
-from autoware_ml.datamodule.multi_task.multi_task_base_dataset import (
-    MultiTaskBaseDataset,
-)
-from autoware_ml.datamodule.multi_task.base_dataset_task import BaseDatasetTask
-from autoware_ml.transforms.multi_task.base import MultiTaskTransformsCompose
+from autoware_ml.datamodule.base_dataset_task import BaseDatasetTask
+from autoware_ml.transforms.base import TransformsCompose
 from autoware_ml.types.tasks import TaskType
 
 
 logger = logging.getLogger(__name__)
 
 
-class MultiTaskT4Dataset(MultiTaskBaseDataset):
+class T4Dataset(BaseDataset):
     """
     A dataset class that supports multiple tasks.
     It extends MultiTaskDatasetInterface to include implementation of data retrieval for multiple
@@ -36,11 +33,11 @@ class MultiTaskT4Dataset(MultiTaskBaseDataset):
         database_root_path: str,
         max_num_3d_gt_bboxes: int,
         dataset_records_dataframe: pl.DataFrame | None,
-        transforms: MultiTaskTransformsCompose | None,
+        transforms: TransformsCompose | None,
         dataset_tasks: MappingProxyType[TaskType | str, BaseDatasetTask],
     ) -> None:
         """
-        Initialize the MultiTaskT4Dataset class.
+        Initialize the T4Dataset class.
         Args:
           max_num_3d_gt_bboxes: Maximum number of 3D ground truth bounding boxes in the dataset.
             This is allowed to be 0 if the dataset does not contain any 3D ground truth
@@ -66,12 +63,12 @@ class MultiTaskT4Dataset(MultiTaskBaseDataset):
             }
         )
         logger.info(
-            f"Initialized MultiTaskT4Dataset with {len(self.dataset_tasks)} "
+            f"Initialized T4Dataset with {len(self.dataset_tasks)} "
             f"task datasets: {list(self.dataset_tasks.keys())} "
             f"transforms: {self.transforms} and max_num_3d_gt_bboxes: {self.max_num_3d_gt_bboxes}"
         )
 
-    def get_data_sample(self, index: int) -> MultiTaskGTSample:
+    def get_data_sample(self, index: int) -> ModelGTSample:
         """
         Process the dataset records dataframe for multiple tasks in the T4 dataset.
 
@@ -79,7 +76,7 @@ class MultiTaskT4Dataset(MultiTaskBaseDataset):
           index: Index of the specific record to be processed.
 
         Returns:
-          MultiTaskGTSample: Processed multi-task data row, mapped by task type.
+          ModelGTSample: Processed multi-task data row, mapped by task type.
         """
         data_samples = {}
         for task_type, dataset_task in self.dataset_tasks.items():
@@ -89,7 +86,7 @@ class MultiTaskT4Dataset(MultiTaskBaseDataset):
         lidar_pointcloud_samples = self.get_lidar_pointcloud_data_samples(index)
 
         # Retrieve the detection3d_gt_bboxes_3d and segmentation3d_gt_sample from the data_samples dictionary
-        detection3d_gt_sample: MultiTaskGTSample | None = data_samples.get(
+        detection3d_gt_sample: ModelGTSample | None = data_samples.get(
             TaskType.DETECTION3D, None
         )
         if detection3d_gt_sample is not None:
@@ -97,7 +94,7 @@ class MultiTaskT4Dataset(MultiTaskBaseDataset):
         else:
             detection3d_gt_bboxes_3d = None
 
-        segmentation3d_multi_task_gt_sample: MultiTaskGTSample | None = data_samples.get(
+        segmentation3d_multi_task_gt_sample: ModelGTSample | None = data_samples.get(
             TaskType.SEGMENTATION3D, None
         )
         if segmentation3d_multi_task_gt_sample is not None:
@@ -106,7 +103,7 @@ class MultiTaskT4Dataset(MultiTaskBaseDataset):
             segmentation3d_gt_sample = None
 
         # Merge the data samples from different tasks into a single multi-task data row
-        return MultiTaskGTSample(
+        return ModelGTSample(
             lidar_point_cloud_samples=lidar_pointcloud_samples,
             point_cloud_data=None,  # point cloud data will be populated in the transform pipeline
             detection3d_gt_bboxes_3d=detection3d_gt_bboxes_3d,

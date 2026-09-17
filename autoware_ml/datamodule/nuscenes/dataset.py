@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from autoware_ml.datamodule.multi_task.t4dataset.multi_task_t4dataset import MultiTaskT4Dataset
+from autoware_ml.datamodule.t4dataset.dataset import T4Dataset
 
 
-class MultiTaskNuScenesDataset(MultiTaskT4Dataset):
+class NuScenesDataset(T4Dataset):
     """
     A dataset class that supports multiple tasks for NuScenesDataset-generated parquet records.
 
-    Only overrides `_update_lidar_pointcloud_path`: MultiTaskT4Dataset's version re-resolves lidar
+    Only overrides `_update_lidar_pointcloud_path`: T4Dataset's version re-resolves lidar
     paths as `database_root_path / "/".join(path.split("/")[-6:])`, which assumes the stored path
     is deep enough that the last 6 segments never dip into `database_root_path` itself. That holds
     for T4Dataset's own directory layout (several nested levels per scenario), but not for
