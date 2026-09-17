@@ -6,6 +6,9 @@ from unittest.mock import MagicMock
 
 import torch
 
+from autoware_ml.dataclasses.batch.sample_batch import ModelGTBatch
+from autoware_ml.dataclasses.batch.segmentation3d import Segmentation3DGTBatch
+from autoware_ml.dataclasses.geometry.point_clouds import PointCloudGTBatch
 from autoware_ml.models.segmentation3d.frnet import FRNet
 from autoware_ml.preprocessing.base import DataPreprocessing
 from autoware_ml.preprocessing.segmentation3d.frustum_range import FrustumRangePreprocessor
@@ -172,14 +175,21 @@ def test_frnet_with_preprocessing_runs_shared_step_end_to_end() -> None:
     )
     model.set_data_preprocessing(DataPreprocessing([preprocessor]))
 
-    raw_batch = {
-        "points": torch.tensor(
-            [[1.0, 0.0, 0.0, 0.1], [2.0, 0.0, 0.0, 0.2], [1.0, 1.0, 0.0, 0.3]],
-            dtype=torch.float32,
+    raw_batch = ModelGTBatch(
+        point_cloud_gt_batch=PointCloudGTBatch(
+            points=torch.tensor(
+                [[1.0, 0.0, 0.0, 0.1], [2.0, 0.0, 0.0, 0.2], [1.0, 1.0, 0.0, 0.3]],
+                dtype=torch.float32,
+            ),
+            batch_indices=torch.zeros(3, dtype=torch.int32),
         ),
-        "offset": torch.tensor([3], dtype=torch.long),
-        "pts_semantic_mask": torch.tensor([0, 1, 0], dtype=torch.long),
-    }
+        detection3d_gt_batch=None,
+        segmentation3d_gt_batch=Segmentation3DGTBatch(
+            gt_semantic_masks=torch.tensor([0, 1, 0], dtype=torch.int64),
+            batch_indices=torch.zeros(3, dtype=torch.int32),
+        ),
+        image_gt_batch=None,
+    )
 
     preprocessed = model.on_after_batch_transfer(raw_batch, dataloader_idx=0)
     metrics, _ = model._shared_step(preprocessed, "train")
