@@ -25,6 +25,7 @@ import polars as pl
 from autoware_ml.databases.box3d_pipelines.box3d_pipeline import Box3DPipeline
 from autoware_ml.databases.scenarios import Scenarios, ScenarioData
 from autoware_ml.databases.schemas.dataset_schemas import DatasetRecord, DatasetTableSchema
+from autoware_ml.databases.taxonomy import DatabaseTaxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +40,7 @@ class BaseDatabase:
         cache_path: str,
         cache_file_prefix_name: str,
         num_workers: int,
-        class_names: Sequence[str],
-        label_remapper: Mapping[str, str] | None,
-        ignore_label_index: int,
+        taxonomy: DatabaseTaxonomy,
         box3d_pipelines: Sequence[Box3DPipeline],
     ) -> None:
         """
@@ -53,9 +52,7 @@ class BaseDatabase:
           cache_path: Path to cache the database records.
           cache_file_prefix_name: Prefix name of the cache file, it will be <cache_file_prefix_name>_<database_hash>.parquet
           num_workers: Number of workers to use for processing the database.
-          class_names: List of class names in the database, used for category mapping.
-          label_remapper: Mapping to remap label names, if needed.
-          ignore_label_index: Index to use for ignored labels.
+          taxonomy: Taxonomies the labels of the database are baked with.
           box3d_pipelines: List of box 3D pipelines to process the box 3D annotations.
         """
 
@@ -64,9 +61,7 @@ class BaseDatabase:
         self._cache_path = Path(cache_path)
         self._cache_file_prefix_name = cache_file_prefix_name
         self._num_workers = num_workers
-        self._class_names = class_names
-        self._label_remapper = label_remapper
-        self._ignore_label_index = ignore_label_index
+        self._taxonomy = taxonomy
         self._box3d_pipelines = box3d_pipelines
 
         # Create cache output path if it doesn't exist
@@ -76,9 +71,7 @@ class BaseDatabase:
             f"root path: {self._root_path}, "
             f"cache path: {self._cache_path}, "
             f"cache file prefix name: {self._cache_file_prefix_name}, "
-            f"class names: {self._class_names}, "
-            f"label remapper: {self._label_remapper}, "
-            f"ignore label index: {self._ignore_label_index}, "
+            f"taxonomy: {self._taxonomy}, "
             f"box3d pipelines: [{', '.join([str(pipeline) for pipeline in self._box3d_pipelines])}]"
         )
 
@@ -115,37 +108,15 @@ class BaseDatabase:
         return hash(str(self))
 
     @property
-    def class_names(self) -> Sequence[str]:
+    def taxonomy(self) -> DatabaseTaxonomy:
         """
-        Get the class names in the database.
+        Get the taxonomies the labels of the database are baked with.
 
         Returns:
-          Sequence[str]: Class names in the database.
+          DatabaseTaxonomy: Taxonomies of the database.
         """
 
-        return self._class_names
-
-    @property
-    def label_remapper(self) -> Mapping[str, str] | None:
-        """
-        Get the label remapper in the database.
-
-        Returns:
-          Mapping[str, str] | None: Label remapper in the database.
-        """
-
-        return self._label_remapper
-
-    @property
-    def ignore_label_index(self) -> int:
-        """
-        Get the ignore label index in the database.
-
-        Returns:
-          int: Ignore label index in the database.
-        """
-
-        return self._ignore_label_index
+        return self._taxonomy
 
     @property
     def scenarios_string_repr(self) -> str:
