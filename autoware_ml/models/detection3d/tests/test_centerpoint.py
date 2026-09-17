@@ -122,9 +122,9 @@ class TestCenterPointTargets:
 
         predictions = head.predict(outputs)
 
-        assert predictions[0]["bboxes_3d"].shape == (1, 7)
+        assert predictions[0].bboxes_3d.shape == (1, 7)
         assert torch.allclose(
-            predictions[0]["bboxes_3d"][0, 3:6],
+            predictions[0].bboxes_3d[0, 3:6],
             torch.tensor([4.0, 1.6, 1.5]),
         )
 
@@ -146,7 +146,7 @@ class TestCenterPointTargets:
         assert "loss" in metrics
         assert outputs["heatmap"].shape[:2] == (1, 2)
         assert isinstance(predictions, list)
-        assert set(predictions[0]) == {"bboxes_3d", "scores_3d", "labels_3d"}
+        assert set(type(predictions[0]).model_fields) == {"bboxes_3d", "scores_3d", "labels_3d"}
 
     def test_centerpoint_builds_split_deployment_specs(self) -> None:
         model = _build_model().eval()
@@ -290,6 +290,6 @@ def test_centerhead_uses_natural_dimension_order() -> None:
     predictions = head.predict(outputs)
 
     assert torch.allclose(
-        predictions[0]["bboxes_3d"][0, 3:6],
+        predictions[0].bboxes_3d[0, 3:6],
         torch.tensor([4.0, 1.6, 1.5]),
     )
