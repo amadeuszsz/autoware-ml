@@ -19,7 +19,7 @@ class NuScenesDataset(T4Dataset):
     """
     A dataset class that supports multiple tasks for NuScenesDataset-generated parquet records.
 
-    Only overrides `_update_lidar_pointcloud_path`: T4Dataset's version re-resolves lidar
+    Only overrides `_update_frame_path`: T4Dataset.s version re-resolves frame
     paths as `database_root_path / "/".join(path.split("/")[-6:])`, which assumes the stored path
     is deep enough that the last 6 segments never dip into `database_root_path` itself. That holds
     for T4Dataset's own directory layout (several nested levels per scenario), but not for
@@ -31,16 +31,16 @@ class NuScenesDataset(T4Dataset):
     path reconstruction is needed here at all.
     """
 
-    def _update_lidar_pointcloud_path(self, lidar_pointcloud_path: str) -> str:
+    def _update_frame_path(self, frame_path: str) -> str:
         """
-        Return the lidar pointcloud path unchanged, since NuScenesRecordsGenerator already stores
+        Return the frame path unchanged, since NuScenesRecordsGenerator already stores
         full, directly-usable absolute paths.
 
         Args:
-          lidar_pointcloud_path: Lidar pointcloud path as stored in the parquet record.
+          frame_path: Frame path as stored in the parquet record.
 
         Returns:
           str: The same path, unmodified.
         """
 
-        return lidar_pointcloud_path
+        return frame_path

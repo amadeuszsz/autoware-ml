@@ -7,9 +7,11 @@ import polars as pl
 import numpy as np
 import torch
 
+from autoware_ml.databases.schemas.image_frames import ImageFrameDataModel
 from autoware_ml.databases.schemas.lidar_frames import LidarFrameDatasetSchema
 from autoware_ml.databases.schemas.dataset_schemas import DatasetTableSchema
 from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
+from autoware_ml.dataclasses.geometry.images import ImageSample
 from autoware_ml.dataclasses.geometry.point_clouds import LiDARPointCloudSample
 from autoware_ml.datamodule.base_dataset import (
     BaseDataset,
@@ -106,20 +108,62 @@ class T4Dataset(BaseDataset):
         # Merge the data samples from different tasks into a single multi-task data row
         return ModelGTSample(
             lidar_point_cloud_samples=lidar_pointcloud_samples,
-            image_samples=None,
+            image_samples=self.get_image_data_samples(index),
             point_cloud_data=None,  # point cloud data will be populated in the transform pipeline
             camera_image_data=None,
             detection3d_gt_bboxes_3d=detection3d_gt_bboxes_3d,
             segmentation3d_gt_sample=segmentation3d_gt_sample,
         )
 
-    def _update_lidar_pointcloud_path(self, lidar_pointcloud_path: str) -> str:
+    def get_image_data_samples(self, idx: int) -> Sequence[ImageSample] | None:
         """
-        Remove the absolute path prefix from the lidar pointcloud path and return the updated path with the dataset root.
-        Note that this is dataset-specific.
+        Retrieve the keyframe image of every camera of the record.
+
+        Args:
+          idx: Index of the specific record to be processed.
+
+        Returns:
+          Sequence[ImageSample] | None: One sample per camera, None when the record carries no
+            image frames.
         """
-        # Return the relative path from the lidar pointcloud path
-        relative_path = "/".join(lidar_pointcloud_path.split("/")[-6:])
+        image_frames = self.dataset_records_dataframe.item(
+            idx, DatasetTableSchema.IMAGE_FRAMES.name
+        )
+        if not image_frames:
+            return None
+
+        image_samples = []
+        for camera_frames in image_frames:
+            # The keyframe of a camera comes first, its sweeps after it
+            image_frame = ImageFrameDataModel.load_from_dictionary(camera_frames[0])
+            if image_frame.lidar2cam_fp32 is None or image_frame.lidar2img_fp32 is None:
+                raise ValueError(
+                    f"The image frame {image_frame.image_frame_id} of record {idx} carries no "
+                    "lidar to camera calibration, so it cannot be projected."
+                )
+            image_samples.append(
+                ImageSample(
+                    image_path=self._update_frame_path(image_frame.image_path),
+                    camera_name=image_frame.image_sensor_channel_name,
+                    timestamp=image_frame.image_timestamp_seconds,
+                    camera_intrinsic=torch.tensor(image_frame.cam2img_fp32, dtype=torch.float32),
+                    lidar2cam=torch.tensor(image_frame.lidar2cam_fp32, dtype=torch.float32),
+                    lidar2image=torch.tensor(image_frame.lidar2img_fp32, dtype=torch.float32),
+                    distortion_model=image_frame.image_distortion_model,
+                    distortion_coefficients=torch.tensor(
+                        image_frame.image_distortion_coefficients, dtype=torch.float32
+                    ),
+                )
+            )
+        return image_samples
+
+    def _update_frame_path(self, frame_path: str) -> str:
+        """
+        Remove the absolute path prefix from a frame path and return the updated path with the
+        dataset root. Note that this is dataset-specific.
+        """
+        # Return the relative path from the frame path
+        relative_path = "/".join(frame_path.split("/")[-6:])
         return str(self.database_root_path / relative_path)
 
     def get_lidar_pointcloud_data_samples(self, idx: int) -> Sequence[LiDARPointCloudSample]:
@@ -148,7 +192,7 @@ class T4Dataset(BaseDataset):
                     LidarFrameDatasetSchema.lidar_sensor_to_lidar_sweep_matrix.name
                 ]
             )
-            lidar_pointcloud_path = self._update_lidar_pointcloud_path(
+            lidar_pointcloud_path = self._update_frame_path(
                 lidar_pointcloud_metadata[LidarFrameDatasetSchema.lidar_pointcloud_path.name]
             )
 
