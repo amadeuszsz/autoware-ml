@@ -36,6 +36,8 @@ from autoware_ml.preprocessing.base import DataPreprocessing
 from autoware_ml.preprocessing.detection3d.point_pillar import PointPillarPreprocessor
 from autoware_ml.types.geometry import Box3DCenterCoordinateType
 
+POINT_CLOUD_RANGE = [0.0, 0.0, -2.0, 8.0, 8.0, 2.0]
+
 
 def build_ptv3_encoder() -> PointTransformerV3Encoder:
     """Return a small PTv3 encoder suitable for unit tests."""
@@ -87,14 +89,14 @@ def build_seg_head(num_classes: int = 3, dec_depths: Sequence[int] = (1,)) -> PT
     )
 
 
-def build_seg_model() -> PTv3SegmentationModel:
+def build_seg_model(point_cloud_range: Sequence[float] = POINT_CLOUD_RANGE) -> PTv3SegmentationModel:
     """Return a small PTv3 segmentation model for tests."""
     return PTv3SegmentationModel(
         encoder=build_ptv3_encoder(),
         seg3d_head=build_seg_head(),
         optimizer=lambda params: torch.optim.AdamW(params, lr=1e-3),
         grid_size=1.0,
-        point_cloud_range=[0.0, 0.0, -2.0, 8.0, 8.0, 2.0],
+        point_cloud_range=list(point_cloud_range),
     )
 
 
@@ -121,7 +123,9 @@ def build_bev_neck() -> PTv3DetBEVNeck:
     )
 
 
-def build_transfusion_head() -> TransFusionHead:
+def build_transfusion_head(
+    point_cloud_range: Sequence[float] = POINT_CLOUD_RANGE,
+) -> TransFusionHead:
     """Return a lightweight TransFusion head for PTv3 tests."""
     return TransFusionHead(
         num_proposals=8,
@@ -140,10 +144,17 @@ def build_transfusion_head() -> TransFusionHead:
             "vel": (2, 2),
         },
         bbox_coder=TransFusionBBoxCoder(
-            pc_range=[0.0, 0.0],
+            pc_range=list(point_cloud_range[:2]),
             out_size_factor=1,
             voxel_size=[1.0, 1.0],
-            post_center_range=[-1.0, -1.0, -5.0, 10.0, 10.0, 5.0],
+            post_center_range=[
+                point_cloud_range[0] - 1.0,
+                point_cloud_range[1] - 1.0,
+                -5.0,
+                point_cloud_range[3] + 2.0,
+                point_cloud_range[4] + 2.0,
+                5.0,
+            ],
             code_size=10,
         ),
         assigner=HungarianAssigner3D(
@@ -151,7 +162,7 @@ def build_transfusion_head() -> TransFusionHead:
             reg_cost=BBoxBEVL1Cost(weight=0.25),
             iou_cost=IoU3DCost(weight=0.25),
         ),
-        point_cloud_range=[0.0, 0.0, -2.0, 8.0, 8.0, 2.0],
+        point_cloud_range=list(point_cloud_range),
         voxel_size=[1.0, 1.0, 4.0],
         out_size_factor=1,
         code_weights=[1.0] * 8 + [0.2, 0.2],
@@ -165,12 +176,13 @@ def build_transfusion_head() -> TransFusionHead:
 
 def build_trans_model(
     freeze_encoder: bool = False,
+    point_cloud_range: Sequence[float] = POINT_CLOUD_RANGE,
 ) -> PTv3DetectionModel:
     """Return a PTv3 + TransFusionHead detection model for tests."""
     return PTv3DetectionModel(
         encoder=build_ptv3_encoder(),
         bev_neck=build_bev_neck(),
-        bbox_head=build_transfusion_head(),
+        bbox_head=build_transfusion_head(point_cloud_range),
         export_output_names=[
             "dense_heatmap",
             "query_heatmap_score",
@@ -184,7 +196,7 @@ def build_trans_model(
         ],
         freeze_encoder=freeze_encoder,
         grid_size=1.0,
-        point_cloud_range=[0.0, 0.0, -2.0, 8.0, 8.0, 2.0],
+        point_cloud_range=list(point_cloud_range),
         optimizer=lambda params: torch.optim.AdamW(params, lr=1e-3),
     )
 
@@ -211,11 +223,13 @@ def build_points() -> torch.Tensor:
     return torch.cat([coord, intensity, time_lag], dim=1)
 
 
-def build_preprocessor() -> PointPillarPreprocessor:
+def build_preprocessor(
+    point_cloud_range: Sequence[float] = POINT_CLOUD_RANGE,
+) -> PointPillarPreprocessor:
     """Return the voxelizer the PTv3 models read their encoder inputs from."""
     return PointPillarPreprocessor(
         voxel_size=[1.0, 1.0, 1.0],
-        point_cloud_range=[-10.0, -10.0, -10.0, 10.0, 10.0, 10.0],
+        point_cloud_range=list(point_cloud_range),
         max_num_points=32,
         max_voxels=4096,
         eval_max_voxels=4096,
@@ -365,12 +379,14 @@ def build_litept_seg_head(num_classes: int = 3) -> PTv3SegDecoderHead:
     )
 
 
-def build_litept_seg_model() -> PTv3SegmentationModel:
+def build_litept_seg_model(
+    point_cloud_range: Sequence[float] = POINT_CLOUD_RANGE,
+) -> PTv3SegmentationModel:
     """Return a LitePT segmentation model using the unchanged PTv3 task wrapper."""
     return PTv3SegmentationModel(
         encoder=build_litept_encoder(),
         seg3d_head=build_litept_seg_head(),
         optimizer=lambda params: torch.optim.AdamW(params, lr=1e-3),
         grid_size=1.0,
-        point_cloud_range=[0.0, 0.0, -2.0, 8.0, 8.0, 2.0],
+        point_cloud_range=list(point_cloud_range),
     )

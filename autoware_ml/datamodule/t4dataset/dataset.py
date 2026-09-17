@@ -159,7 +159,7 @@ class T4Dataset(BaseDataset):
         image_frames = self.dataset_records_dataframe.item(
             idx, DatasetTableSchema.IMAGE_FRAMES.name
         )
-        if not image_frames:
+        if len(image_frames) == 0:
             return None
 
         image_samples = []
