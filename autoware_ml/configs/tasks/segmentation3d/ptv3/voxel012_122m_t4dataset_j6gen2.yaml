@@ -5,6 +5,9 @@ defaults:
   - /datasets/t4dataset/lidar
   - /database@database: t4dataset/t4dataset_j6gen2_semaseg
   - /datamodule@datamodule: t4dataset/default_segmentation3d_datamodule
+  - override /datamodule/transforms@datamodule.train_dataset.transforms: ptv3_segmentation3d_train_transforms
+  - override /datamodule/transforms@datamodule.val_dataset.transforms: ptv3_segmentation3d_test_transforms
+  - override /datamodule/transforms@datamodule.test_dataset.transforms: ptv3_segmentation3d_test_transforms
   - _self_
 
 dataset: ${t4dataset}
@@ -12,6 +15,7 @@ dataset: ${t4dataset}
 batch_size: 16
 num_workers: 8
 
+max_voxels: 524288
 grid_size: 0.12
 point_cloud_range: [-122.88, -122.88, -3.0, 122.88, 122.88, 5.0]
 

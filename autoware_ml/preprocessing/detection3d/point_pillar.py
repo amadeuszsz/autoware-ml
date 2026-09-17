@@ -106,6 +106,12 @@ class PointPillarPreprocessor:
             outputs["voxel_coords"] = torch.zeros(
                 (0, 4), device=self.voxel_size.device, dtype=torch.int32
             )
+            outputs["point_voxel_indices"] = torch.zeros(
+                (0,), device=self.voxel_size.device, dtype=torch.int64
+            )
+            outputs["num_dropped_voxels"] = torch.zeros(
+                (), device=self.voxel_size.device, dtype=torch.int64
+            )
             return outputs
 
         device = points_list[0].device
@@ -137,6 +143,8 @@ class PointPillarPreprocessor:
             outputs["voxels"] = points.new_zeros((0, self.max_num_points, points.shape[1]))
             outputs["num_points"] = torch.zeros((0,), device=points.device, dtype=torch.int32)
             outputs["voxel_coords"] = torch.zeros((0, 4), device=points.device, dtype=torch.int32)
+            outputs["point_voxel_indices"] = voxels_data.point_voxel_indices
+            outputs["num_dropped_voxels"] = voxels_data.num_dropped_voxels
             return outputs
 
         # Concat batch column to the voxel coordinates
@@ -154,4 +162,6 @@ class PointPillarPreprocessor:
         outputs["voxels"] = batch_voxels
         outputs["num_points"] = batch_num_points
         outputs["voxel_coords"] = batch_coords
+        outputs["point_voxel_indices"] = voxels_data.point_voxel_indices
+        outputs["num_dropped_voxels"] = voxels_data.num_dropped_voxels
         return outputs

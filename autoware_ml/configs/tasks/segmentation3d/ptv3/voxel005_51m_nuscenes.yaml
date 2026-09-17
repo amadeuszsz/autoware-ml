@@ -5,12 +5,16 @@ defaults:
   - /datasets/nuscenes/lidar
   - /database@database: nuscenes/nuscenes_base
   - /datamodule@datamodule: nuscenes/default_segmentation3d_datamodule
+  - override /datamodule/transforms@datamodule.train_dataset.transforms: ptv3_segmentation3d_train_transforms
+  - override /datamodule/transforms@datamodule.val_dataset.transforms: ptv3_segmentation3d_test_transforms
+  - override /datamodule/transforms@datamodule.test_dataset.transforms: ptv3_segmentation3d_test_transforms
   - _self_
 
 batch_size: 16
 num_workers: 8
 
 dataset: ${nuscenes}
+max_voxels: 524288
 grid_size: 0.05
 point_cloud_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
 
@@ -25,4 +29,3 @@ datamodule:
   test_dataloader:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
-
