@@ -22,11 +22,11 @@ class MultiTaskDataModule(L.LightningDataModule):
         database: DatabaseInterface,
         splitter: SplitterInterface,
         train_dataset: MultiTaskBaseDataset | None,
-        validation_dataset: MultiTaskBaseDataset | None,
+        val_dataset: MultiTaskBaseDataset | None,
         test_dataset: MultiTaskBaseDataset | None,
         predict_dataset: MultiTaskBaseDataset | None,
         train_dataloader: DataLoaderConfig | None,
-        validation_dataloader: DataLoaderConfig | None,
+        val_dataloader: DataLoaderConfig | None,
         test_dataloader: DataLoaderConfig | None,
         predict_dataloader: DataLoaderConfig | None,
     ) -> None:
@@ -35,11 +35,11 @@ class MultiTaskDataModule(L.LightningDataModule):
         self.database = database
         self.splitter = splitter
         self.train_dataset = train_dataset
-        self.validation_dataset = validation_dataset
+        self.val_dataset = val_dataset
         self.test_dataset = test_dataset
         self.predict_dataset = predict_dataset
         self.train_dataloader_config = train_dataloader
-        self.validation_dataloader_config = validation_dataloader
+        self.val_dataloader_config = val_dataloader
         self.test_dataloader_config = test_dataloader
         self.predict_dataloader_config = predict_dataloader
 
@@ -76,15 +76,15 @@ class MultiTaskDataModule(L.LightningDataModule):
         stage_to_datasets = {
             None: [
                 (self.train_dataset, SplitType.TRAIN),
-                (self.validation_dataset, SplitType.VAL),
+                (self.val_dataset, SplitType.VAL),
                 (self.test_dataset, SplitType.TEST),
                 (self.predict_dataset, SplitType.PREDICT),
             ],
             "fit": [
                 (self.train_dataset, SplitType.TRAIN),
-                (self.validation_dataset, SplitType.VAL),
+                (self.val_dataset, SplitType.VAL),
             ],
-            "validate": [(self.validation_dataset, SplitType.VAL)],
+            "validate": [(self.val_dataset, SplitType.VAL)],
             "test": [(self.test_dataset, SplitType.TEST)],
             "predict": [(self.predict_dataset, SplitType.PREDICT)],
         }
@@ -141,24 +141,24 @@ class MultiTaskDataModule(L.LightningDataModule):
 
     def val_dataloader(self):
         """Create and validate dataloader for validation."""
-        if self.validation_dataset is None:
+        if self.val_dataset is None:
             raise ValueError(
                 "Validation dataset is not set. Please set the validation dataset before calling val_dataloader()."
             )
-        if self.validation_dataloader_config is None:
+        if self.val_dataloader_config is None:
             raise ValueError(
                 "Validation dataloader config is not set. Please set the validation dataloader config before calling val_dataloader()."
             )
 
         return DataLoader(
-            dataset=self.validation_dataset,
-            batch_size=self.validation_dataloader_config.batch_size,
-            shuffle=self.validation_dataloader_config.shuffle,
-            num_workers=self.validation_dataloader_config.num_workers,
-            pin_memory=self.validation_dataloader_config.pin_memory,
-            drop_last=self.validation_dataloader_config.drop_last,
-            persistent_workers=self.validation_dataloader_config.persistent_workers,
-            collate_fn=self.validation_dataset.collate_fn,
+            dataset=self.val_dataset,
+            batch_size=self.val_dataloader_config.batch_size,
+            shuffle=self.val_dataloader_config.shuffle,
+            num_workers=self.val_dataloader_config.num_workers,
+            pin_memory=self.val_dataloader_config.pin_memory,
+            drop_last=self.val_dataloader_config.drop_last,
+            persistent_workers=self.val_dataloader_config.persistent_workers,
+            collate_fn=self.val_dataset.collate_fn,
         )
 
     def test_dataloader(self):
