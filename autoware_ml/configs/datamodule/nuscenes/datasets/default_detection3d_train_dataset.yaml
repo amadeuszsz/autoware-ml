@@ -1,4 +1,4 @@
-_target_: autoware_ml.datamodule.multi_task.nuscenes.multi_task_nuscenes_dataset.MultiTaskNuScenesDataset
+_target_: autoware_ml.datamodule.nuscenes.dataset.NuScenesDataset
 _convert_: all
 
 defaults:

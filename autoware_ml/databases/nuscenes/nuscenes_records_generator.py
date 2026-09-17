@@ -34,6 +34,7 @@ from autoware_ml.databases.schemas.lidar_frames import LidarFrameDataModel
 from autoware_ml.databases.schemas.lidar_sources import LidarSourceDataModel
 from autoware_ml.databases.schemas.image_frames import ImageFrameDataModel
 from autoware_ml.databases.schemas.category_mapping import CategoryMappingDataModel
+from autoware_ml.databases.taxonomy import DatabaseTaxonomy
 from autoware_ml.databases.schemas.box3d_schemas import Box3DDataModel
 from autoware_ml.databases.scenarios import ScenarioData
 from autoware_ml.databases.t4dataset.t4sample_records import T4SampleRecord
@@ -57,7 +58,7 @@ class NuScenesRecordsGenerator:
         max_sweeps: int,
         sample_steps: int,
         lidar_pointcloud_num_features: int,
-        ignore_label_index: int,
+        taxonomy: DatabaseTaxonomy,
         box3d_pipelines: Sequence[Box3DPipeline],
     ) -> None:
         """
@@ -71,7 +72,7 @@ class NuScenesRecordsGenerator:
           sample_steps: Number of frames/samples to skip between each sample, set to 1
             if not skipping any samples/frames.
           lidar_pointcloud_num_features: Number of features of the lidar pointcloud.
-          ignore_label_index: Label index to use for ignored labels in the box3d annotations.
+          taxonomy: Taxonomies the labels of the database are baked with.
           box3d_pipelines: List of box3d pipelines to process the box3d annotations.
         """
 
@@ -80,7 +81,7 @@ class NuScenesRecordsGenerator:
         self.max_sweeps = max_sweeps
         self.sample_steps = sample_steps
         self.lidar_pointcloud_num_features = lidar_pointcloud_num_features
-        self.ignore_label_index = ignore_label_index
+        self.taxonomy = taxonomy
         self.box3d_pipelines = box3d_pipelines
 
         assert sample_steps > 0, "Sample steps must be greater than 0."
@@ -263,7 +264,7 @@ class NuScenesRecordsGenerator:
                     box3d_dataset_label_name=box3d.name,
                     box3d_label_name=box3d.name,
                     # Initially, set all label indices to the ignore label index
-                    box3d_label_index=self.ignore_label_index,
+                    box3d_label_index=self.taxonomy.detection3d.ignore_index,
                     box3d_num_lidar_points=sample_annotation_record["num_lidar_pts"],
                     box3d_num_radar_points=sample_annotation_record["num_radar_pts"],
                     box3d_valid=box3d_valid,
