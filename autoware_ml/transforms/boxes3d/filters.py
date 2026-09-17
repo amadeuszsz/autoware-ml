@@ -1,288 +1,92 @@
-# Copyright 2026 TIER IV, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+Bboxes 3d transforms for augmentation of bboxes (for example, removing bboxes by distance and number of points).
+The code is modified based on https://github.com/open-mmlab/mmdetection3d/blob/main/mmdet3d/datasets/transforms/transforms_3d.py.
+"""
 
-"""3D bounding-box filter transforms."""
+from typing import Tuple
 
-from __future__ import annotations
+import torch
 
-from collections.abc import Sequence
-from typing import Any
-
-import numpy as np
-
-from autoware_ml.geometry.utils import points_in_rotated_box
-
+from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
+from autoware_ml.geometry.points.base_points import BasePoints
+from autoware_ml.geometry.bbox_3d.base_bbox3d import BaseBBoxes3D
 from autoware_ml.transforms.base import BaseTransform
 
-_BOX_KEYS = ("gt_boxes", "gt_names", "gt_labels", "gt_num_points")
 
+class BBoxesMinPointsFilter(BaseTransform):
+    """Filter 3D bounding boxes by minimum number of points and distance of bboxes."""
 
-def _filter_present_box_keys(input_dict: dict[str, Any], mask: np.ndarray) -> None:
-    """Apply one per-box mask to every present box-aligned annotation key."""
-    for key in _BOX_KEYS:
-        if key in input_dict:
-            input_dict[key] = input_dict[key][mask]
+    _required_keys = ["detection3d_gt_bboxes_3d", "point_cloud_data"]
 
-
-def _resolve_point_coords(input_dict: dict[str, Any]) -> np.ndarray:
-    """Return ``(N, 3)`` point coordinates from ``coord`` or ``points``.
-
-    PTv3-style pipelines split the cloud into ``coord``; pillar pipelines keep
-    the raw ``points`` array (consumed downstream by the voxel preprocessor).
-    Either is acceptable for counting points inside boxes.
-    """
-    for key in ("coord", "points"):
-        if key in input_dict:
-            return np.asarray(input_dict[key], dtype=np.float32)[:, :3]
-    raise KeyError("Point-count filters require a point cloud under 'coord' or 'points'.")
-
-
-def _count_points_in_rotated_boxes(
-    coord: np.ndarray,
-    boxes: np.ndarray,
-) -> np.ndarray:
-    """Count the number of points inside each oriented 3D bounding box.
-
-    Args:
-        coord: Point coordinates of shape ``(N, 3)``.
-        boxes: Bounding boxes of shape ``(M, 7)`` with columns
-            ``[cx, cy, cz, dx, dy, dz, yaw]``.
-
-    Returns:
-        Integer array of shape ``(M,)`` with the point count per box.
-    """
-    return np.array(
-        [int(points_in_rotated_box(coord, box).sum()) for box in boxes], dtype=np.int64
-    ).reshape(len(boxes))
-
-
-class ObjectNameFilter(BaseTransform):
-    """Keep only 3D boxes whose class name is in the allowed list.
-
-    Required keys:
-        gt_names: Per-box class name array.
-
-    Optional keys:
-        gt_boxes: 3D bounding boxes. Filtered when present.
-        gt_labels: Per-box label indices. Filtered when present.
-        gt_num_points: Per-box lidar point counts. Filtered when present.
-
-    Generated keys:
-        gt_names: Filtered class names.
-        gt_boxes: Filtered boxes (when present).
-        gt_labels: Filtered labels (when present).
-        gt_num_points: Filtered lidar point counts (when present).
-    """
-
-    _required_keys = ["gt_names"]
-
-    def __init__(self, *, classes: Sequence[str]) -> None:
-        """Initialize the ObjectNameFilter transform.
+    def __init__(
+        self,
+        min_points: int,
+        bev_range: Tuple[float],
+    ) -> None:
+        """
+        Initialize the BBoxesMinPointsFilter transform.
 
         Args:
-            classes: Allowed class names retained in the sample.
+            min_points (int): The minimum number of points required for a bounding box to be kept.
+            bev_range (Tuple[float]): The distance ([x_min, y_min, x_max, y_max]) of bounding boxes
+                to apply ths minimum number of points filtering.
         """
-        self.classes = set(classes)
+        super().__init__(probability=None)
+        self.min_points = min_points
+        self.bev_range = torch.tensor(bev_range, dtype=torch.float32)
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Filter present box-aligned arrays by allowed class names.
+    def transform(self, model_gt_sample: ModelGTSample) -> ModelGTSample:
+        """Filter 3D bounding boxes by label names."""
+        # This is checked in the _validate_required_keys()
+        detection3d_gt_bboxes_3d: BaseBBoxes3D = model_gt_sample.detection3d_gt_bboxes_3d  # type: ignore[reportOptionalMemberAccess]
+        if not len(detection3d_gt_bboxes_3d):
+            return model_gt_sample
 
-        Args:
-            input_dict: Sample dictionary containing ``gt_names``.
+        # This is checked in the _validate_required_keys()
+        point_cloud_data: BasePoints = model_gt_sample.point_cloud_data  # type: ignore[reportOptionalMemberAccess]
 
-        Returns:
-            Updated sample dictionary with disallowed classes removed.
-        """
-        mask = np.array([n in self.classes for n in input_dict["gt_names"]], dtype=bool)
-        _filter_present_box_keys(input_dict, mask)
-        return input_dict
-
-
-class ObjectRangeFilter(BaseTransform):
-    """Filter 3D bounding boxes and associated labels by point-cloud range.
-
-    Required keys:
-        (none)
-
-    Optional keys:
-        gt_boxes: 3D bounding boxes (Nx7 or Nx9). Filtered when present.
-        gt_num_points: Per-box lidar point counts. Filtered when present.
-
-    Generated keys:
-        gt_boxes: Filtered boxes (when present).
-        gt_names: Filtered class names (when present alongside gt_boxes).
-        gt_labels: Filtered labels (when present alongside gt_boxes).
-        gt_num_points: Filtered lidar point counts (when present alongside gt_boxes).
-    """
-
-    _required_keys: list[str] = []
-    _optional_keys = ["gt_boxes"]
-
-    def __init__(self, *, point_cloud_range: Sequence[float]) -> None:
-        """Initialize the ObjectRangeFilter transform.
-
-        Args:
-            point_cloud_range: ``[x_min, y_min, z_min, x_max, y_max, z_max]``.
-        """
-        self.point_cloud_range = np.asarray(point_cloud_range, dtype=np.float32)
-
-    def apply_defaults(self, input_dict: dict[str, Any]) -> None:
-        """No defaults needed - transform is a no-op when gt_boxes is absent."""
-        pass
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Filter boxes whose centers fall outside the configured range.
-
-        Args:
-            input_dict: Sample dictionary updated in place.
-
-        Returns:
-            Updated sample dictionary.
-        """
-        if "gt_boxes" not in input_dict:
-            return input_dict
-
-        boxes = input_dict["gt_boxes"]
-        pcr = self.point_cloud_range
-        mask = (
-            (boxes[:, 0] >= pcr[0])
-            & (boxes[:, 1] >= pcr[1])
-            & (boxes[:, 2] >= pcr[2])
-            & (boxes[:, 0] <= pcr[3])
-            & (boxes[:, 1] <= pcr[4])
-            & (boxes[:, 2] <= pcr[5])
+        distance_in_range_masks = detection3d_gt_bboxes_3d.in_range_bev(self.bev_range)
+        points_in_bboxes = detection3d_gt_bboxes_3d.compute_points_in_bboxes(
+            points=point_cloud_data.coords,
         )
-        _filter_present_box_keys(input_dict, mask)
-        return input_dict
+
+        # Filter bboxes that are either within the specified distance range and
+        # have at least `min_points` points,
+        # or are outside the distance range (to keep them).
+        keep_bboxes_mask = (
+            points_in_bboxes.sum(dim=1) >= self.min_points
+        ) & distance_in_range_masks | (~distance_in_range_masks)
+        detection3d_gt_bboxes_3d.remove_bboxes(keep_bboxes_mask)
+        return model_gt_sample
 
 
-class ObjectMinPointsFilter(BaseTransform):
-    """Remove 3D boxes that contain fewer than a minimum number of points.
+class BBoxesBEVDistanceFilter(BaseTransform):
+    """Filter 3D bounding boxes by their bev distance."""
 
-    Required keys:
-        gt_names: Class name per box.
+    _required_keys = ["detection3d_gt_bboxes_3d"]
 
-    Optional keys:
-        gt_boxes: 3D bounding boxes (Nx7 or Nx9). Filtered when present.
-        coord: Point coordinates (Nx3 or wider). Required when gt_boxes is present.
-        points: Raw point array (Nx3 or wider). Required when gt_boxes is present and
-            coord is absent.
-        gt_num_points: Per-box lidar point counts. Filtered when present.
-
-    Generated keys:
-        gt_boxes: Filtered boxes (when present).
-        gt_names: Filtered class names.
-        gt_labels: Filtered labels (when present).
-        gt_num_points: Filtered lidar point counts (when present).
-    """
-
-    _required_keys = ["gt_names"]
-    _optional_keys = ["gt_boxes", "coord", "points"]
-
-    def __init__(self, *, min_num_points: int) -> None:
-        """Initialize the ObjectMinPointsFilter transform.
+    def __init__(
+        self,
+        bev_range: Tuple[float],
+    ) -> None:
+        """
+        Initialize the BBoxesBEVDistanceFilter transform.
 
         Args:
-            min_num_points: Minimum number of points required inside each box.
+            bev_range (Tuple[float]): The distance ([x_min, y_min, x_max, y_max]) of bounding boxes
+                to apply the BEV distance filtering.
         """
-        self.min_num_points = min_num_points
+        super().__init__(probability=None)
+        self.bev_range = torch.tensor(bev_range, dtype=torch.float32)
 
-    def apply_defaults(self, input_dict: dict[str, Any]) -> None:
-        """No defaults needed - transform is a no-op when gt_boxes is absent."""
-        pass
+    def transform(self, model_gt_sample: ModelGTSample) -> ModelGTSample:
+        """Filter 3D bounding boxes by BEV distance."""
+        # This is checked in the _validate_required_keys()
+        detection3d_gt_bboxes_3d: BaseBBoxes3D = model_gt_sample.detection3d_gt_bboxes_3d  # type: ignore[reportOptionalMemberAccess]
+        if not len(detection3d_gt_bboxes_3d):
+            return model_gt_sample
 
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Remove boxes with too few interior points.
+        distance_in_range_masks = detection3d_gt_bboxes_3d.in_range_bev(self.bev_range)
+        detection3d_gt_bboxes_3d.remove_bboxes(distance_in_range_masks)
 
-        Args:
-            input_dict: Sample dictionary updated in place.
-
-        Returns:
-            Updated sample dictionary.
-        """
-        if "gt_boxes" not in input_dict:
-            return input_dict
-
-        coord = _resolve_point_coords(input_dict)
-        boxes = input_dict["gt_boxes"]
-        counts = _count_points_in_rotated_boxes(coord, boxes)
-        mask = counts >= self.min_num_points
-        _filter_present_box_keys(input_dict, mask)
-        return input_dict
-
-
-class ObjectRangeMinPointsFilter(BaseTransform):
-    """Remove boxes below a point-count threshold within a BEV radial interval.
-
-    Required keys:
-        gt_names: Class name per box.
-
-    Optional keys:
-        gt_boxes: 3D bounding boxes (Nx7 or Nx9). Filtered when present.
-        coord: Point coordinates (Nx3 or wider). Required when gt_boxes is present.
-        points: Raw point array (Nx3 or wider). Required when gt_boxes is present and
-            coord is absent.
-        gt_num_points: Per-box lidar point counts. Filtered when present.
-
-    Generated keys:
-        gt_boxes: Filtered boxes (when present).
-        gt_names: Filtered class names.
-        gt_labels: Filtered labels (when present).
-        gt_num_points: Filtered lidar point counts (when present).
-    """
-
-    _required_keys = ["gt_names"]
-    _optional_keys = ["gt_boxes", "coord", "points"]
-
-    def __init__(self, *, range_radius: Sequence[float], min_num_points: int) -> None:
-        """Initialize the ObjectRangeMinPointsFilter transform.
-
-        Args:
-            range_radius: Radial interval ``[min_radius, max_radius]`` in meters.
-            min_num_points: Minimum points required for boxes inside the interval.
-        """
-        if len(range_radius) != 2:
-            raise ValueError(f"range_radius must contain [min, max], got {range_radius}")
-        min_radius, max_radius = (float(value) for value in range_radius)
-        if min_radius < 0.0 or min_radius >= max_radius:
-            raise ValueError(f"Expected 0 <= min radius < max radius, got {range_radius}")
-        if min_num_points <= 0:
-            raise ValueError(f"min_num_points must be positive, got {min_num_points}")
-        self.min_radius = min_radius
-        self.max_radius = max_radius
-        self.min_num_points = min_num_points
-
-    def apply_defaults(self, input_dict: dict[str, Any]) -> None:
-        """No defaults needed because missing boxes make this transform a no-op."""
-        pass
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Filter boxes in the configured radial band by point count.
-
-        Args:
-            input_dict: Sample dictionary updated in place.
-
-        Returns:
-            Updated sample dictionary with low-support in-range boxes removed.
-        """
-        if "gt_boxes" not in input_dict:
-            return input_dict
-
-        boxes = input_dict["gt_boxes"]
-        radii = np.linalg.norm(boxes[:, :2], axis=1)
-        in_range = (radii >= self.min_radius) & (radii < self.max_radius)
-        counts = _count_points_in_rotated_boxes(_resolve_point_coords(input_dict), boxes)
-        mask = ~in_range | (counts >= self.min_num_points)
-        _filter_present_box_keys(input_dict, mask)
-        return input_dict
+        return model_gt_sample

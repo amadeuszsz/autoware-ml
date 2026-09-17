@@ -71,8 +71,8 @@ class FrustumRangePreprocessor:
 
         Args:
             batch_inputs_dict: Batch dictionary containing the concatenated
-                ``points`` tensor, the cumulative per-sample ``offset``
-                tensor, and an optional concatenated ``pts_semantic_mask``.
+                ``feat`` tensor, the cumulative per-sample ``offset``
+                tensor, and an optional concatenated ``segment``.
             is_training: Accepted for pipeline-contract compatibility; the
                 projection is mode-independent, so the value is unused.
 
@@ -88,9 +88,9 @@ class FrustumRangePreprocessor:
                 * ``pts_semantic_mask`` and ``semantic_seg`` when labels were
                   provided.
         """
-        points: torch.Tensor = batch_inputs_dict["points"]
+        points: torch.Tensor = batch_inputs_dict["feat"]
         offset: torch.Tensor = batch_inputs_dict["offset"]
-        labels: torch.Tensor | None = batch_inputs_dict.get("pts_semantic_mask")
+        labels: torch.Tensor | None = batch_inputs_dict.get("segment")
         device = points.device
 
         sample_count = int(offset.numel())
