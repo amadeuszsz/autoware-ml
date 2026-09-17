@@ -140,12 +140,8 @@ class GlobalRotScaleTrans(BaseTransform):
                 previous_lidar_transformation_sample=model_gt_sample.lidar_transformation_sample
             )
 
-        return ModelGTSample(
-            lidar_point_cloud_samples=model_gt_sample.lidar_point_cloud_samples,
-            point_cloud_data=model_gt_sample.point_cloud_data,
-            detection3d_gt_bboxes_3d=model_gt_sample.detection3d_gt_bboxes_3d,
-            segmentation3d_gt_sample=model_gt_sample.segmentation3d_gt_sample,
-            lidar_transformation_sample=lidar_transformation_sample,
+        return model_gt_sample._replace(
+            lidar_transformation_sample=lidar_transformation_sample
         )
 
 
@@ -248,12 +244,8 @@ class GlobalBEVRandomFlip(BaseTransform):
                 previous_lidar_transformation_sample=model_gt_sample.lidar_transformation_sample
             )
 
-        return ModelGTSample(
-            lidar_point_cloud_samples=model_gt_sample.lidar_point_cloud_samples,
-            point_cloud_data=model_gt_sample.point_cloud_data,
-            detection3d_gt_bboxes_3d=model_gt_sample.detection3d_gt_bboxes_3d,
-            segmentation3d_gt_sample=model_gt_sample.segmentation3d_gt_sample,
-            lidar_transformation_sample=lidar_transformation_sample,
+        return model_gt_sample._replace(
+            lidar_transformation_sample=lidar_transformation_sample
         )
 
 
@@ -282,9 +274,16 @@ class PointsRangeFilter(BaseTransform):
 
         # TODO(Kok Seang): Consider to make it immutable and return a new instance
         # instead of modifying in place.
-        # TODO(Kok Seang): Need to remove labels outside of range for 3D semantic segmentation.
         point_cloud_data.remove_points(point_cloud_range_mask)
-        return model_gt_sample
+        if model_gt_sample.segmentation3d_gt_sample is None:
+            return model_gt_sample
+
+        # Drop the labels of the points the filter removed so both stay aligned
+        return model_gt_sample._replace(
+            segmentation3d_gt_sample=model_gt_sample.segmentation3d_gt_sample.remove_labels(
+                point_cloud_range_mask
+            )
+        )
 
 
 class PointsRandomShuffle(BaseTransform):
@@ -308,6 +307,13 @@ class PointsRandomShuffle(BaseTransform):
 
         # TODO(Kok Seang): Consider to make it immutable and return a new instance
         # instead of modifying in place.
-        # TODO(Kok Seang): Need to maintain the same order for 3D semantic segmentation.
-        point_cloud_data.shuffle()
-        return model_gt_sample
+        permutation = point_cloud_data.shuffle()
+        if model_gt_sample.segmentation3d_gt_sample is None:
+            return model_gt_sample
+
+        # Follow the permutation with the labels so both stay aligned
+        return model_gt_sample._replace(
+            segmentation3d_gt_sample=model_gt_sample.segmentation3d_gt_sample.reorder_labels(
+                permutation
+            )
+        )

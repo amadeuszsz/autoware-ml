@@ -134,12 +134,7 @@ class LoadPointsFromFile(BaseTransform):
         )
         self.remove_close(lidar_points)
 
-        return ModelGTSample(
-            lidar_point_cloud_samples=model_gt_sample.lidar_point_cloud_samples,
-            detection3d_gt_bboxes_3d=model_gt_sample.detection3d_gt_bboxes_3d,
-            point_cloud_data=lidar_points,
-            segmentation3d_gt_sample=model_gt_sample.segmentation3d_gt_sample,
-        )
+        return model_gt_sample._replace(point_cloud_data=lidar_points)
 
 
 class LoadMultiSweepPointsFromFile(LoadPointsFromFile):
@@ -240,9 +235,14 @@ class LoadMultiSweepPointsFromFile(LoadPointsFromFile):
         # Concatenate all points from the current frame and the selected sweeps
         multi_sweep_points = LiDARPoints.concat(concat_points)
 
-        return ModelGTSample(
-            lidar_point_cloud_samples=model_gt_sample.lidar_point_cloud_samples,
-            detection3d_gt_bboxes_3d=model_gt_sample.detection3d_gt_bboxes_3d,
+        segmentation3d_gt_sample = model_gt_sample.segmentation3d_gt_sample
+        if segmentation3d_gt_sample is not None:
+            # The sweeps only shape the geometry, their points carry the ignore label
+            segmentation3d_gt_sample = segmentation3d_gt_sample.append_ignored_labels(
+                len(multi_sweep_points) - len(current_frame_point_cloud_data)
+            )
+
+        return model_gt_sample._replace(
             point_cloud_data=multi_sweep_points,
-            segmentation3d_gt_sample=model_gt_sample.segmentation3d_gt_sample,
+            segmentation3d_gt_sample=segmentation3d_gt_sample,
         )
