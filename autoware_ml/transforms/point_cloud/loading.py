@@ -31,6 +31,9 @@ from autoware_ml.transforms.base import BaseTransform
 from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
 from autoware_ml.types.geometry import PointFeatureName, PointFieldIndex
 
+# Lidar intensity is stored over the byte range, the network consumes it in [0, 1].
+_INTENSITY_SCALE = 255.0
+
 
 class LoadPointsFromFile(BaseTransform):
     """Load point clouds from a lidar file path stored in sample metadata."""
@@ -107,6 +110,13 @@ class LoadPointsFromFile(BaseTransform):
             )
 
         points_np = points_np[:, use_dims]
+        # Intensity is stored over the byte range and the network consumes it in [0, 1].
+        # Normalised here, at the point the blob is read, so every pipeline gets it rather
+        # than each one having to remember a transform: a split that forgot it would train
+        # and evaluate on different scales and only show up as a collapsed metric.
+        if PointFieldIndex.INTENSITY in use_dims:
+            points_np = points_np.copy()
+            points_np[:, use_dims.index(PointFieldIndex.INTENSITY)] /= _INTENSITY_SCALE
         point_feature_names = [PointFeatureName(PointFieldIndex(i).name.lower()) for i in use_dims]
         timestamp = lidar_point_cloud_samples[index].timestamp
         return LiDARPoints.from_numpy(
