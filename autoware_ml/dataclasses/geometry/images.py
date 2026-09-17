@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence, NamedTuple
 
-from jaxtyping import Float32
+from jaxtyping import Float32, Int64
 import torch
 from torch import Tensor
 
@@ -13,11 +13,13 @@ class ImageGTBatch(NamedTuple):
     """Named tuple to represent pointcloud features in a batch size with their batch indices."""
 
     images: Float32[Tensor, "batch_size num_cameras num_channels height width"]
-    depth_maps: Float32[Tensor, "batch_size*num_cameras num_depth_channels height width"] | None
+    depth_maps: Float32[Tensor, "batch_size num_cameras num_depth_channels height width"] | None
     camera_intrinsics: Float32[Tensor, "batch_size num_cameras 3 3"]
     image_augmentation_matrices: Float32[Tensor, "batch_size num_cameras 4 4"]
     lidar2images: Float32[Tensor, "batch_size num_cameras 4 4"]
     lidar2cams: Float32[Tensor, "batch_size num_cameras 4 4"]
+    # Calibration status of every camera, None until the misalignment augmentation has run
+    calibration_statuses: Int64[Tensor, "batch_size num_cameras"] | None = None
 
     @staticmethod
     def collate_gt_samples(
@@ -48,6 +50,23 @@ class ImageGTBatch(NamedTuple):
             [sample.image_augmentation_matrices for sample in images_gt_samples]
         )
 
+        # The calibration status is optional, but either every sample of the batch carries it
+        # or none does, otherwise the batch cannot be built.
+        samples_with_statuses = [
+            sample.calibration_statuses
+            for sample in images_gt_samples
+            if sample.calibration_statuses is not None
+        ]
+        if len(samples_with_statuses) == 0:
+            calibration_statuses = None
+        elif len(samples_with_statuses) == len(images_gt_samples):
+            calibration_statuses = torch.stack(samples_with_statuses)
+        else:
+            raise ValueError(
+                "All samples must either carry calibration statuses or none of them, got "
+                f"{len(samples_with_statuses)} out of {len(images_gt_samples)} samples with them."
+            )
+
         # Depth images are optional, but either every sample of the batch carries them or
         # none does, otherwise the batch cannot be built.
         samples_with_depth = [
@@ -56,7 +75,7 @@ class ImageGTBatch(NamedTuple):
         if len(samples_with_depth) == 0:
             depth_maps = None
         elif len(samples_with_depth) == len(images_gt_samples):
-            depth_maps = torch.cat(samples_with_depth, dim=0)
+            depth_maps = torch.stack(samples_with_depth)
         else:
             raise ValueError(
                 "All samples must either carry depth images or none of them, got "
@@ -70,6 +89,7 @@ class ImageGTBatch(NamedTuple):
             image_augmentation_matrices=image_augmentation_matrices,
             lidar2cams=lidar2cams,
             lidar2images=lidar2images,
+            calibration_statuses=calibration_statuses,
         )
 
     def to_device(self, device: torch.device) -> ImageGTBatch:
@@ -89,6 +109,11 @@ class ImageGTBatch(NamedTuple):
             image_augmentation_matrices=self.image_augmentation_matrices.to(device),
             lidar2cams=self.lidar2cams.to(device),
             lidar2images=self.lidar2images.to(device),
+            calibration_statuses=(
+                self.calibration_statuses.to(device)
+                if self.calibration_statuses is not None
+                else None
+            ),
         )
 
 

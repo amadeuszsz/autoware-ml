@@ -50,10 +50,43 @@ class ModelGTBatchAdapter:
             batch_inputs_dict["segment"] = batch.segmentation3d_gt_batch.gt_semantic_masks
         if batch.detection3d_gt_batch is not None:
             batch_inputs_dict |= self.detection3d_inputs(batch)
+        if batch.image_gt_batch is not None:
+            batch_inputs_dict |= self.image_inputs(batch)
         if batch.frame_meta_batch is not None:
             batch_inputs_dict["ego2global"] = batch.frame_meta_batch.ego2globals
             batch_inputs_dict["scene_token"] = batch.frame_meta_batch.scene_tokens
         return batch_inputs_dict
+
+    @staticmethod
+    def image_inputs(batch: ModelGTBatch) -> dict[str, Any]:
+        """Name the camera tensors of the batch, grouped per sample.
+
+        The collated tensors are laid out as (batch_size, num_cameras, ...), so iterating the
+        leading dimension yields the cameras of one sample.
+
+        Args:
+            batch: Collated batch holding camera images.
+
+        Returns:
+            The images, their calibration, and the fused image the calibration classifier
+            reads when the points have been projected onto them.
+        """
+        image_gt_batch = batch.image_gt_batch
+        grouped: dict[str, Any] = {
+            "img": list(image_gt_batch.images),
+            "camera_intrinsics": list(image_gt_batch.camera_intrinsics),
+            "lidar2cam": list(image_gt_batch.lidar2cams),
+            "lidar2img": list(image_gt_batch.lidar2images),
+            "img_aug_matrix": list(image_gt_batch.image_augmentation_matrices),
+        }
+        if image_gt_batch.depth_maps is not None:
+            # The classifier reads one fused image per camera, so the batch and the camera
+            # dimensions collapse into one
+            fused = torch.cat([image_gt_batch.images, image_gt_batch.depth_maps], dim=2)
+            grouped["fused_img"] = fused.flatten(0, 1)
+        if image_gt_batch.calibration_statuses is not None:
+            grouped["gt_calibration_status"] = image_gt_batch.calibration_statuses.flatten()
+        return grouped
 
     @staticmethod
     def point_cloud_inputs(batch: ModelGTBatch) -> dict[str, Any]:
