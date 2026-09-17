@@ -1,167 +1,110 @@
-# Copyright 2026 TIER IV, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""
+Bboxes 3d transforms for loading bboxes (for example, label name filter).
+The code is modified based on https://github.com/open-mmlab/mmdetection3d/blob/main/mmdet3d/datasets/transforms/transforms_3d.py.
+"""
 
-"""3D bounding-box annotation loading transforms."""
+from typing import Sequence
 
-from __future__ import annotations
+import torch
 
-import logging
-from collections.abc import Mapping
-from typing import Any
-
-import numpy as np
-
+from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
+from autoware_ml.geometry.bbox_3d.base_bbox3d import BaseBBoxes3D
 from autoware_ml.transforms.base import BaseTransform
-from autoware_ml.transforms.boxes3d.annotations import (
-    box_is_physical,
-    normalize_filter_attributes,
-    resolve_detection_class,
-    sanitize_velocity,
-)
-
-logger = logging.getLogger(__name__)
 
 
-class LoadAnnotations3D(BaseTransform):
-    """Parse raw instance annotations into 3D bounding-box targets.
+class BBoxesLabelNameFilter(BaseTransform):
+    """Filter 3D bounding boxes by the name of the class they are mapped to.
 
-    Reads the ``instances`` list from the sample, applies an optional
-    class-name mapping, filters by minimum lidar point count, and produces
-    ``gt_boxes`` (Nx9, with velocity), ``gt_names``, ``gt_labels``, and
-    ``gt_num_points``.
-
-    When ``name_mapping`` is ``None``, class names are read from
-    ``class_names`` in the sample dict.
-
-    Required keys:
-        instances: List of raw annotation dicts from the dataset.
-
-    Optional keys:
-        class_names: List of canonical class names used for label assignment
-                     when ``name_mapping`` is ``None``.
-
-    Generated keys:
-        gt_boxes: Bounding boxes (N, 9) - 7 box params + 2 velocity components.
-        gt_names: Canonical class names per box.
-        gt_labels: Integer label indices per box.
-        gt_num_points: Lidar point count per box.
+    A box keeps the label name it was annotated with, which can be finer than the class it
+    trains as (an ambulance trains as a car). The class is read from the label index of the
+    box, so a box is kept when its class is one of the kept names, whatever its own name.
     """
 
-    _required_keys = ["instances"]
-    _optional_keys = ["class_names", "label_to_category"]
+    _required_keys = ["detection3d_gt_bboxes_3d"]
 
-    def __init__(
-        self,
-        *,
-        name_mapping: Mapping[str, str | None] | None = None,
-        filter_attributes: list[list[str]] | None = None,
-    ) -> None:
-        """Initialize the LoadAnnotations3D transform.
+    def __init__(self, label_names_to_keep: Sequence[str], class_names: Sequence[str]) -> None:
+        """Initialize the BBoxesLabelNameFilter transform.
 
         Args:
-            name_mapping: Optional raw-to-canonical class-name mapping. Values set
-                to ``None`` drop the corresponding raw class.
-            filter_attributes: Attribute groups used to filter raw annotations.
+            label_names_to_keep: Names of the classes whose boxes are kept.
+            class_names: Class names in label index order.
         """
-        self.name_mapping = dict(name_mapping) if name_mapping is not None else None
-        self.filter_attributes = normalize_filter_attributes(filter_attributes)
-        self._validated_class_names: set[tuple[str, ...]] = set()
-
-    def apply_defaults(self, input_dict: dict[str, Any]) -> None:
-        """Populate optional class-name metadata when it is absent.
-
-        Args:
-            input_dict: Sample dictionary updated in place.
-        """
-        input_dict.setdefault("class_names", [])
-
-    def transform(self, input_dict: dict[str, Any]) -> dict[str, Any]:
-        """Convert raw instance annotations into detection target arrays.
-
-        Args:
-            input_dict: Sample dictionary containing raw ``instances``.
-
-        Returns:
-            Updated sample dictionary with 3D box target keys.
-        """
-        instances = input_dict["instances"]
-        class_names = input_dict.get("class_names", [])
-        canonical_list = list(class_names)
-        self._validate_name_mapping_targets(canonical_list)
-
-        gt_boxes, gt_names, gt_num_points = [], [], []
-
-        for inst in instances:
-            canonical = resolve_detection_class(
-                inst,
-                class_names=canonical_list,
-                name_mapping=self.name_mapping,
-                label_to_category=input_dict.get("label_to_category"),
-                filter_attributes=self.filter_attributes,
-            )
-            if canonical is None:
-                continue
-
-            num_pts = int(inst.get("num_lidar_pts", 0))
-            box = list(inst["bbox_3d"])  # 7 values: cx cy cz dx dy dz yaw
-            vel = sanitize_velocity(inst.get("velocity"))
-            if not box_is_physical(box, vel):
-                continue
-            gt_boxes.append(box + vel)
-            gt_names.append(canonical)
-            gt_num_points.append(num_pts)
-
-        if gt_boxes:
-            boxes_arr = np.array(gt_boxes, dtype=np.float32)
-        else:
-            boxes_arr = np.zeros((0, 9), dtype=np.float32)
-
-        names_arr = np.array(gt_names, dtype=object)
-
-        name_to_label = {n: i for i, n in enumerate(canonical_list)}
-        gt_labels = np.array([name_to_label[n] for n in gt_names], dtype=np.int64)
-
-        input_dict["gt_boxes"] = boxes_arr
-        input_dict["gt_names"] = names_arr
-        input_dict["gt_labels"] = gt_labels
-        input_dict["gt_num_points"] = np.array(gt_num_points, dtype=np.int64)
-        return input_dict
-
-    def _validate_name_mapping_targets(self, class_names: list[str]) -> None:
-        """Log mapping targets dropped because they are not detector classes.
-
-        A ``name_mapping`` target absent from ``class_names`` is treated as an
-        intentional drop (the AWML convention, e.g. mapping ``trailer`` to the
-        non-target class ``trailer`` so standalone trailers are excluded). Such
-        boxes are dropped downstream by ``resolve_detection_class``; this only
-        surfaces them once per distinct class-name set.
-        """
-        if self.name_mapping is None:
-            return
-        class_name_key = tuple(str(name) for name in class_names)
-        if class_name_key in self._validated_class_names:
-            return
-        self._validated_class_names.add(class_name_key)
-
-        dropped_targets = sorted(
-            {
-                str(mapped_name)
-                for mapped_name in self.name_mapping.values()
-                if mapped_name is not None and str(mapped_name) not in class_name_key
-            }
+        super().__init__(probability=None)
+        unknown = sorted(set(label_names_to_keep) - set(class_names))
+        if unknown:
+            raise ValueError(f"label_names_to_keep names classes that do not exist: {unknown}.")
+        self.label_indices_to_keep = torch.tensor(
+            [index for index, name in enumerate(class_names) if name in label_names_to_keep],
+            dtype=torch.int64,
         )
-        if dropped_targets:
-            logger.info(
-                "name_mapping targets not in class_names will be dropped: %s", dropped_targets
+
+    def transform(self, model_gt_sample: ModelGTSample) -> ModelGTSample:
+        """Filter 3D bounding boxes by the class of their label index."""
+        # This is checked in the _validate_required_keys()
+        detection3d_gt_bboxes_3d: BaseBBoxes3D = model_gt_sample.detection3d_gt_bboxes_3d  # type: ignore[reportOptionalMemberAccess]
+        if not len(detection3d_gt_bboxes_3d):
+            return model_gt_sample
+
+        labels = detection3d_gt_bboxes_3d.bbox_labels.to(torch.int64)
+        bboxes_to_keep_mask = torch.isin(labels, self.label_indices_to_keep.to(labels.device))
+
+        # TODO(Kok Seang): Consider to make it immutable and return a new instance
+        # instead of modifying in place.
+        detection3d_gt_bboxes_3d.remove_bboxes(bboxes_to_keep_mask)
+        return model_gt_sample
+
+
+class BBoxesAttributeFilter(BaseTransform):
+    """
+    Drop the 3D bounding boxes whose class and attributes match an exclusion rule.
+
+    Some annotated objects are no detection target, a parked bicycle or a motorcycle without
+    a rider for one. A rule names a class and an attribute, and a box of that class carrying
+    that attribute is removed from the sample, so it is neither trained on nor scored.
+    """
+
+    _required_keys = ["detection3d_gt_bboxes_3d"]
+
+    def __init__(self, filter_attributes: Sequence[Sequence[str]]) -> None:
+        """
+        Initialize the BBoxesAttributeFilter transform.
+
+        Args:
+          filter_attributes: Exclusion rules, each a pair of class name and attribute name.
+        """
+        super().__init__(probability=None)
+        rules = []
+        for index, rule in enumerate(filter_attributes):
+            if isinstance(rule, str) or len(rule) != 2:
+                raise ValueError(
+                    f"Exclusion rule {index} must be a [class_name, attribute] pair, got {rule!r}."
+                )
+            rules.append((str(rule[0]), str(rule[1])))
+        self.filter_attributes = frozenset(rules)
+
+    def transform(self, model_gt_sample: ModelGTSample) -> ModelGTSample:
+        """Drop the boxes matching an exclusion rule."""
+        # This is checked in the _validate_required_keys()
+        detection3d_gt_bboxes_3d: BaseBBoxes3D = model_gt_sample.detection3d_gt_bboxes_3d  # type: ignore[reportOptionalMemberAccess]
+        if not len(detection3d_gt_bboxes_3d) or not self.filter_attributes:
+            return model_gt_sample
+
+        bbox_attributes = detection3d_gt_bboxes_3d.bbox_attributes
+        if bbox_attributes is None:
+            raise ValueError(
+                "The attribute filter needs the attributes of every box, the dataset served none."
             )
+
+        bboxes_to_keep_mask = torch.tensor(
+            [
+                not any(
+                    (label_name, attribute) in self.filter_attributes for attribute in attributes
+                )
+                for label_name, attributes in zip(
+                    detection3d_gt_bboxes_3d.bbox_label_names, bbox_attributes, strict=True
+                )
+            ],
+            dtype=torch.bool,
+        )
+        detection3d_gt_bboxes_3d.remove_bboxes(bboxes_to_keep_mask)
+        return model_gt_sample
