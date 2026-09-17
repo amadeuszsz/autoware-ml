@@ -51,6 +51,7 @@ class GlobalRotScaleTrans(BaseTransform):
         yaw_rot_range: Sequence[float],
         scale_ratio_range: Sequence[float],
         translation_std: Sequence[float] | None = None,
+        probability: float | None = None,
     ) -> None:
         """Initialize the GlobalRotScaleTrans transform.
 
@@ -58,8 +59,9 @@ class GlobalRotScaleTrans(BaseTransform):
             yaw_rot_range: Min and max rotation angles in radians around yaw.
             scale_ratio_range: Min and max scale factors.
             translation_std: Optional per-axis Gaussian translation std ``[x, y, z]``.
+            probability: Probability of applying the transform, None to always apply it.
         """
-        super().__init__(probability=None)
+        super().__init__(probability=probability)
         self.yaw_rot_range = yaw_rot_range
         self.scale_ratio_range = scale_ratio_range
         self.translation_std = (
@@ -68,13 +70,22 @@ class GlobalRotScaleTrans(BaseTransform):
             else None
         )
 
+    def sample_yaw(self) -> float:
+        """
+        Sample the yaw rotation applied to the sample.
+
+        Returns:
+            float: Rotation around yaw in radians.
+        """
+        return float(np.random.uniform(self.yaw_rot_range[0], self.yaw_rot_range[1]))
+
     def sample_rot_scale_trans(
         self,
     ) -> Tuple[LiDARTransformationSample, RotationScaleTranslationData]:
         """
         Sample random rotation, scale, and translation parameters.
         """
-        rotation = float(np.random.uniform(self.yaw_rot_range[0], self.yaw_rot_range[1]))
+        rotation = self.sample_yaw()
         matrix = rotation_matrix(str(RotationAxis.Z.name).lower(), rotation)
         scale_factor = float(
             np.random.uniform(self.scale_ratio_range[0], self.scale_ratio_range[1])
@@ -143,6 +154,34 @@ class GlobalRotScaleTrans(BaseTransform):
         return model_gt_sample._replace(
             lidar_transformation_sample=lidar_transformation_sample
         )
+
+
+class RandomRotateTargetAngle(GlobalRotScaleTrans):
+    """Rotate the point cloud and the bboxes by one of a few target yaw angles."""
+
+    def __init__(self, probability: float, yaw_angle_ratios: Sequence[float]) -> None:
+        """Initialize the RandomRotateTargetAngle transform.
+
+        Args:
+            probability: Probability of applying the transform.
+            yaw_angle_ratios: Candidate rotations around yaw, in multiples of pi radians.
+        """
+        super().__init__(
+            yaw_rot_range=(0.0, 0.0),
+            scale_ratio_range=(1.0, 1.0),
+            translation_std=None,
+            probability=probability,
+        )
+        self.yaw_angle_ratios = list(yaw_angle_ratios)
+
+    def sample_yaw(self) -> float:
+        """
+        Pick one of the target angles instead of drawing from a continuous range.
+
+        Returns:
+            float: Rotation around yaw in radians.
+        """
+        return float(np.random.choice(self.yaw_angle_ratios)) * float(np.pi)
 
 
 class GlobalBEVRandomFlip(BaseTransform):
