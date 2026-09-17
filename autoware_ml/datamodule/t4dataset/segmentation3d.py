@@ -1,243 +1,49 @@
-# Copyright 2026 TIER IV, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+import polars as pl
 
-"""T4Dataset 3D semantic segmentation dataset and datamodule.
-
-This module adapts T4Dataset segmentation metadata to the shared
-Autoware-ML segmentation interface.
-"""
-
-from __future__ import annotations
-
-import logging
-import os
-import pickle
-from typing import Any
-
-import numpy as np
-
-from autoware_ml.datamodule.base import DataModule, Dataset
-from autoware_ml.datamodule.t4dataset.frame_meta import scene_dir_fragment
-from autoware_ml.datamodule.common.serialization import SerializedSampleList
-from autoware_ml.transforms.base import TransformsCompose
-
-logger = logging.getLogger(__name__)
+from autoware_ml.datamodule.base_dataset_task import BaseDatasetTask
+from autoware_ml.dataclasses.batch.sample_batch import ModelGTBatch, ModelGTSample
 
 
-def _resolve_path(base: str, path: str) -> str:
-    """Join *path* to *base* unless *path* is already absolute."""
-    return path if os.path.isabs(path) else os.path.join(base, path)
-
-
-class T4Segmentation3DDataset(Dataset):
-    """Load T4Dataset lidar samples for point-wise semantic segmentation.
-
-    When *lidar_sources* is provided the dataset flattens per-sensor metadata
-    so that each ``(sample, sensor)`` pair becomes a separate item.  When
-    omitted, each annotation record maps 1-to-1 to a dataset item.
+class T4Segmentation3DTask(BaseDatasetTask):
+    """
+    Dataset task for 3D segmentation in the T4 dataset.
+    This class defines how to process the dataset records for 3D segmentation in the T4 dataset and retrieve the necessary information for training and evaluation.
     """
 
-    def __init__(
-        self,
-        data_root: str,
-        ann_file: str,
-        lidar_sources: list[str] | None = None,
-        dataset_transforms: TransformsCompose | None = None,
-    ) -> None:
-        """Initialize the T4 segmentation dataset.
-
-        Args:
-            data_root: Dataset root directory.
-            ann_file: Annotation file path.
-            lidar_sources: Ordered lidar sources exposed as separate samples.
-                When ``None`` each annotation record is one sample.
-            dataset_transforms: Optional dataset transform pipeline.
+    def __init__(self, database_root_path: str, dataset_records_dataframe: pl.DataFrame) -> None:
         """
-        super().__init__(dataset_transforms=dataset_transforms)
-        self.data_root = data_root
-        self.lidar_sources = lidar_sources
-        with open(ann_file, "rb") as file:
-            data = pickle.load(file)
-
-        self.data_infos = SerializedSampleList(
-            data["data_list"] if "data_list" in data else data["infos"]
+        Initialize the T4Segmentation3DTask class.
+        Args:
+          database_root_path: Root directory of the dataset.
+          dataset_records_dataframe: Polars DataFrame of dataset records to be processed for 3D segmentation in the T4 dataset.
+        """
+        super().__init__(
+            database_root_path=database_root_path,
+            dataset_records_dataframe=dataset_records_dataframe,
         )
 
-    def __len__(self) -> int:
-        """Return the number of segmentation samples.
+    def __str__(self) -> str:
+        """
+        String representation of the dataset type.
 
         Returns:
-            Total number of items.  When *lidar_sources* is set this equals
-            ``len(data_infos) * len(lidar_sources)``.
+          str: String representation of the dataset type.
         """
-        if self.lidar_sources is not None:
-            return len(self.data_infos) * len(self.lidar_sources)
-        return len(self.data_infos)
+        return "T4Segmentation3DTask"
 
-    def _map_index(self, index: int) -> tuple[int, str]:
-        """Map a flattened dataset index to sample and lidar source.
+    def get_data_sample(self, idx: int) -> ModelGTSample:
+        """
+        Process the dataset records dataframe for 3D segmentation in the T4 dataset.
 
         Args:
-            index: Flattened dataset index.
+          dataset_records_dataframe: Polars DataFrame of dataset records to be processed.
+          idx: Index of the specific record to be processed.
 
         Returns:
-            Tuple of sample index and lidar source name.
+          MultiTaskDataRow: Processed multi-task data row for 3D segmentation in the T4 dataset.
         """
-        if self.lidar_sources is None:
-            raise ValueError(
-                "T4Segmentation3DDataset requires lidar_sources to be configured before indexing."
-            )
-        source_count = len(self.lidar_sources)
-        sample_index = index // source_count
-        source_name = self.lidar_sources[index % source_count]
-        return sample_index, source_name
-
-    def _get_per_sensor_info(
-        self, sample: dict[str, Any], sample_index: int, source_name: str
-    ) -> dict[str, Any]:
-        """Build metadata for one sensor of a multi-sensor sample."""
-        lidar_path = os.path.join(self.data_root, sample["lidar_points"]["lidar_path"])
-        sensor_token = sample["lidar_sources"][source_name]["sensor_token"]
-        sources_by_token = {s["sensor_token"]: s for s in sample["lidar_sources_info"]["sources"]}
-        source_info = sources_by_token[sensor_token]
-        idx_begin, length = source_info["idx_begin"], source_info["length"]
-        translation = sample["lidar_sources"][source_name]["translation"]
-        rotation = sample["lidar_sources"][source_name]["rotation"]
-
-        if length <= 0:
-            logger.warning(
-                "Sample %s source %r has no points (length=%s).",
-                sample_index,
-                source_name,
-                length,
-            )
-
-        return {
-            "lidar_path": lidar_path,
-            "name": sample.get("token", f"{sample_index}_{source_name}"),
-            "idx_begin": idx_begin,
-            "length": length,
-            "translation": translation,
-            "rotation": rotation,
-            "num_pts_feats": sample["lidar_points"]["num_pts_feats"],
-            "pts_semantic_mask_categories": sample["pts_semantic_mask_categories"],
-            "pts_semantic_mask_path": os.path.join(
-                self.data_root, sample["pts_semantic_mask_path"]
-            ),
-        }
-
-    def _get_sample_info(self, sample: dict[str, Any]) -> dict[str, Any]:
-        """Build metadata for a single-sensor sample (no per-sensor flattening)."""
-        lidar_path = os.path.join(self.data_root, sample["lidar_points"]["lidar_path"])
-        info: dict[str, Any] = {
-            "lidar_path": lidar_path,
-            "name": sample["token"],
-            "num_pts_feats": int(sample["lidar_points"].get("num_pts_feats", 5)),
-            "pts_semantic_mask_categories": sample["pts_semantic_mask_categories"],
-            "pts_semantic_mask_path": os.path.join(
-                self.data_root, sample["pts_semantic_mask_path"]
-            ),
-        }
-        if "images" in sample:
-            info["images"] = {
-                cam: {
-                    **cam_info,
-                    "img_path": _resolve_path(self.data_root, cam_info["img_path"])
-                    if "img_path" in cam_info
-                    else cam_info.get("img_path"),
-                }
-                for cam, cam_info in sample["images"].items()
-            }
-        return info
-
-    def get_data_info(self, index: int) -> dict[str, Any]:
-        """Build one T4 segmentation metadata record.
-
-        Args:
-            index: Dataset index (flattened when *lidar_sources* is set).
-
-        Returns:
-            Metadata dictionary consumed by segmentation transform pipelines.
-        """
-        if self.lidar_sources is not None:
-            sample_index, source_name = self._map_index(index)
-            sample = self.data_infos[sample_index]
-            info = self._get_per_sensor_info(sample, sample_index, source_name)
-        else:
-            sample = self.data_infos[index]
-            info = self._get_sample_info(sample)
-
-        info["ego2global"] = np.asarray(sample["ego2global"], dtype=np.float64)
-        info["scene_token"] = scene_dir_fragment(
-            sample["lidar_points"]["lidar_path"], self.data_root
-        )
-        info["timestamp"] = float(sample["timestamp"])
-        return info
-
-
-class T4Segmentation3DDataModule(DataModule):
-    """Create T4Dataset dataloaders for 3D semantic segmentation.
-
-    The datamodule configures dataset splits, transforms, and collate behavior
-    for segmentation experiments on T4Dataset.
-    """
-
-    def __init__(
-        self,
-        data_root: str,
-        train_ann_file: str,
-        val_ann_file: str,
-        test_ann_file: str,
-        lidar_sources: list[str] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize the T4 segmentation datamodule.
-
-        Args:
-            data_root: Dataset root directory.
-            train_ann_file: Training annotation file path.
-            val_ann_file: Validation annotation file path.
-            test_ann_file: Test annotation file path.
-            lidar_sources: Ordered lidar sources exposed as separate samples.
-                When ``None`` each annotation record is one sample.
-            **kwargs: Additional base datamodule configuration.
-        """
-        super().__init__(**kwargs)
-        self.data_root = data_root
-        self.lidar_sources = lidar_sources
-        self.ann_files = {
-            "train": _resolve_path(data_root, train_ann_file),
-            "val": _resolve_path(data_root, val_ann_file),
-            "test": _resolve_path(data_root, test_ann_file),
-            "predict": _resolve_path(data_root, test_ann_file),
-        }
-
-    def _create_dataset(
-        self, split: str, dataset_transforms: TransformsCompose | None = None
-    ) -> Dataset:
-        """Instantiate the dataset for one split.
-
-        Args:
-            split: Dataset split name.
-            dataset_transforms: Optional transform pipeline for the split.
-
-        Returns:
-            Instantiated dataset for the requested split.
-        """
-        return T4Segmentation3DDataset(
-            data_root=self.data_root,
-            ann_file=self.ann_files[split],
-            lidar_sources=self.lidar_sources,
-            dataset_transforms=dataset_transforms,
+        # TODO (Kok Seang): Implement the data retrieval for 3D segmentation in the T4 dataset
+        # based on the dataset records dataframe and the given index.
+        raise NotImplementedError(
+            "get_data_sample method for T4Segmentation3DTask is not yet implemented."
         )

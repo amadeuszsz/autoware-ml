@@ -5,8 +5,8 @@ from torch.utils.data import DataLoader
 
 from autoware_ml.databases.database_interface import DatabaseInterface
 from autoware_ml.datamodule.base import DataLoaderConfig
-from autoware_ml.datamodule.multi_task.multi_task_base_dataset import (
-    MultiTaskBaseDataset,
+from autoware_ml.datamodule.base_dataset import (
+    BaseDataset,
 )
 from autoware_ml.datamodule.splitters.splitter_interface import SplitterInterface
 from autoware_ml.types.dataset import SplitType
@@ -14,17 +14,17 @@ from autoware_ml.types.dataset import SplitType
 logger = logging.getLogger(__name__)
 
 
-class MultiTaskDataModule(L.LightningDataModule):
+class DataModule(L.LightningDataModule):
     """Base LightningDataModule for multi-task learning that can be shared by multiple datasets."""
 
     def __init__(
         self,
         database: DatabaseInterface,
         splitter: SplitterInterface,
-        train_dataset: MultiTaskBaseDataset | None,
-        validation_dataset: MultiTaskBaseDataset | None,
-        test_dataset: MultiTaskBaseDataset | None,
-        predict_dataset: MultiTaskBaseDataset | None,
+        train_dataset: BaseDataset | None,
+        validation_dataset: BaseDataset | None,
+        test_dataset: BaseDataset | None,
+        predict_dataset: BaseDataset | None,
         train_dataloader: DataLoaderConfig | None,
         validation_dataloader: DataLoaderConfig | None,
         test_dataloader: DataLoaderConfig | None,
