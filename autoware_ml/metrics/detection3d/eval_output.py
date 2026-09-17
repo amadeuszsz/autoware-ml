@@ -1,40 +1,50 @@
-"""Shared eval-output builder for 3D detection models.
+"""Shared eval output builder for 3D detection models.
 
-Every detection model decodes its head into per-sample predictions and pairs
-them with the ground-truth boxes and labels. This helper builds the flat
-eval-output dict that :class:`~autoware_ml.metrics.detection3d.suite.Detection3DMetricSuite`
-reads, so each model's ``build_eval_output`` is a one-line delegation.
+Every detection model decodes its head into per sample typed predictions and pairs them with
+the ground truth boxes and labels of the batch. This helper builds the flat eval output dict
+that Detection3DMetricSuite reads, so each model's build_eval_output is a one line delegation.
+The metric side contract stays dict based, the conversion from the typed predictions happens
+here.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
+
+from autoware_ml.models.detection3d.outputs import Detection3DPrediction
 
 
 def detection_eval_output(
-    predictions: list[dict[str, Any]], batch: Mapping[str, Any]
+    predictions: Sequence[Detection3DPrediction], batch_inputs_dict: Mapping[str, Any]
 ) -> dict[str, Any]:
     """Pair decoded predictions with ground truth for the detection metric.
 
     Args:
-        predictions: Per-sample prediction dicts with ``bboxes_3d``,
-            ``scores_3d``, and ``labels_3d``, as returned by ``bbox_head.predict``.
-        batch: The batch dictionary holding the ground-truth boxes and labels.
+        predictions: Per sample typed predictions as returned by the head's predict.
+        batch_inputs_dict: Model inputs holding the ground truth boxes and labels.
 
     Returns:
-        Flat eval-output dict consumed by the detection metric.
+        Flat eval output dict consumed by the detection metric.
     """
-    eval_out = {
-        "predictions": predictions,
-        "gt_boxes": batch["gt_boxes"],
-        "gt_labels": batch["gt_labels"],
+    if "gt_boxes" not in batch_inputs_dict or "gt_labels" not in batch_inputs_dict:
+        raise ValueError("The detection eval output requires ground truth boxes and labels.")
+    eval_out: dict[str, Any] = {
+        "predictions": [
+            {
+                "bboxes_3d": prediction.bboxes_3d,
+                "scores_3d": prediction.scores_3d,
+                "labels_3d": prediction.labels_3d,
+            }
+            for prediction in predictions
+        ],
+        "gt_boxes": list(batch_inputs_dict["gt_boxes"]),
+        "gt_labels": list(batch_inputs_dict["gt_labels"]),
     }
-    # Per-frame evaluation metadata, copied through when the dataset supplies it.
-    # Region and collision filters need the ego pose and scene token. A configured
-    # filter that needs a missing key fails loud in the suite naming it, so
-    # absence is never silent.
+    # Per frame evaluation metadata, copied through when the dataset supplies it. Region and
+    # collision filters need the ego pose and scene token. A configured filter that needs a
+    # missing key fails loud in the suite naming it, so absence is never silent.
     for key in ("gt_num_points", "ego2global", "scene_token"):
-        if key in batch:
-            eval_out[key] = batch[key]
+        if key in batch_inputs_dict:
+            eval_out[key] = list(batch_inputs_dict[key])
     return eval_out

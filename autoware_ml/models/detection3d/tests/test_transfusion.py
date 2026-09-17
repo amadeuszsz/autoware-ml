@@ -327,7 +327,7 @@ def test_transfusion_predict_reweights_scores_by_query_labels() -> None:
 
     predictions = head.predict(outputs)
 
-    assert predictions[0]["labels_3d"].tolist() == [0, 1]
+    assert predictions[0].labels_3d.tolist() == [0, 1]
 
 
 def test_transfusion_predict_skips_circle_nms_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -352,7 +352,7 @@ def test_transfusion_predict_skips_circle_nms_by_default(monkeypatch: pytest.Mon
 
     predictions = head.predict(outputs)
 
-    assert predictions[0]["scores_3d"].shape[0] == 2
+    assert predictions[0].scores_3d.shape[0] == 2
 
 
 def test_transfusion_predict_applies_circle_nms_when_requested(
@@ -380,7 +380,7 @@ def test_transfusion_predict_applies_circle_nms_when_requested(
 
     predictions = head.predict(outputs)
 
-    assert predictions[0]["scores_3d"].shape[0] == 1
+    assert predictions[0].scores_3d.shape[0] == 1
 
 
 def test_transfusion_targets_use_raw_logits_for_assignment() -> None:
@@ -559,9 +559,9 @@ def test_transfusion_nms_groups_cap_zero_radius_groups_by_score() -> None:
     predictions = head.predict(outputs)
 
     # Both queries are class 0; the group cap keeps only the highest score.
-    assert predictions[0]["scores_3d"].shape[0] == 1
+    assert predictions[0].scores_3d.shape[0] == 1
     assert torch.isclose(
-        predictions[0]["scores_3d"][0], torch.sigmoid(torch.tensor(8.0)), atol=1e-4
+        predictions[0].scores_3d[0], torch.sigmoid(torch.tensor(8.0)), atol=1e-4
     )
 
 

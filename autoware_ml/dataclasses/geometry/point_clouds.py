@@ -16,6 +16,8 @@ class PointCloudGTBatch(NamedTuple):
         Tensor, "batch_size*num_points num_features"
     ]  # (B*P, number of features for each point)
     batch_indices: Int32[Tensor, " batch_size*num_points"]  # (B*P, ), batch indices for each point
+    # Column of the timestamp difference feature, -1 when the points carry none
+    timestamp_difference_dim: int = -1
 
     @staticmethod
     def collate_gt_samples(
@@ -56,6 +58,7 @@ class PointCloudGTBatch(NamedTuple):
         return PointCloudGTBatch(
             points=points,
             batch_indices=batch_indices,
+            timestamp_difference_dim=point_gt_samples[0].timestamp_difference_dim,
         )
 
     def to_device(self, device: torch.device) -> PointCloudGTBatch:
@@ -71,6 +74,7 @@ class PointCloudGTBatch(NamedTuple):
         return PointCloudGTBatch(
             points=self.points.to(device),
             batch_indices=self.batch_indices.to(device),
+            timestamp_difference_dim=self.timestamp_difference_dim,
         )
 
 
