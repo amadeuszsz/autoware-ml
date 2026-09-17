@@ -25,23 +25,3 @@ pipeline:
     _convert_: all
 
     points_range: ${point_cloud_range}
-
-  - _target_: autoware_ml.transforms.boxes3d.loading.BBoxesLabelNameFilter
-    _convert_: all
-
-    label_names_to_keep: ${database.taxonomy.detection3d.class_names}
-    class_names: ${database.taxonomy.detection3d.class_names}
-
-  - _target_: autoware_ml.transforms.boxes3d.loading.BBoxesAttributeFilter
-    _convert_: all
-
-    filter_attributes: ${dataset.detection3d.filter_attributes}
-
-  - _target_: autoware_ml.transforms.boxes3d.filters.BBoxesBEVDistanceFilter
-    _convert_: all
-
-    bev_range:
-      - ${point_cloud_range.0}
-      - ${point_cloud_range.1}
-      - ${point_cloud_range.3}
-      - ${point_cloud_range.4}
