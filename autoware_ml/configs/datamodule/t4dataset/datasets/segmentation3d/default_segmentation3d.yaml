@@ -5,3 +5,6 @@ database_root_path: ${database.root_path}
 
 # Always set to None since we run splitter in the process
 dataset_records_dataframe: null
+
+# Taxonomy the categories of the semantic mask are resolved with
+taxonomy: ${database.taxonomy.segmentation3d}

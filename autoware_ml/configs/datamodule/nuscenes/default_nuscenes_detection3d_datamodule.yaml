@@ -11,4 +11,6 @@ defaults:
   - nuscenes/datasets@test_dataset: default_detection3d_test_dataset
   - nuscenes/datasets@validation_dataset: default_detection3d_test_dataset
 
+database: ${database}
+
 predict_dataset: null
