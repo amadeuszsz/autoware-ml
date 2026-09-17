@@ -27,9 +27,9 @@ def _make_batch(
     points = torch.cat(sample_points, dim=0)
     lengths = torch.tensor([p.shape[0] for p in sample_points], dtype=torch.long)
     offset = torch.cumsum(lengths, dim=0)
-    batch: dict[str, torch.Tensor] = {"points": points, "offset": offset}
+    batch: dict[str, torch.Tensor] = {"feat": points, "offset": offset}
     if sample_labels is not None:
-        batch["pts_semantic_mask"] = torch.cat(sample_labels, dim=0)
+        batch["segment"] = torch.cat(sample_labels, dim=0)
     return batch
 
 
