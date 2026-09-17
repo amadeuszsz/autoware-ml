@@ -1,0 +1,13 @@
+_target_: autoware_ml.datamodule.nuscenes.dataset.NuScenesDataset
+_convert_: all
+
+defaults:
+  - /datamodule/t4dataset/datasets/segmentation3d@dataset_tasks.Segmentation3D: default_segmentation3d
+  - /datamodule/transforms@transforms: default_segmentation3d_train_transforms
+
+database_root_path: ${database.root_path}
+
+# Always None since we run splitter in the process
+dataset_records_dataframe: null
+
+max_num_3d_gt_bboxes: 0
