@@ -9,7 +9,8 @@ import torch
 
 from autoware_ml.databases.schemas.lidar_frames import LidarFrameDatasetSchema
 from autoware_ml.databases.schemas.dataset_schemas import DatasetTableSchema
-from autoware_ml.dataclasses.batch.sample_batch import ModelGTBatch, ModelGTSample
+from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
+from autoware_ml.dataclasses.geometry.point_clouds import LiDARPointCloudSample
 from autoware_ml.datamodule.base_dataset import (
     BaseDataset,
 )
@@ -105,7 +106,9 @@ class T4Dataset(BaseDataset):
         # Merge the data samples from different tasks into a single multi-task data row
         return ModelGTSample(
             lidar_point_cloud_samples=lidar_pointcloud_samples,
+            image_samples=None,
             point_cloud_data=None,  # point cloud data will be populated in the transform pipeline
+            camera_image_data=None,
             detection3d_gt_bboxes_3d=detection3d_gt_bboxes_3d,
             segmentation3d_gt_sample=segmentation3d_gt_sample,
         )

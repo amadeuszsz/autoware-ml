@@ -3,7 +3,7 @@ from pathlib import Path
 
 import polars as pl
 
-from autoware_ml.dataclasses.batch.sample_batch import ModelGTBatch, ModelGTSample
+from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
 
 
 class BaseDatasetTask(ABC):

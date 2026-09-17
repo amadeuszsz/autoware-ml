@@ -14,6 +14,38 @@ from autoware_ml.databases.schemas.base_schemas import (
     DataModelInterface,
 )
 
+# A blob path is stored rooted at the machine that generated the corpus, and the dataset resolves
+# it against its own database root. The tail that survives that move names the scene and the blob
+# inside it: {database_version}/{scene_id}/{dataset_version}/{blob_dir}/{sub_dir}/{file}.
+_DATABASE_ROOTED_PART_COUNT = 6
+
+
+def _relative_to_database_root(path: str, field_name: str) -> str:
+    """
+    Tail of a stored blob path that resolves against a database root.
+
+    Args:
+      path: Stored blob path, rooted at the machine that generated the corpus.
+      field_name: Name of the field holding the path, quoted when the path is too short.
+
+    Returns:
+      str: Path relative to the database root.
+
+    Raises:
+      ValueError: The path carries fewer components than a scene rooted path, so it would
+        resolve against the database root of whichever scene shares the file name.
+    """
+    parts = path.split("/")
+    if len(parts) < _DATABASE_ROOTED_PART_COUNT:
+        raise ValueError(
+            f"{field_name} '{path}' holds {len(parts)} path components where a scene rooted "
+            f"path holds at least {_DATABASE_ROOTED_PART_COUNT}. The record generator has to "
+            "store the path rooted at the scene directory, otherwise it drops the scene and "
+            "resolves against the database root of another scene."
+        )
+
+    return "/".join(parts[-_DATABASE_ROOTED_PART_COUNT:])
+
 
 @dataclass(frozen=True)
 class LidarFrameDatasetSchema(BaseFieldSchema):
@@ -97,7 +129,7 @@ class LidarFrameDataModel(BaseModel, DataModelInterface):
           str: Lidar pointcloud relative path.
         """
 
-        return "/".join(self.lidar_pointcloud_path.split("/")[-6:])
+        return _relative_to_database_root(self.lidar_pointcloud_path, "lidar_pointcloud_path")
 
     @property
     def lidar_pointcloud_source_relative_path(self) -> str | None:
@@ -111,18 +143,25 @@ class LidarFrameDataModel(BaseModel, DataModelInterface):
         if self.lidar_pointcloud_source_path is None:
             return None
 
-        return "/".join(self.lidar_pointcloud_source_path.split("/")[-6:])
+        return _relative_to_database_root(
+            self.lidar_pointcloud_source_path, "lidar_pointcloud_source_path"
+        )
 
     @property
     def lidarseg_pointcloud_semantic_mask_relative_path(self) -> str | None:
         """
         Parse lidarseg pts semantic mask path to {database_version}/{scene_id}/
-        {dataset_version}/data/{lidar_token}/{frame}.bin from path.
+        {dataset_version}/{annotation_dir}/annotation/{lidar_token}.bin from path.
+
+        Returns:
+          str | None: Lidarseg semantic mask relative path.
         """
         if self.lidar_pointcloud_semantic_mask_path is None:
             return None
 
-        return "/".join(self.lidar_pointcloud_semantic_mask_path.split("/")[-6:])
+        return _relative_to_database_root(
+            self.lidar_pointcloud_semantic_mask_path, "lidar_pointcloud_semantic_mask_path"
+        )
 
     @property
     def lidar_sensor_to_ego_pose_matrix_fp32(self) -> Float32[np.ndarray, "4 4"]:

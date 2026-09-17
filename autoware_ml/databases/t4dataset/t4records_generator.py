@@ -296,7 +296,10 @@ class T4RecordsGenerator:
         assert current_lidarseg_record.sample_data_token == calibrated_lidar_sample_data_token, (
             "Lidarseg record sample data token does not match the calibrated lidar sample data token."
         )
-        return current_lidarseg_record.filename
+        # The lidarseg table names the mask relative to the scene. The record table stores the
+        # tail of a rooted path and resolves it against a database root several scenes share, so
+        # the scene root is prepended here as the pointcloud path already carries it.
+        return str(Path(self.t4_devkit_dataset.data_root) / current_lidarseg_record.filename)
 
     def _extract_lidar_frame(
         self, sample: Sample, sample_index: int, lidar_channel_name: str
@@ -350,6 +353,14 @@ class T4RecordsGenerator:
             lidar_pointcloud_source_path=sd_record.info_filename,
         )
 
+        # The sample data names the metainfo blob relative to the scene, and the record table
+        # stores the tail of a rooted path, so the scene root is prepended here as well.
+        lidar_pointcloud_source_path = (
+            None
+            if sd_record.info_filename is None
+            else str(Path(self.t4_devkit_dataset.data_root) / sd_record.info_filename)
+        )
+
         lidar_frame_data_model = LidarFrameDataModel(
             lidar_frame_id=calibrated_lidar_sample_data_token,
             lidar_keyframe=sd_record.is_key_frame,
@@ -357,7 +368,7 @@ class T4RecordsGenerator:
             lidar_sensor_channel_name=lidar_channel_name,
             lidar_timestamp_seconds=microseconds2seconds(sd_record.timestamp),
             lidar_pointcloud_path=lidar_path,
-            lidar_pointcloud_source_path=sd_record.info_filename,
+            lidar_pointcloud_source_path=lidar_pointcloud_source_path,
             lidar_pointcloud_num_features=self.lidar_pointcloud_num_features,
             lidar_sensor_to_ego_pose_matrix=lidar_sensor_to_ego_matrix,
             lidar_frame_ego_pose_to_global_matrix=lidar_frame_ego_pose_to_global_matrix,
