@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence, NamedTuple
 
-from jaxtyping import Float32
+from jaxtyping import Float32, Int64
 import torch
 from torch import Tensor
 
@@ -12,12 +12,16 @@ from autoware_ml.geometry.cameras.base_images import BaseImages
 class ImageGTBatch(NamedTuple):
     """Named tuple to represent pointcloud features in a batch size with their batch indices."""
 
-    images: Float32[Tensor, "batch_size num_cameras num_channels height width"]
+    images: Float32[Tensor, "batch_size*num_cameras num_channels height width"]
+    # Number of cameras every sample of the batch carries
+    num_cameras: int
     depth_maps: Float32[Tensor, "batch_size*num_cameras num_depth_channels height width"] | None
-    camera_intrinsics: Float32[Tensor, "batch_size num_cameras 3 3"]
-    image_augmentation_matrices: Float32[Tensor, "batch_size num_cameras 4 4"]
-    lidar2images: Float32[Tensor, "batch_size num_cameras 4 4"]
-    lidar2cams: Float32[Tensor, "batch_size num_cameras 4 4"]
+    camera_intrinsics: Float32[Tensor, "batch_size*num_cameras 3 3"]
+    image_augmentation_matrices: Float32[Tensor, "batch_size*num_cameras 4 4"]
+    lidar2images: Float32[Tensor, "batch_size*num_cameras 4 4"]
+    lidar2cams: Float32[Tensor, "batch_size*num_cameras 4 4"]
+    # Calibration status of every camera, None until the misalignment augmentation has run
+    calibration_statuses: Int64[Tensor, " batch_size*num_cameras"] | None = None
 
     @staticmethod
     def collate_gt_samples(
@@ -40,6 +44,12 @@ class ImageGTBatch(NamedTuple):
 
         # Concatenate all images from the sequence of BaseImages
         images = torch.cat([sample.images for sample in images_gt_samples], dim=0)
+        num_cameras = images_gt_samples[0].images.shape[0]
+        if any(sample.images.shape[0] != num_cameras for sample in images_gt_samples):
+            raise ValueError(
+                "All samples must carry the same cameras, got "
+                f"{[sample.images.shape[0] for sample in images_gt_samples]} cameras."
+            )
         lidar2images = torch.cat([sample.lidar2images for sample in images_gt_samples], dim=0)
         lidar2cams = torch.cat([sample.lidar2cams for sample in images_gt_samples], dim=0)
         camera_intrinsics = torch.cat(
@@ -51,6 +61,21 @@ class ImageGTBatch(NamedTuple):
 
         # Depth images are optional, but either every sample of the batch carries them or
         # none does, otherwise the batch cannot be built.
+        samples_with_statuses = [
+            sample.calibration_statuses
+            for sample in images_gt_samples
+            if sample.calibration_statuses is not None
+        ]
+        if len(samples_with_statuses) == 0:
+            calibration_statuses = None
+        elif len(samples_with_statuses) == len(images_gt_samples):
+            calibration_statuses = torch.cat(samples_with_statuses, dim=0)
+        else:
+            raise ValueError(
+                "All samples must either carry calibration statuses or none of them, got "
+                f"{len(samples_with_statuses)} out of {len(images_gt_samples)} samples with them."
+            )
+
         samples_with_depth = [
             sample.depth_maps for sample in images_gt_samples if sample.depth_maps is not None
         ]
@@ -66,11 +91,13 @@ class ImageGTBatch(NamedTuple):
 
         return ImageGTBatch(
             images=images,
+            num_cameras=num_cameras,
             depth_maps=depth_maps,
             camera_intrinsics=camera_intrinsics,
             image_augmentation_matrices=image_augmentation_matrices,
             lidar2cams=lidar2cams,
             lidar2images=lidar2images,
+            calibration_statuses=calibration_statuses,
         )
 
     def to_device(self, device: torch.device) -> ImageGTBatch:
@@ -85,11 +112,17 @@ class ImageGTBatch(NamedTuple):
         """
         return ImageGTBatch(
             images=self.images.to(device),
+            num_cameras=self.num_cameras,
             depth_maps=(self.depth_maps.to(device) if self.depth_maps is not None else None),
             camera_intrinsics=self.camera_intrinsics.to(device),
             image_augmentation_matrices=self.image_augmentation_matrices.to(device),
             lidar2cams=self.lidar2cams.to(device),
             lidar2images=self.lidar2images.to(device),
+            calibration_statuses=(
+                self.calibration_statuses.to(device)
+                if self.calibration_statuses is not None
+                else None
+            ),
         )
 
 

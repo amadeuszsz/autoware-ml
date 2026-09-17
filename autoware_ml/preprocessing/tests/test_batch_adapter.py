@@ -23,6 +23,7 @@ import torch
 from autoware_ml.dataclasses.batch.detection3d import Detection3DGTBatch
 from autoware_ml.dataclasses.batch.sample_batch import ModelGTBatch
 from autoware_ml.dataclasses.batch.segmentation3d import Segmentation3DGTBatch
+from autoware_ml.dataclasses.geometry.images import ImageGTBatch
 from autoware_ml.dataclasses.geometry.point_clouds import PointCloudGTBatch
 from autoware_ml.preprocessing.batch_adapter import ModelGTBatchAdapter
 from autoware_ml.types.geometry import Box3DFieldIndex
@@ -101,3 +102,61 @@ class TestModelGTBatchAdapter(unittest.TestCase):
         self.assertEqual(batch_inputs_dict["gt_labels"][0].tolist(), [0, 1])
         self.assertEqual(batch_inputs_dict["gt_labels"][1].tolist(), [2])
         self.assertEqual(batch_inputs_dict["gt_num_points"][0].tolist(), [7, 8])
+
+
+class TestModelGTBatchAdapterImages(unittest.TestCase):
+    """Camera model inputs derived from the typed batch."""
+
+    def setUp(self) -> None:
+        """Build the adapter shared by every test."""
+        self.adapter = ModelGTBatchAdapter()
+
+    def _build_image_batch(
+        self, with_depth: bool = False, with_status: bool = False
+    ) -> ModelGTBatch:
+        """Build a two sample batch of three cameras each."""
+        num_images = 6
+        image_gt_batch = ImageGTBatch(
+            images=torch.zeros((num_images, 3, 4, 4), dtype=torch.float32),
+            num_cameras=3,
+            depth_maps=(
+                torch.ones((num_images, 2, 4, 4), dtype=torch.float32) if with_depth else None
+            ),
+            camera_intrinsics=torch.eye(3, dtype=torch.float32).repeat(num_images, 1, 1),
+            image_augmentation_matrices=torch.eye(4, dtype=torch.float32).repeat(
+                num_images, 1, 1
+            ),
+            lidar2images=torch.eye(4, dtype=torch.float32).repeat(num_images, 1, 1),
+            lidar2cams=torch.eye(4, dtype=torch.float32).repeat(num_images, 1, 1),
+            calibration_statuses=(
+                torch.zeros(num_images, dtype=torch.int64) if with_status else None
+            ),
+        )
+        return ModelGTBatch(
+            point_cloud_gt_batch=None,
+            detection3d_gt_batch=None,
+            segmentation3d_gt_batch=None,
+            image_gt_batch=image_gt_batch,
+        )
+
+    def test_groups_the_cameras_per_sample(self) -> None:
+        batch_inputs_dict = self.adapter(self._build_image_batch())
+
+        self.assertEqual([images.shape[0] for images in batch_inputs_dict["img"]], [3, 3])
+        self.assertEqual(len(batch_inputs_dict["lidar2img"]), 2)
+
+    def test_fuses_the_images_with_the_projected_channels(self) -> None:
+        batch_inputs_dict = self.adapter(self._build_image_batch(with_depth=True))
+
+        self.assertEqual(batch_inputs_dict["fused_img"].shape, (6, 5, 4, 4))
+
+    def test_leaves_out_the_fusion_without_the_projection(self) -> None:
+        batch_inputs_dict = self.adapter(self._build_image_batch())
+
+        self.assertNotIn("fused_img", batch_inputs_dict)
+        self.assertNotIn("gt_calibration_status", batch_inputs_dict)
+
+    def test_carries_the_calibration_status_when_present(self) -> None:
+        batch_inputs_dict = self.adapter(self._build_image_batch(with_status=True))
+
+        self.assertEqual(batch_inputs_dict["gt_calibration_status"].shape, (6,))

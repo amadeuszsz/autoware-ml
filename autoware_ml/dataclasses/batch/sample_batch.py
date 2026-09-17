@@ -120,7 +120,7 @@ class ModelGTBatch(NamedTuple):
         elif self.detection3d_gt_batch is not None:
             return self.detection3d_gt_batch.gt_bboxes_3d.shape[0]
         elif self.image_gt_batch is not None:
-            return self.image_gt_batch.images.shape[0]
+            return self.image_gt_batch.images.shape[0] // self.image_gt_batch.num_cameras
         else:
             raise ValueError("Cannot infer batch size from an empty ModelGTBatch.")
 
