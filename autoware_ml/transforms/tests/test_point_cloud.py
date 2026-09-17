@@ -28,7 +28,10 @@ from autoware_ml.transforms.point_cloud.geometry import (
     GlobalRotScaleTrans,
     PointsRandomShuffle,
     PointsRangeFilter,
+    RandomRotateTargetAngle,
 )
+from autoware_ml.transforms.point_cloud.perturbation import RandomJitter, RandomStrengthJitter
+from autoware_ml.transforms.point_cloud.sampling import RandomDropout
 from autoware_ml.types.geometry import PointFeatureName
 
 
@@ -120,3 +123,132 @@ class TestGlobalRotScaleTrans(unittest.TestCase):
         self.assertEqual(sample.point_cloud_data.coords.tolist(), [[2.0, 0.0, 0.0]])
         self.assertEqual(sample.segmentation3d_gt_sample.gt_semantic_mask.tolist(), [3])
         self.assertIsNotNone(sample.lidar_transformation_sample)
+
+
+class TestRandomRotateTargetAngle(unittest.TestCase):
+    """Rotation by one of a few target yaw angles."""
+
+    def test_rotates_by_the_only_target_angle(self) -> None:
+        transform = RandomRotateTargetAngle(probability=1.0, yaw_angle_ratios=[1.0])
+
+        sample = transform(build_sample(build_points([[1.0, 0.0, 0.0]])))
+
+        torch.testing.assert_close(
+            sample.point_cloud_data.coords,
+            torch.tensor([[-1.0, 0.0, 0.0]]),
+            atol=1e-6,
+            rtol=0.0,
+        )
+
+    def test_skips_the_rotation_at_zero_probability(self) -> None:
+        transform = RandomRotateTargetAngle(probability=0.0, yaw_angle_ratios=[1.0])
+
+        sample = transform(build_sample(build_points([[1.0, 0.0, 0.0]])))
+
+        self.assertEqual(sample.point_cloud_data.coords.tolist(), [[1.0, 0.0, 0.0]])
+
+
+class TestRandomJitter(unittest.TestCase):
+    """Clipped Gaussian noise on the coordinates."""
+
+    def test_jitter_stays_within_the_clip(self) -> None:
+        points = build_points([[0.0, 0.0, 0.0]] * 256)
+        transform = RandomJitter(sigma=1.0, clip=0.05)
+
+        sample = transform(build_sample(points))
+
+        self.assertLessEqual(float(sample.point_cloud_data.coords.abs().max()), 0.05 + 1e-6)
+
+    def test_leaves_the_point_count_untouched(self) -> None:
+        points = build_points([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        transform = RandomJitter(sigma=0.01, clip=0.05)
+
+        sample = transform(build_sample(points, labels=[1, 2]))
+
+        self.assertEqual(len(sample.point_cloud_data), 2)
+        self.assertEqual(sample.segmentation3d_gt_sample.gt_semantic_mask.tolist(), [1, 2])
+
+
+class TestRandomStrengthJitter(unittest.TestCase):
+    """Gamma, scale, and shift applied to the intensity."""
+
+    def _build_sample_with_intensity(self, intensities: Sequence[float]) -> ModelGTSample:
+        """Build a sample whose points carry coordinates and an intensity."""
+        points = LiDARPoints(
+            points=torch.tensor(
+                [[0.0, 0.0, 0.0, intensity] for intensity in intensities], dtype=torch.float32
+            ),
+            point_feature_names=[
+                PointFeatureName.X,
+                PointFeatureName.Y,
+                PointFeatureName.Z,
+                PointFeatureName.INTENSITY,
+            ],
+            timestamp=0.0,
+        )
+        return build_sample(points)
+
+    def test_identity_parameters_keep_the_intensity(self) -> None:
+        transform = RandomStrengthJitter(
+            gamma_range=[1.0, 1.0], scale_range=[1.0, 1.0], shift_range=[0.0, 0.0]
+        )
+
+        sample = transform(self._build_sample_with_intensity([0.0, 0.25, 1.0]))
+
+        torch.testing.assert_close(
+            sample.point_cloud_data.feature(PointFeatureName.INTENSITY),
+            torch.tensor([0.0, 0.25, 1.0]),
+        )
+
+    def test_the_result_stays_normalized(self) -> None:
+        transform = RandomStrengthJitter(
+            gamma_range=[0.5, 0.5], scale_range=[4.0, 4.0], shift_range=[0.5, 0.5]
+        )
+
+        sample = transform(self._build_sample_with_intensity([0.0, 0.25, 1.0]))
+
+        intensity = sample.point_cloud_data.feature(PointFeatureName.INTENSITY)
+        self.assertEqual(intensity.tolist(), [0.5, 1.0, 1.0])
+
+    def test_rejects_a_descending_range(self) -> None:
+        with self.assertRaises(ValueError):
+            RandomStrengthJitter(
+                gamma_range=[1.0, 0.5], scale_range=[1.0, 1.0], shift_range=[0.0, 0.0]
+            )
+
+    def test_rejects_points_without_intensity(self) -> None:
+        transform = RandomStrengthJitter(
+            gamma_range=[1.0, 1.0], scale_range=[1.0, 1.0], shift_range=[0.0, 0.0]
+        )
+
+        with self.assertRaises(ValueError):
+            transform(build_sample(build_points([[0.0, 0.0, 0.0]])))
+
+
+class TestRandomDropout(unittest.TestCase):
+    """Random removal of a fraction of the points."""
+
+    def test_keeps_the_expected_number_of_points(self) -> None:
+        points = build_points([[float(index), 0.0, 0.0] for index in range(10)])
+        transform = RandomDropout(dropout_ratio=0.2, probability=1.0)
+
+        sample = transform(build_sample(points))
+
+        self.assertEqual(len(sample.point_cloud_data), 8)
+
+    def test_labels_follow_the_kept_points(self) -> None:
+        points = build_points([[float(index), 0.0, 0.0] for index in range(10)])
+        transform = RandomDropout(dropout_ratio=0.5, probability=1.0)
+
+        sample = transform(build_sample(points, labels=list(range(10))))
+
+        kept_x = sample.point_cloud_data.coords[:, 0].to(torch.int64)
+        self.assertEqual(sample.segmentation3d_gt_sample.gt_semantic_mask.tolist(), kept_x.tolist())
+
+    def test_skips_the_dropout_at_zero_probability(self) -> None:
+        points = build_points([[float(index), 0.0, 0.0] for index in range(10)])
+        transform = RandomDropout(dropout_ratio=0.9, probability=0.0)
+
+        sample = transform(build_sample(points))
+
+        self.assertEqual(len(sample.point_cloud_data), 10)
