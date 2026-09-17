@@ -24,9 +24,18 @@ import torch
 from autoware_ml.dataclasses.batch.detection3d import Detection3DGTBatch
 from autoware_ml.dataclasses.batch.frame_meta import FrameMetaBatch, FrameMetaSample
 from autoware_ml.dataclasses.batch.sample_batch import ModelGTBatch, ModelGTSample
+from autoware_ml.dataclasses.batch.segmentation3d import (
+    Segmentation3DGTBatch,
+    Segmentation3DGTSample,
+)
 from autoware_ml.dataclasses.geometry.transformation import LiDARTransformationSample
 from autoware_ml.geometry.bbox_3d.lidar_bbox3d import LidarBBoxes3D
-from autoware_ml.types.geometry import Box3DCenterCoordinateType, Box3DFieldIndex
+from autoware_ml.geometry.points.lidar_points import LiDARPoints
+from autoware_ml.types.geometry import (
+    Box3DCenterCoordinateType,
+    Box3DFieldIndex,
+    PointFeatureName,
+)
 
 
 class TestModelGTBatchDetection3DCollation(unittest.TestCase):
@@ -254,3 +263,141 @@ class TestModelGTBatchFrameMetaCollation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestModelGTBatchSegmentation3DCollation(unittest.TestCase):
+    """Collation of the semantic labels into the batch."""
+
+    max_num_3d_gt_bboxes = 4
+
+    def _build_sample(
+        self, labels: Sequence[int] | None, num_points: int | None = None
+    ) -> ModelGTSample:
+        """Build a sample holding the semantic labels of its points, and optionally points."""
+        segmentation3d_gt_sample = (
+            None
+            if labels is None
+            else Segmentation3DGTSample(
+                gt_semantic_mask=torch.tensor(labels, dtype=torch.int64),
+                ignore_index=-1,
+            )
+        )
+        point_cloud_data = (
+            None
+            if num_points is None
+            else LiDARPoints(
+                points=torch.zeros((num_points, 3), dtype=torch.float32),
+                point_feature_names=[
+                    PointFeatureName.X,
+                    PointFeatureName.Y,
+                    PointFeatureName.Z,
+                ],
+                timestamp=0.0,
+            )
+        )
+        return ModelGTSample(
+            lidar_point_cloud_samples=None,
+            image_samples=None,
+            point_cloud_data=point_cloud_data,
+            camera_image_data=None,
+            detection3d_gt_bboxes_3d=None,
+            segmentation3d_gt_sample=segmentation3d_gt_sample,
+        )
+
+    def _collate(self, samples: Sequence[ModelGTSample]) -> Segmentation3DGTBatch | None:
+        """Collate the samples and return the segmentation batch."""
+        batch = ModelGTBatch.collate_gt_samples(
+            gt_samples=samples, max_num_3d_gt_bboxes=self.max_num_3d_gt_bboxes
+        )
+        return batch.segmentation3d_gt_batch
+
+    def test_collate_concatenates_the_labels_in_batch_order(self) -> None:
+        batch = self._collate([self._build_sample([1, 2]), self._build_sample([3])])
+
+        assert batch is not None
+        self.assertEqual(batch.gt_semantic_masks.tolist(), [1, 2, 3])
+        self.assertEqual(batch.batch_indices.tolist(), [0, 0, 1])
+
+    def test_collate_keeps_one_label_per_point(self) -> None:
+        batch = self._collate([self._build_sample([4, 5, 6])])
+
+        assert batch is not None
+        self.assertEqual(batch.gt_semantic_masks.shape[0], 3)
+        self.assertEqual(batch.gt_semantic_masks.dtype, torch.int64)
+
+    def test_collate_without_any_mask_leaves_it_none(self) -> None:
+        self.assertIsNone(self._collate([self._build_sample(None), self._build_sample(None)]))
+
+    def test_collate_rejects_a_partially_labelled_batch(self) -> None:
+        with self.assertRaises(ValueError):
+            self._collate([self._build_sample([1]), self._build_sample(None)])
+
+    def test_collate_rejects_a_partially_labelled_batch_in_any_order(self) -> None:
+        # Reading the availability off the first sample alone would drop the second sample's
+        # labels without a word, so the whole batch decides
+        with self.assertRaises(ValueError):
+            self._collate([self._build_sample(None), self._build_sample([1])])
+
+    def test_collate_rejects_a_sample_whose_counts_disagree(self) -> None:
+        # The labels of a sample whose counts disagree would land on another sample's points
+        with self.assertRaisesRegex(ValueError, "every point takes one label"):
+            self._collate(
+                [
+                    self._build_sample([1], num_points=2),
+                    self._build_sample([2, 3], num_points=1),
+                ]
+            )
+
+    def test_collate_accepts_a_sample_with_one_label_per_point(self) -> None:
+        batch = self._collate(
+            [
+                self._build_sample([1, 2], num_points=2),
+                self._build_sample([3], num_points=1),
+            ]
+        )
+
+        assert batch is not None
+        self.assertEqual(batch.gt_semantic_masks.tolist(), [1, 2, 3])
+        self.assertEqual(batch.batch_indices.tolist(), [0, 0, 1])
+
+    def test_to_device_moves_the_labels_and_the_indices(self) -> None:
+        batch = self._collate([self._build_sample([1, 2])])
+
+        assert batch is not None
+        moved = batch.to_device(torch.device("cpu"))
+
+        self.assertEqual(moved.gt_semantic_masks.device.type, "cpu")
+        self.assertEqual(moved.batch_indices.device.type, "cpu")
+
+
+class TestSegmentation3DGTSampleAlignment(unittest.TestCase):
+    """Label helpers a point cloud transform uses to keep the mask aligned."""
+
+    def setUp(self) -> None:
+        """Build a four point mask."""
+        self.sample = Segmentation3DGTSample(
+            gt_semantic_mask=torch.tensor([3, 1, 4, 1], dtype=torch.int64),
+            ignore_index=-1,
+        )
+
+    def test_remove_labels_keeps_the_masked_points(self) -> None:
+        kept = self.sample.remove_labels(torch.tensor([True, False, True, False]))
+
+        self.assertEqual(kept.gt_semantic_mask.tolist(), [3, 4])
+        self.assertEqual(kept.ignore_index, -1)
+
+    def test_reorder_labels_follows_the_permutation(self) -> None:
+        reordered = self.sample.reorder_labels(torch.tensor([3, 2, 1, 0], dtype=torch.int32))
+
+        self.assertEqual(reordered.gt_semantic_mask.tolist(), [1, 4, 1, 3])
+
+    def test_append_ignored_labels_covers_the_appended_points(self) -> None:
+        extended = self.sample.append_ignored_labels(2)
+
+        self.assertEqual(extended.gt_semantic_mask.tolist(), [3, 1, 4, 1, -1, -1])
+        self.assertEqual(extended.gt_semantic_mask.dtype, torch.int64)
+
+    def test_append_ignored_labels_without_points_keeps_the_mask(self) -> None:
+        kept = self.sample.append_ignored_labels(0)
+
+        self.assertEqual(kept.gt_semantic_mask.tolist(), [3, 1, 4, 1])
