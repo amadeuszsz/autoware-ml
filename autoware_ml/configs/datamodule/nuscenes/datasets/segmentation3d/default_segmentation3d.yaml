@@ -1,0 +1,7 @@
+_target_: autoware_ml.datamodule.nuscenes.segmentation3d.NuScenesSegmentation3DTask
+_convert_: all
+# Completed by the dataset with the records of its source
+_partial_: true
+
+# Taxonomy the categories of the semantic mask are resolved with
+taxonomy: ${database.taxonomy.segmentation3d}
