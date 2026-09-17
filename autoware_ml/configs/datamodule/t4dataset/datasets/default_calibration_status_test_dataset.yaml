@@ -1,0 +1,17 @@
+_target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
+_convert_: all
+
+defaults:
+  - ../../transforms@transforms: default_calibration_status_test_transforms
+
+database_root_path: ${database.root_path}
+
+# The calibration status task reads no per-task ground truth, the misalignment augmentation
+# writes the label onto the images
+dataset_tasks: {}
+
+# Always None since we run splitter in the process
+dataset_records_dataframe: null
+
+# The calibration status task carries no bboxes, so no padding is needed
+max_num_3d_gt_bboxes: 0

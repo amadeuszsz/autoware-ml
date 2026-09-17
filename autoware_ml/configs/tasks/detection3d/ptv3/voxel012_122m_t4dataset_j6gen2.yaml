@@ -120,12 +120,6 @@ model:
       - class_names: [debris]
         nms_radius: 0.0
         post_max_size: 50
-      - class_names: [vehicle_extension]
-        nms_radius: 0.0
-        post_max_size: 50
-      - class_names: [bicycle_rack]
-        nms_radius: 0.0
-        post_max_size: 50
     loss_cls_weight: 1.0
     loss_bbox_weight: 0.25
     loss_heatmap_weight: 1.0
