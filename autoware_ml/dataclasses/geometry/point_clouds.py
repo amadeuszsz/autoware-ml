@@ -20,6 +20,8 @@ class PointCloudGTBatch(NamedTuple):
     # stays correct even when the trailing samples carry zero points and are absent from
     # batch_indices.
     batch_size: int
+    # Column of the timestamp difference feature, -1 when the points carry none
+    timestamp_difference_dim: int = -1
 
     @staticmethod
     def collate_gt_samples(
@@ -61,6 +63,7 @@ class PointCloudGTBatch(NamedTuple):
             points=points,
             batch_indices=batch_indices,
             batch_size=len(point_gt_samples),
+            timestamp_difference_dim=point_gt_samples[0].timestamp_difference_dim,
         )
 
     def to_device(self, device: torch.device) -> PointCloudGTBatch:
@@ -77,6 +80,7 @@ class PointCloudGTBatch(NamedTuple):
             points=self.points.to(device),
             batch_indices=self.batch_indices.to(device),
             batch_size=self.batch_size,
+            timestamp_difference_dim=self.timestamp_difference_dim,
         )
 
 

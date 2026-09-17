@@ -55,11 +55,14 @@ class TestPointCloudGTBatchFields(PointCloudGTBatchTestCase):
     def test_field_order(self) -> None:
         """
         Input: the class itself.
-        Expected: the tuple exposes ``points``, ``batch_indices`` then ``batch_size``, since
-        downstream code unpacks the batch positionally.
+        Expected: the tuple exposes ``points``, ``batch_indices``, ``batch_size`` then
+        ``timestamp_difference_dim``, since downstream code unpacks the batch positionally.
         Check: compare ``_fields`` against the expected names.
         """
-        self.assertEqual(PointCloudGTBatch._fields, ("points", "batch_indices", "batch_size"))
+        self.assertEqual(
+            PointCloudGTBatch._fields,
+            ("points", "batch_indices", "batch_size", "timestamp_difference_dim"),
+        )
 
     def test_is_immutable(self) -> None:
         """

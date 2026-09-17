@@ -11,6 +11,7 @@ batch_size: 16
 num_workers: 8
 
 dataset: ${nuscenes}
+max_voxels: 524288
 grid_size: 0.05
 point_cloud_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
 
@@ -25,4 +26,3 @@ datamodule:
   test_dataloader:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
-
