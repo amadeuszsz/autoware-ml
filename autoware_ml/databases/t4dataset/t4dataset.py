@@ -32,6 +32,7 @@ from autoware_ml.databases.t4dataset.t4records_generator import T4RecordsGenerat
 from autoware_ml.databases.t4dataset.t4scenarios import T4Scenarios
 from autoware_ml.databases.box3d_pipelines.box3d_pipeline import Box3DPipeline
 from autoware_ml.databases.taxonomy import DatabaseTaxonomy
+from autoware_ml.types.sensor import LidarChannel
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +46,13 @@ class T4RecordsGeneratorWorkerParams:
     Attributes:
       database_root_path: Root path of the T4 database.
       scenario_data: Scenario data.
-      lidar_pointcloud_num_features: Number of features in the lidar pointcloud.
+      lidar_channel: Sensor channel of the lidar frame every sample is built around.
       box_annotation_dir: Directory of the scene holding the box category tables.
     """
 
     database_root_path: str
     scenario_data: ScenarioData
-    lidar_pointcloud_num_features: int
+    lidar_channel: str
     box_annotation_dir: str
     taxonomy: DatabaseTaxonomy
     box3d_pipelines: Sequence[Box3DPipeline]
@@ -73,9 +74,7 @@ def _apply_t4_records_generator(
     t4_records_generator = T4RecordsGenerator(
         database_root_path=t4_records_generator_worker_params.database_root_path,
         scenario_data=t4_records_generator_worker_params.scenario_data,
-        sample_steps=t4_records_generator_worker_params.scenario_data.sample_steps,
-        max_sweeps=t4_records_generator_worker_params.scenario_data.max_sweeps,
-        lidar_pointcloud_num_features=t4_records_generator_worker_params.lidar_pointcloud_num_features,
+        lidar_channel=t4_records_generator_worker_params.lidar_channel,
         box_annotation_dir=t4_records_generator_worker_params.box_annotation_dir,
         taxonomy=t4_records_generator_worker_params.taxonomy,
         box3d_pipelines=t4_records_generator_worker_params.box3d_pipelines,
@@ -96,7 +95,7 @@ class T4Dataset(BaseDatabase):
         cache_file_prefix_name: str,
         num_workers: int,
         taxonomy: DatabaseTaxonomy,
-        lidar_pointcloud_num_features: int,
+        lidar_channel: str,
         box3d_pipelines: Sequence[Box3DPipeline],
         lidar_intensity_scale: float,
         box_annotation_dir: str = "annotation",
@@ -112,7 +111,7 @@ class T4Dataset(BaseDatabase):
           cache_file_prefix_name: Prefix name of the cache file, it will be <cache_file_prefix_name>_<dataset_hash>.parquet
           num_workers: Number of workers to use for processing the dataset.
           taxonomy: Taxonomies the labels of the database are baked with.
-          lidar_pointcloud_num_features: Number of features in the lidar pointcloud.
+          lidar_channel: Sensor channel of the lidar frame every sample is built around.
           box3d_pipelines: List of box 3D pipelines to process the box 3D annotations.
           lidar_intensity_scale: Intensity value of the strongest return in the stored point
             clouds.
@@ -133,7 +132,7 @@ class T4Dataset(BaseDatabase):
             lidar_intensity_scale=lidar_intensity_scale,
         )
         self._scenarios = scenarios
-        self._lidar_pointcloud_num_features = lidar_pointcloud_num_features
+        self._lidar_channel = LidarChannel(lidar_channel).value
         self._box_annotation_dir = box_annotation_dir
 
     def __str__(self) -> str:
@@ -150,6 +149,7 @@ class T4Dataset(BaseDatabase):
             f"cache path={str(self._cache_path)}, "
             f"cache file prefix name={self._cache_file_prefix_name}, "
             f"taxonomy={self._taxonomy}, "
+            f"lidar_channel={self._lidar_channel}, "
             f"box_annotation_dir={self._box_annotation_dir}, "
             f"box3d_pipelines=[{', '.join([str(pipeline) for pipeline in self._box3d_pipelines])}], "
             f"{self.scenarios_string_repr}"
@@ -239,7 +239,7 @@ class T4Dataset(BaseDatabase):
             T4RecordsGeneratorWorkerParams(
                 database_root_path=str(self._root_path),
                 scenario_data=scenario,
-                lidar_pointcloud_num_features=self._lidar_pointcloud_num_features,
+                lidar_channel=self._lidar_channel,
                 box_annotation_dir=self._box_annotation_dir,
                 taxonomy=self._taxonomy,
                 box3d_pipelines=self._box3d_pipelines,
