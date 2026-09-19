@@ -56,10 +56,23 @@ batch_size: 8
 num_workers: 8
 
 datamodule:
+  # Frames carrying a rare class are drawn more often, see FrameSamplingConfig.
+  train_frame_sampling:
+    repeat_sampling_factor: 0.30
+    object_bev_range:
+      - ${point_cloud_range.0}
+      - ${point_cloud_range.1}
+      - ${point_cloud_range.3}
+      - ${point_cloud_range.4}
+    low_pedestrian_height_threshold: 1.5
+    low_pedestrian_bev_range: [-50.0, -50.0, 50.0, 50.0]
+    class_names: ${dataset.detection3d.class_names}
+    filter_attributes: ${dataset.detection3d.filter_attributes}
   train_dataloader:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
-    shuffle: true
+    # The weighted sampler draws the order.
+    shuffle: false
   val_dataloader:
     batch_size: ${batch_size}
     num_workers: ${num_workers}
