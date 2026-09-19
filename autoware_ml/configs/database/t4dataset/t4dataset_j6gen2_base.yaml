@@ -18,8 +18,8 @@ defaults:
   - t4dataset/scenarios@scenarios.db_j6gen2: detection3d/db_j6gen2
   - t4dataset/scenarios@scenarios.db_largebus: detection3d/db_largebus
 
-# Number of features in the lidar pointcloud
-lidar_pointcloud_num_features: 5
+# Sensor channel of the lidar frame every sample is built around
+lidar_channel: LIDAR_CONCAT
 
 # Processor settings
 num_workers: 16

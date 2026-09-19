@@ -113,8 +113,11 @@ class NuScenesScenarios(Scenarios):
                     scenario_version=dataset_params.dataset_name,
                     vehicle_type=log_record.get("vehicle"),
                     location=log_record.get("location"),
-                    max_sweeps=dataset_params.max_sweeps,
+                    max_past_sweeps=dataset_params.max_past_sweeps,
+                    max_future_sweeps=dataset_params.max_future_sweeps,
                     sample_steps=dataset_params.sample_steps,
+                    lidar_pointcloud_num_features=dataset_params.lidar_pointcloud_num_features,
+                    semantic_masks=dataset_params.semantic_masks,
                 )
             )
         return scenario_splits

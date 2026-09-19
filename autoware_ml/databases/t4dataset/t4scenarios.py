@@ -90,8 +90,11 @@ class T4Scenarios(Scenarios):
             scenario_version=version,
             vehicle_type=vehicle_type,
             location=city,
-            max_sweeps=dataset_params.max_sweeps,
+            max_past_sweeps=dataset_params.max_past_sweeps,
+            max_future_sweeps=dataset_params.max_future_sweeps,
             sample_steps=dataset_params.sample_steps,
+            lidar_pointcloud_num_features=dataset_params.lidar_pointcloud_num_features,
+            semantic_masks=dataset_params.semantic_masks,
         )
 
     def _build_scenario_splits(
