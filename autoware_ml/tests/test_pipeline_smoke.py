@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 from types import MappingProxyType
+from functools import partial
 import unittest
 
 import numpy as np
@@ -236,14 +237,8 @@ def build_dataset(root: Path, records: pl.DataFrame) -> T4Dataset:
         transforms=build_transforms(),
         dataset_tasks=MappingProxyType(
             {
-                "Detection3D": T4Detection3DTask(
-                    database_root_path=str(root), dataset_records_dataframe=records
-                ),
-                "Segmentation3D": T4Segmentation3DTask(
-                    database_root_path=str(root),
-                    dataset_records_dataframe=records,
-                    taxonomy=SEGMENTATION_TAXONOMY,
-                ),
+                "Detection3D": T4Detection3DTask,
+                "Segmentation3D": partial(T4Segmentation3DTask, taxonomy=SEGMENTATION_TAXONOMY),
             }
         ),
     )

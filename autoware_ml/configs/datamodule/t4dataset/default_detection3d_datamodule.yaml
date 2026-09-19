@@ -11,6 +11,12 @@ defaults:
   - t4dataset/datasets@test_dataset: default_detection3d_test_dataset
   - t4dataset/datasets@validation_dataset: default_detection3d_test_dataset
 
-database: ${database}
+# Dataset sources of every split. A split naming several sources mixes their corpora,
+# each with the supervision it contributes and the share of the epoch it takes.
+train_sources:
+  - database: ${database}
+validation_sources: ${datamodule.train_sources}
+test_sources: ${datamodule.train_sources}
 
+predict_sources: null
 predict_dataset: null

@@ -1,10 +1,7 @@
 _target_: autoware_ml.datamodule.t4dataset.segmentation3d.T4Segmentation3DTask
 _convert_: all
-
-database_root_path: ${database.root_path}
-
-# Always set to None since we run splitter in the process
-dataset_records_dataframe: null
+# The dataset calls this factory with the root path and the records of its source.
+_partial_: true
 
 # Taxonomy the categories of the semantic mask are resolved with
 taxonomy: ${database.taxonomy.segmentation3d}

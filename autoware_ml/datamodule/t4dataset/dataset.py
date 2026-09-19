@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from types import MappingProxyType
 from typing import Sequence
 
@@ -12,6 +13,7 @@ from autoware_ml.databases.schemas.lidar_frames import LidarFrameDataModel, Lida
 from autoware_ml.databases.schemas.dataset_schemas import DatasetTableSchema
 from autoware_ml.dataclasses.batch.frame_meta import FrameMetaSample
 from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
+from autoware_ml.dataclasses.batch.segmentation3d import Segmentation3DGTSample
 from autoware_ml.dataclasses.geometry.images import ImageSample
 from autoware_ml.dataclasses.geometry.point_clouds import LiDARPointCloudSample
 from autoware_ml.datamodule.base_dataset import (
@@ -39,7 +41,9 @@ class T4Dataset(BaseDataset):
         max_num_3d_gt_bboxes: int,
         dataset_records_dataframe: pl.DataFrame | None,
         transforms: TransformsCompose | None,
-        dataset_tasks: MappingProxyType[TaskType | str, BaseDatasetTask],
+        dataset_tasks: MappingProxyType[TaskType | str, Callable[..., BaseDatasetTask]],
+        det3d_supervised: bool = True,
+        seg3d_supervised: bool = True,
     ) -> None:
         """
         Initialize the T4Dataset class.
@@ -50,21 +54,29 @@ class T4Dataset(BaseDataset):
           dataset_records_dataframe: Polars DataFrame of dataset records to be used in
             the multi-task dataset.
           transforms: Global transforms to be applied to the dataset records.
-          dataset_tasks: Every task dataset that is part of the multi-task dataset, mapped by
-            task type.
+          dataset_tasks: Factory of every task dataset that is part of the multi-task dataset,
+            mapped by task type. Each one is called with the root path and the records of this
+            corpus, so the same configuration serves every source of a split.
+          det3d_supervised: Whether the box annotations of this corpus supervise the run.
+          seg3d_supervised: Whether the semantic masks of this corpus supervise the run.
         """
         super().__init__(
             database_root_path=database_root_path,
             max_num_3d_gt_bboxes=max_num_3d_gt_bboxes,
             dataset_records_dataframe=dataset_records_dataframe,
             transforms=transforms,
+            det3d_supervised=det3d_supervised,
+            seg3d_supervised=seg3d_supervised,
         )
 
-        # Convert the dataset_tasks to TaskType: BaseDatasetTask mapping if the keys are strings
+        # Build every task dataset on the corpus of this source, keying them by task type
         self.dataset_tasks: MappingProxyType[TaskType, BaseDatasetTask] = MappingProxyType(
             {
-                TaskType(key) if isinstance(key, str) else key: value
-                for key, value in dataset_tasks.items()
+                TaskType(key) if isinstance(key, str) else key: build_task(
+                    database_root_path=database_root_path,
+                    dataset_records_dataframe=dataset_records_dataframe,
+                )
+                for key, build_task in dataset_tasks.items()
             }
         )
         logger.info(
@@ -83,9 +95,14 @@ class T4Dataset(BaseDataset):
         Returns:
           ModelGTSample: Processed multi-task data row, mapped by task type.
         """
-        data_samples = {}
-        for task_type, dataset_task in self.dataset_tasks.items():
-            data_samples[task_type] = dataset_task.get_data_sample(index)
+        # A corpus whose masks do not supervise the run may carry none at all, so the task is
+        # not asked for them. Every point takes the ignore index once the cloud is loaded and
+        # its length is known.
+        data_samples = {
+            task_type: dataset_task.get_data_sample(index)
+            for task_type, dataset_task in self.dataset_tasks.items()
+            if self.seg3d_supervised or task_type is not TaskType.SEGMENTATION3D
+        }
 
         # Retrieve general data row for the given index from the dataset records dataframe
         lidar_pointcloud_samples = self.get_lidar_pointcloud_data_samples(index)
@@ -105,6 +122,12 @@ class T4Dataset(BaseDataset):
         else:
             segmentation3d_gt_sample = None
 
+        # An unsupervised task keeps its field so the sample still collates with the corpora
+        # that do supervise it, but the field carries nothing to learn from
+        if detection3d_gt_bboxes_3d is not None and not self.det3d_supervised:
+            detection3d_gt_bboxes_3d.remove_bboxes(
+                torch.zeros(len(detection3d_gt_bboxes_3d), dtype=torch.bool)
+            )
         # Merge the data samples from different tasks into a single multi-task data row
         return ModelGTSample(
             lidar_point_cloud_samples=lidar_pointcloud_samples,
@@ -114,6 +137,39 @@ class T4Dataset(BaseDataset):
             detection3d_gt_bboxes_3d=detection3d_gt_bboxes_3d,
             segmentation3d_gt_sample=segmentation3d_gt_sample,
             frame_meta=self.get_frame_meta_sample(index),
+        )
+
+    def apply_transforms(self, model_gt_sample: ModelGTSample) -> ModelGTSample:
+        """Run the transform pipeline and label the points of an unsupervised corpus.
+
+        The semantic labels of a corpus whose masks do not supervise the run are written here
+        rather than read from disk, because such a corpus may carry no mask at all. They are
+        written after the pipeline, when the cloud has been filtered and shuffled and its
+        final length is known, so one label still belongs to one point.
+
+        Args:
+            model_gt_sample: ModelGTSample instance.
+
+        Returns:
+            Transformed ModelGTSample instance.
+        """
+        model_gt_sample = super().apply_transforms(model_gt_sample)
+        if self.seg3d_supervised or TaskType.SEGMENTATION3D not in self.dataset_tasks:
+            return model_gt_sample
+
+        if model_gt_sample.point_cloud_data is None:
+            raise ValueError(
+                "3D segmentation runs on this split, so its pipeline loads the point cloud "
+                "every semantic label belongs to."
+            )
+        ignore_index = self.dataset_tasks[TaskType.SEGMENTATION3D].taxonomy.ignore_index
+        return model_gt_sample._replace(
+            segmentation3d_gt_sample=Segmentation3DGTSample(
+                gt_semantic_mask=torch.full(
+                    (len(model_gt_sample.point_cloud_data),), ignore_index, dtype=torch.int64
+                ),
+                ignore_index=ignore_index,
+            )
         )
 
     def get_frame_meta_sample(self, idx: int) -> FrameMetaSample:
