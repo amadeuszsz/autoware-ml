@@ -45,12 +45,10 @@ class NuScenesRecordsGeneratorWorkerParams:
     Attributes:
       database_root_path: Root path of the NuScenes database.
       scenario_data: Scenario data.
-      lidar_pointcloud_num_features: Number of features in the lidar pointcloud.
     """
 
     database_root_path: str
     scenario_data: ScenarioData
-    lidar_pointcloud_num_features: int
     taxonomy: DatabaseTaxonomy
     box3d_pipelines: Sequence[Box3DPipeline]
 
@@ -70,9 +68,6 @@ def _apply_nuscenes_records_generator(
     nuscenes_records_generator = NuScenesRecordsGenerator(
         database_root_path=worker_params.database_root_path,
         scenario_data=worker_params.scenario_data,
-        sample_steps=worker_params.scenario_data.sample_steps,
-        max_sweeps=worker_params.scenario_data.max_sweeps,
-        lidar_pointcloud_num_features=worker_params.lidar_pointcloud_num_features,
         taxonomy=worker_params.taxonomy,
         box3d_pipelines=worker_params.box3d_pipelines,
     )
@@ -91,7 +86,6 @@ class NuScenesDataset(BaseDatabase):
         cache_file_prefix_name: str,
         num_workers: int,
         taxonomy: DatabaseTaxonomy,
-        lidar_pointcloud_num_features: int,
         box3d_pipelines: Sequence[Box3DPipeline],
     ) -> None:
         """
@@ -105,7 +99,6 @@ class NuScenesDataset(BaseDatabase):
           cache_file_prefix_name: Prefix name of the cache file, it will be <cache_file_prefix_name>_<dataset_hash>.parquet
           num_workers: Number of workers to use for processing the dataset.
           taxonomy: Taxonomies the labels of the database are baked with.
-          lidar_pointcloud_num_features: Number of features in the lidar pointcloud.
           box3d_pipelines: List of box 3D pipelines to process the box 3D annotations.
         """
 
@@ -120,7 +113,6 @@ class NuScenesDataset(BaseDatabase):
             box3d_pipelines=box3d_pipelines,
         )
         self._scenarios = scenarios
-        self._lidar_pointcloud_num_features = lidar_pointcloud_num_features
 
     def __str__(self) -> str:
         """
@@ -210,7 +202,6 @@ class NuScenesDataset(BaseDatabase):
             NuScenesRecordsGeneratorWorkerParams(
                 database_root_path=str(self._root_path),
                 scenario_data=scenario,
-                lidar_pointcloud_num_features=self._lidar_pointcloud_num_features,
                 taxonomy=self._taxonomy,
                 box3d_pipelines=self._box3d_pipelines,
             )
