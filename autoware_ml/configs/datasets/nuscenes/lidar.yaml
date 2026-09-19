@@ -3,3 +3,6 @@
 defaults:
   - /datasets/nuscenes/base
   - _self_
+
+# Admits the previous frame of the 20 Hz lidar
+sweep_time_lag_range: [0.075, 0.225]

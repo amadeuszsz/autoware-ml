@@ -292,6 +292,9 @@ class T4Dataset(BaseDataset):
                     timestamp=lidar_pointcloud_metadata[
                         LidarFrameDatasetSchema.lidar_timestamp_seconds.name
                     ],
+                    num_features=lidar_pointcloud_metadata[
+                        LidarFrameDatasetSchema.lidar_pointcloud_num_features.name
+                    ],
                     sensor_to_ego_pose_matrix=torch.tensor(
                         lidar_sensor_to_ego_pose_matrix,
                         dtype=torch.float32,
