@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import math
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -24,7 +26,10 @@ from autoware_ml.models.segmentation3d.encoders.ptv3 import (
     SerializedPooling,
     build_serialized_pooling_meta,
 )
-from autoware_ml.models.segmentation3d.encoders.voxel import SweepSplitVoxelFeatureEncoder
+from autoware_ml.models.segmentation3d.encoders.voxel import (
+    OUTPUT_CHANNELS,
+    SweepSplitVoxelFeatureEncoder,
+)
 from autoware_ml.models.segmentation3d.heads.ptv3 import (
     check_voxel_budget,
     segmentation_eval_output,
@@ -366,37 +371,82 @@ def _seg_processed(
 
 
 def _split_voxels() -> tuple[torch.Tensor, torch.Tensor]:
-    """Build three voxels: current and sweep returns, sweep only, current only."""
-    voxels = torch.zeros(3, 4, 5)
+    """Build five voxels covering every combination of current, past and future returns."""
+    voxels = torch.zeros(5, 4, 5)
+    # Current and past returns
     voxels[0, 0] = torch.tensor([1.0, 0.0, 0.0, 0.5, 0.0])
     voxels[0, 1] = torch.tensor([2.0, 0.0, 0.0, 0.7, 0.1])
+    # Past returns only
     voxels[1, 0] = torch.tensor([5.0, 0.0, 0.0, 0.2, 0.1])
+    # Current returns only
     voxels[2, 0] = torch.tensor([9.0, 1.0, 0.0, 0.4, 0.0])
     voxels[2, 1] = torch.tensor([9.2, 1.0, 0.0, 0.6, 0.0])
-    return voxels, torch.tensor([2, 1, 2], dtype=torch.int32)
+    # Current and future returns
+    voxels[3, 0] = torch.tensor([3.0, 2.0, 0.0, 0.3, 0.0])
+    voxels[3, 1] = torch.tensor([4.0, 2.0, 0.0, 0.9, -0.1])
+    # Future returns only
+    voxels[4, 0] = torch.tensor([7.0, 3.0, 0.0, 0.8, -0.2])
+    return voxels, torch.tensor([2, 1, 2, 2, 1], dtype=torch.int32)
+
+
+# Column layout of the encoder output: the voxel itself, then the past block and the future one
+PAST_OFFSET = slice(5, 8)
+PAST_INTENSITY = 8
+PAST_SHARE = 9
+PAST_LAG = 10
+FUTURE_OFFSET = slice(11, 14)
+FUTURE_INTENSITY = 14
+FUTURE_SHARE = 15
+FUTURE_LAG = 16
 
 
 def test_voxel_encoder_places_the_voxel_on_its_current_frame_returns() -> None:
     """The current returns give the position, the sweep returns their offset from it."""
     features = SweepSplitVoxelFeatureEncoder()(*_split_voxels())
 
-    assert features.shape == (3, 11)
-    # Current and sweep returns: the current point positions the voxel.
+    assert features.shape == (5, OUTPUT_CHANNELS)
+    # Current and past returns: the current point positions the voxel.
     assert torch.allclose(features[0, :5], torch.tensor([1.0, 0.0, 0.0, 0.5, 0.0]))
-    assert torch.allclose(features[0, 5:8], torch.tensor([1.0, 0.0, 0.0]))
-    assert torch.allclose(features[0, 8:], torch.tensor([0.7, 0.5, 0.1]))
-    # Current returns only: nothing to report about sweeps.
+    assert torch.allclose(features[0, PAST_OFFSET], torch.tensor([1.0, 0.0, 0.0]))
+    assert torch.allclose(features[0, PAST_INTENSITY : PAST_LAG + 1], torch.tensor([0.7, 0.5, 0.1]))
+    # Nothing was measured after the sample, so the future block stays empty.
+    assert torch.allclose(features[0, FUTURE_OFFSET.start :], torch.zeros(6))
+    # Current returns only: nothing to report about either side.
     assert torch.allclose(features[2, :5], torch.tensor([9.1, 1.0, 0.0, 0.5, 0.0]))
-    assert torch.allclose(features[2, 5:], torch.zeros(6))
+    assert torch.allclose(features[2, 5:], torch.zeros(12))
+
+
+def test_voxel_encoder_keeps_the_past_and_the_future_returns_apart() -> None:
+    """A surface crossing the voxel leaves the two sides in opposite directions.
+
+    One mean over both would cancel the displacement the encoder exists to expose, so each
+    side reports its own offset, intensity, share and lag.
+    """
+    features = SweepSplitVoxelFeatureEncoder()(*_split_voxels())
+
+    # Current and future returns: the future point sits ahead of the voxel position.
+    assert torch.allclose(features[3, :5], torch.tensor([3.0, 2.0, 0.0, 0.3, 0.0]))
+    assert torch.allclose(features[3, PAST_OFFSET.start : PAST_LAG + 1], torch.zeros(6))
+    assert torch.allclose(features[3, FUTURE_OFFSET], torch.tensor([1.0, 0.0, 0.0]))
+    assert torch.allclose(
+        features[3, FUTURE_INTENSITY : FUTURE_LAG + 1], torch.tensor([0.9, 0.5, -0.1])
+    )
 
 
 def test_voxel_encoder_falls_back_to_the_sweep_returns_and_reports_their_lag() -> None:
     """A voxel nothing was measured in during the current frame says so through its lag."""
     features = SweepSplitVoxelFeatureEncoder()(*_split_voxels())
 
+    # Past returns only: the voxel takes their position and owns the whole past share.
     assert torch.allclose(features[1, :5], torch.tensor([5.0, 0.0, 0.0, 0.2, 0.1]))
-    assert torch.allclose(features[1, 5:8], torch.zeros(3))
-    assert float(features[1, 9]) == 1.0
+    assert torch.allclose(features[1, PAST_OFFSET], torch.zeros(3))
+    assert float(features[1, PAST_SHARE]) == 1.0
+    assert float(features[1, FUTURE_SHARE]) == 0.0
+    # Future returns only: the same, on the other side.
+    assert torch.allclose(features[4, :5], torch.tensor([7.0, 3.0, 0.0, 0.8, -0.2]))
+    assert torch.allclose(features[4, FUTURE_OFFSET], torch.zeros(3))
+    assert float(features[4, FUTURE_SHARE]) == 1.0
+    assert float(features[4, PAST_SHARE]) == 0.0
 
 
 def test_voxel_encoder_keeps_the_average_over_every_point_recoverable() -> None:
@@ -406,8 +456,12 @@ def test_voxel_encoder_keeps_the_average_over_every_point_recoverable() -> None:
 
     filled = torch.arange(voxels.shape[1]).unsqueeze(0) < num_points.long().unsqueeze(1)
     expected = (voxels * filled.unsqueeze(-1)).sum(dim=1) / num_points.unsqueeze(1)
-    share = features[:, 9:10]
-    assert torch.allclose(features[:, :3] + share * features[:, 5:8], expected[:, :3])
+    recovered = (
+        features[:, :3]
+        + features[:, PAST_SHARE : PAST_SHARE + 1] * features[:, PAST_OFFSET]
+        + features[:, FUTURE_SHARE : FUTURE_SHARE + 1] * features[:, FUTURE_OFFSET]
+    )
+    assert torch.allclose(recovered, expected[:, :3])
 
 
 def test_voxel_encoder_ignores_the_padded_slots() -> None:

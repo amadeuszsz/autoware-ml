@@ -30,6 +30,7 @@ from autoware_ml.models.segmentation3d.encoders.ptv3 import (
     LitePTEncoder,
     PointTransformerV3Encoder,
 )
+from autoware_ml.models.segmentation3d.encoders.voxel import OUTPUT_CHANNELS
 from autoware_ml.models.segmentation3d.heads.ptv3 import PTv3SegDecoderHead
 from autoware_ml.models.segmentation3d.ptv3 import PTv3SegmentationModel
 from autoware_ml.preprocessing.base import DataPreprocessing
@@ -42,7 +43,7 @@ POINT_CLOUD_RANGE = [0.0, 0.0, -2.0, 8.0, 8.0, 2.0]
 def build_ptv3_encoder() -> PointTransformerV3Encoder:
     """Return a small PTv3 encoder suitable for unit tests."""
     return PointTransformerV3Encoder(
-        in_channels=11,
+        in_channels=OUTPUT_CHANNELS,
         order=("z",),
         stride=(2,),
         enc_depths=(1, 1),
@@ -89,7 +90,9 @@ def build_seg_head(num_classes: int = 3, dec_depths: Sequence[int] = (1,)) -> PT
     )
 
 
-def build_seg_model(point_cloud_range: Sequence[float] = POINT_CLOUD_RANGE) -> PTv3SegmentationModel:
+def build_seg_model(
+    point_cloud_range: Sequence[float] = POINT_CLOUD_RANGE,
+) -> PTv3SegmentationModel:
     """Return a small PTv3 segmentation model for tests."""
     return PTv3SegmentationModel(
         encoder=build_ptv3_encoder(),
@@ -334,7 +337,7 @@ def build_litept_encoder() -> LitePTEncoder:
     that does (1), with no base-level order at all.
     """
     return LitePTEncoder(
-        in_channels=11,
+        in_channels=OUTPUT_CHANNELS,
         order=("z",),
         stride=(2, 2),
         enc_depths=(1, 1, 1),
