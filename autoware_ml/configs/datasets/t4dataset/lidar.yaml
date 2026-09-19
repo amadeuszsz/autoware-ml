@@ -3,3 +3,6 @@
 defaults:
   - /datasets/t4dataset/base
   - _self_
+
+# Admits the previous frame of the 10 Hz lidar
+sweep_time_lag_range: [0.05, 0.25]

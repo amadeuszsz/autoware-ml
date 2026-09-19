@@ -16,9 +16,6 @@ defaults:
   - nuscenes/box3d_pipelines@box3d_pipelines: default_box3d_pipelines
   - nuscenes/scenarios@scenarios.db_nuscenes: detection3d/db_nuscenes
 
-# Number of features in the lidar pointcloud
-lidar_pointcloud_num_features: 5
-
 # Intensity of the strongest return in the stored point clouds
 lidar_intensity_scale: 255.0
 

@@ -172,7 +172,7 @@ def build_transforms() -> TransformsCompose:
     )
     return TransformsCompose(
         pipeline=[
-            LoadPointsFromFile(load_dim=5, use_dim=(0, 1, 2, 3)),
+            LoadPointsFromFile(use_dim=(0, 1, 2, 3)),
             RandomRotateTargetAngle(probability=1.0, yaw_angle_ratios=[0.5, 1.0, 1.5]),
             GlobalRotScaleTrans(
                 yaw_rot_range=(-0.2, 0.2),
