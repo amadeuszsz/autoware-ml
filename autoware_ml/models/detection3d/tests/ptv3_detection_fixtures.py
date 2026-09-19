@@ -30,6 +30,7 @@ from autoware_ml.models.segmentation3d.encoders.ptv3 import (
     LitePTEncoder,
     PointTransformerV3Encoder,
 )
+from autoware_ml.models.segmentation3d.encoders.voxel import OUTPUT_CHANNELS
 from autoware_ml.models.segmentation3d.heads.ptv3 import PTv3SegDecoderHead
 from autoware_ml.models.segmentation3d.ptv3 import PTv3SegmentationModel
 from autoware_ml.preprocessing.base import DataPreprocessing
@@ -40,7 +41,7 @@ from autoware_ml.types.geometry import Box3DCenterCoordinateType
 def build_ptv3_encoder() -> PointTransformerV3Encoder:
     """Return a small PTv3 encoder suitable for unit tests."""
     return PointTransformerV3Encoder(
-        in_channels=11,
+        in_channels=OUTPUT_CHANNELS,
         order=("z",),
         stride=(2,),
         enc_depths=(1, 1),
@@ -320,7 +321,7 @@ def build_litept_encoder() -> LitePTEncoder:
     that does (1), with no base-level order at all.
     """
     return LitePTEncoder(
-        in_channels=11,
+        in_channels=OUTPUT_CHANNELS,
         order=("z",),
         stride=(2, 2),
         enc_depths=(1, 1, 1),
