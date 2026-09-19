@@ -1,14 +1,11 @@
 _target_: autoware_ml.datamodule.t4dataset.dataset.T4Dataset
 _convert_: all
+# Completed by the datamodule with the records of each dataset source
+_partial_: true
 
 defaults:
   - segmentation3d@dataset_tasks.Segmentation3D: default_segmentation3d
   - /datamodule/transforms@transforms: default_segmentation3d_test_transforms
-
-database_root_path: ${database.root_path}
-
-# Always None since we run splitter in the process
-dataset_records_dataframe: null
 
 # No boxes to pad
 max_num_3d_gt_bboxes: 0
