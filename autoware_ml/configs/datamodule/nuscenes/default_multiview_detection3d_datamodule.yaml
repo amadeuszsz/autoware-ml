@@ -11,6 +11,12 @@ defaults:
   - nuscenes/datasets@test_dataset: default_multiview_detection3d_test_dataset
   - nuscenes/datasets@val_dataset: default_multiview_detection3d_test_dataset
 
-database: ${database}
+# Dataset sources of every split, several sources mix their corpora
+train_sources:
+  - database: ${database}
+val_sources: ${datamodule.train_sources}
+test_sources: ${datamodule.train_sources}
 
-predict_dataset: null
+# Deployment traces the model on one batch of the test scenarios
+predict_sources: ${datamodule.test_sources}
+predict_dataset: ${datamodule.test_dataset}

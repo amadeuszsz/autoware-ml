@@ -1,5 +1,6 @@
 import json
 import logging
+from collections.abc import Callable
 from types import MappingProxyType
 from typing import Sequence
 
@@ -20,6 +21,7 @@ from autoware_ml.databases.schemas.lidar_sources import (
 )
 from autoware_ml.dataclasses.batch.frame_meta import FrameMetaSample
 from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
+from autoware_ml.dataclasses.batch.segmentation3d import Segmentation3DGTSample
 from autoware_ml.dataclasses.geometry.images import ImageSample
 from autoware_ml.dataclasses.geometry.point_clouds import LiDARPointCloudSample, LidarSourceView
 from autoware_ml.datamodule.base_dataset import (
@@ -47,8 +49,10 @@ class T4Dataset(BaseDataset):
         max_num_3d_gt_bboxes: int,
         dataset_records_dataframe: pl.DataFrame | None,
         transforms: TransformsCompose | None,
-        dataset_tasks: MappingProxyType[TaskType | str, BaseDatasetTask],
+        dataset_tasks: MappingProxyType[TaskType | str, Callable[..., BaseDatasetTask]],
         lidar_intensity_scale: float,
+        det3d_supervised: bool = True,
+        seg3d_supervised: bool = True,
         lidar_sources: Sequence[str] | None = None,
         camera_names: Sequence[str] | None = None,
         camera_sources: Sequence[str] | None = None,
@@ -62,10 +66,13 @@ class T4Dataset(BaseDataset):
           dataset_records_dataframe: Polars DataFrame of dataset records to be used in
             the multi-task dataset.
           transforms: Global transforms to be applied to the dataset records.
-          dataset_tasks: Every task dataset that is part of the multi-task dataset, mapped by
-            task type.
+          dataset_tasks: Factory of every task dataset that is part of the multi-task dataset,
+            mapped by task type. Each one is called with the root path and the records of this
+            corpus, so the same configuration serves every source of a split.
           lidar_intensity_scale: Intensity of the strongest return in the point clouds of the
             database, every loaded intensity is divided by it.
+          det3d_supervised: Whether the box annotations of this corpus supervise the run.
+          seg3d_supervised: Whether the semantic masks of this corpus supervise the run.
           lidar_sources: Channel names of the lidars to serve one by one out of the merged
             cloud of every record, each one in its own sensor frame. None serves the merged
             cloud. Every record must then carry its lidar sources and the index file of its
@@ -109,17 +116,22 @@ class T4Dataset(BaseDataset):
             max_num_3d_gt_bboxes=max_num_3d_gt_bboxes,
             dataset_records_dataframe=dataset_records_dataframe,
             transforms=transforms,
+            det3d_supervised=det3d_supervised,
+            seg3d_supervised=seg3d_supervised,
         )
         self.lidar_intensity_scale = lidar_intensity_scale
         self.lidar_sources = None if lidar_sources is None else tuple(lidar_sources)
         self.camera_names = None if camera_names is None else tuple(camera_names)
         self.camera_sources = None if camera_sources is None else tuple(camera_sources)
 
-        # Convert the dataset_tasks to TaskType: BaseDatasetTask mapping if the keys are strings
+        # Build every task dataset on the corpus of this source, keying them by task type
         self.dataset_tasks: MappingProxyType[TaskType, BaseDatasetTask] = MappingProxyType(
             {
-                TaskType(key) if isinstance(key, str) else key: value
-                for key, value in dataset_tasks.items()
+                TaskType(key) if isinstance(key, str) else key: build_task(
+                    database_root_path=database_root_path,
+                    dataset_records_dataframe=dataset_records_dataframe,
+                )
+                for key, build_task in dataset_tasks.items()
             }
         )
         logger.info(
@@ -163,9 +175,14 @@ class T4Dataset(BaseDataset):
             else self.get_lidar_source_view(record_index, self.lidar_sources[source_index])
         )
 
-        data_samples = {}
-        for task_type, dataset_task in self.dataset_tasks.items():
-            data_samples[task_type] = dataset_task.get_data_sample(record_index)
+        # A corpus whose masks do not supervise the run may carry none at all, so the task is
+        # not asked for them. Every point takes the ignore index once the cloud is loaded and
+        # its length is known.
+        data_samples = {
+            task_type: dataset_task.get_data_sample(record_index)
+            for task_type, dataset_task in self.dataset_tasks.items()
+            if self.seg3d_supervised or task_type is not TaskType.SEGMENTATION3D
+        }
 
         # Retrieve general data row for the given index from the dataset records dataframe
         lidar_pointcloud_samples = self.get_lidar_pointcloud_data_samples(record_index, source_view)
@@ -193,6 +210,13 @@ class T4Dataset(BaseDataset):
                 ]
             )
 
+        # An unsupervised task keeps its field so the sample still collates with the corpora
+        # that do supervise it, but the field carries nothing to learn from
+        if detection3d_gt_bboxes_3d is not None and not self.det3d_supervised:
+            detection3d_gt_bboxes_3d.remove_bboxes(
+                torch.zeros(len(detection3d_gt_bboxes_3d), dtype=torch.bool)
+            )
+        # Merge the data samples from different tasks into a single multi-task data row
         # The camera calibrations refer to the merged cloud, so a single source serves no image
         return ModelGTSample(
             lidar_point_cloud_samples=lidar_pointcloud_samples,
@@ -263,6 +287,40 @@ class T4Dataset(BaseDataset):
             point_index_begin=int(entry["idx_begin"]),
             num_points=int(entry["length"]),
             sensor_to_frame_matrix=torch.from_numpy(sensor_to_frame),
+        )
+
+    def apply_transforms(self, model_gt_sample: ModelGTSample) -> ModelGTSample:
+        """Run the transform pipeline and label the points of an unsupervised corpus.
+
+        Such a corpus carries no labels. Every point of its frames takes the ignore index,
+        written after the pipeline, when the cloud has been filtered and shuffled and its final
+        length is known, so one label still belongs to one point.
+
+        Args:
+            model_gt_sample: ModelGTSample instance.
+
+        Returns:
+            Transformed ModelGTSample instance.
+        """
+        model_gt_sample = super().apply_transforms(model_gt_sample)
+        if TaskType.SEGMENTATION3D not in self.dataset_tasks:
+            return model_gt_sample
+        if self.seg3d_supervised:
+            return model_gt_sample
+
+        if model_gt_sample.point_cloud_data is None:
+            raise ValueError(
+                "3D segmentation runs on this split, so its pipeline loads the point cloud "
+                "every semantic label belongs to."
+            )
+        ignore_index = self.dataset_tasks[TaskType.SEGMENTATION3D].taxonomy.ignore_index
+        return model_gt_sample._replace(
+            segmentation3d_gt_sample=Segmentation3DGTSample(
+                gt_semantic_mask=torch.full(
+                    (len(model_gt_sample.point_cloud_data),), ignore_index, dtype=torch.int64
+                ),
+                ignore_index=ignore_index,
+            )
         )
 
     def get_frame_meta_sample(
