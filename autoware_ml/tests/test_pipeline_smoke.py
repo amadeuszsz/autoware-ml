@@ -58,6 +58,7 @@ from autoware_ml.transforms.point_cloud.geometry import (
 )
 from autoware_ml.transforms.point_cloud.loading import (
     LoadMultiSweepPointsFromFile,
+    SweepWindow,
     LoadPointsFromFile,
 )
 from autoware_ml.transforms.point_cloud.perturbation import RandomJitter, RandomStrengthJitter
@@ -65,7 +66,10 @@ from autoware_ml.transforms.point_cloud.sampling import RandomDropout
 from autoware_ml.types.geometry import Box3DFieldIndex
 
 NUM_POINTS = 512
-NUM_SWEEPS = 2
+# The record of a sample stores its own frame, then its past sweeps, then its future ones
+NUM_PAST_SWEEPS = 1
+NUM_FUTURE_SWEEPS = 1
+NUM_SWEEPS = 1 + NUM_PAST_SWEEPS + NUM_FUTURE_SWEEPS
 POINT_CLOUD_RANGE = (-8.0, -8.0, -2.0, 8.0, 8.0, 2.0)
 SCENE = "db_v1/scene_0/dataset_v1"
 
@@ -73,6 +77,25 @@ VOCABULARY = LabelVocabulary({"car": "car", "vehicle.car": "car", "unpainted": N
 SEGMENTATION_TAXONOMY = SegmentationTaxonomy(
     VOCABULARY, ("car",), {"car": "car"}, -1, {"vehicle": ("car",)}
 )
+
+
+def sweep_time_offset(sweep_index: int) -> float:
+    """Seconds subtracted from the sample timestamp to date one stored frame.
+
+    The sample owns position 0, the past sweeps follow it and then the future ones, so the
+    loader reads the side of a frame off the sign of its time lag.
+
+    Args:
+        sweep_index: Position of the frame in the record.
+
+    Returns:
+        float: Offset of the frame, positive for a past sweep and negative for a future one.
+    """
+    if sweep_index == 0:
+        return 0.0
+    if sweep_index <= NUM_PAST_SWEEPS:
+        return 0.05 * sweep_index
+    return -0.05 * (sweep_index - NUM_PAST_SWEEPS)
 
 
 def write_corpus(root: Path, num_records: int) -> pl.DataFrame:
@@ -110,8 +133,7 @@ def write_corpus(root: Path, num_records: int) -> pl.DataFrame:
                     "lidar_keyframe": sweep_index == 0,
                     "lidar_sensor_id": "lidar",
                     "lidar_sensor_channel_name": "LIDAR_TOP",
-                    # The sweeps precede the keyframe, so their time lag is positive
-                    "lidar_timestamp_seconds": float(record_index) - 0.05 * sweep_index,
+                    "lidar_timestamp_seconds": float(record_index) - sweep_time_offset(sweep_index),
                     "lidar_pointcloud_path": str(path),
                     "lidar_pointcloud_source_path": None,
                     "lidar_pointcloud_num_features": 5,
@@ -174,12 +196,15 @@ def build_transforms() -> TransformsCompose:
     )
     return TransformsCompose(
         pipeline=[
-            LoadPointsFromFile(load_dim=5, use_dim=(0, 1, 2, 3)),
+            LoadPointsFromFile(use_dim=(0, 1, 2, 3)),
             LoadMultiSweepPointsFromFile(
-                sweeps_num=1,
-                test_mode=False,
+                past=SweepWindow(
+                    num=NUM_PAST_SWEEPS, time_lag_range=(0.01, 1.0), selection="random"
+                ),
+                future=SweepWindow(
+                    num=NUM_FUTURE_SWEEPS, time_lag_range=(0.01, 1.0), selection="random"
+                ),
                 use_timestamp_difference=True,
-                load_dim=5,
                 use_dim=(0, 1, 2, 3),
                 bev_remove_radius=0.0,
             ),
@@ -251,9 +276,7 @@ class TestPipelineSmoke(unittest.TestCase):
         assert point_batch is not None and segment_batch is not None
 
         self.assertEqual(point_batch.points.shape[0], segment_batch.gt_semantic_masks.shape[0])
-        self.assertEqual(
-            point_batch.batch_indices.tolist(), segment_batch.batch_indices.tolist()
-        )
+        self.assertEqual(point_batch.batch_indices.tolist(), segment_batch.batch_indices.tolist())
 
     def test_the_sweeps_carry_the_time_lag_and_the_ignore_label(self) -> None:
         point_batch = self.batch.point_cloud_gt_batch
@@ -262,9 +285,14 @@ class TestPipelineSmoke(unittest.TestCase):
 
         time_lag = point_batch.points[:, point_batch.timestamp_difference_dim]
         self.assertEqual(point_batch.timestamp_difference_dim, 4)
+        # A past sweep was captured before the sample and a future one after it, so the two
+        # sides arrive with opposite signs and the current frame keeps the exact zero
         self.assertTrue(bool((time_lag > 0).any()))
-        # The current frame is labelled and the sweep returns take the ignore index
-        self.assertTrue(bool((segment_batch.gt_semantic_masks[time_lag > 0] == -1).all()))
+        self.assertTrue(bool((time_lag < 0).any()))
+        self.assertTrue(bool((time_lag == 0).any()))
+        # The current frame is labelled and every sweep return takes the ignore index
+        self.assertTrue(bool((segment_batch.gt_semantic_masks[time_lag != 0] == -1).all()))
+        self.assertTrue(bool((segment_batch.gt_semantic_masks[time_lag == 0] >= 0).all()))
 
     @unittest.skipUnless(torch.cuda.is_available(), "the PTv3 stem runs on CUDA only")
     def test_ptv3_segmentation_runs_a_training_step(self) -> None:

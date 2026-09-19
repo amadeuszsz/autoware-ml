@@ -92,6 +92,8 @@ class LiDARPointCloudSample(NamedTuple):
 
     point_cloud_path: str
     timestamp: float
+    # Number of float32 features stored per point in the file, declared by the dataset
+    num_features: int
     # Transformation matrix from LiDAR sensor frame to ego pose of this LiDAR sensor frame
     sensor_to_ego_pose_matrix: Float32[Tensor, "4 4"]  # (4, 4)
     # Transformation matrix from ego pose of this LiDAR sensor frame to global frame

@@ -91,9 +91,7 @@ class T4Dataset(BaseDataset):
         lidar_pointcloud_samples = self.get_lidar_pointcloud_data_samples(index)
 
         # Retrieve the detection3d_gt_bboxes_3d and segmentation3d_gt_sample from the data_samples dictionary
-        detection3d_gt_sample: ModelGTSample | None = data_samples.get(
-            TaskType.DETECTION3D, None
-        )
+        detection3d_gt_sample: ModelGTSample | None = data_samples.get(TaskType.DETECTION3D, None)
         if detection3d_gt_sample is not None:
             detection3d_gt_bboxes_3d = detection3d_gt_sample.detection3d_gt_bboxes_3d
         else:
@@ -231,6 +229,9 @@ class T4Dataset(BaseDataset):
                     point_cloud_path=lidar_pointcloud_path,
                     timestamp=lidar_pointcloud_metadata[
                         LidarFrameDatasetSchema.lidar_timestamp_seconds.name
+                    ],
+                    num_features=lidar_pointcloud_metadata[
+                        LidarFrameDatasetSchema.lidar_pointcloud_num_features.name
                     ],
                     sensor_to_ego_pose_matrix=torch.tensor(
                         lidar_sensor_to_ego_pose_matrix,

@@ -136,7 +136,7 @@ class TestCameraPipelineSmoke(unittest.TestCase):
     def test_multiview_pipeline_collates_the_images_and_their_calibration(self) -> None:
         transforms = TransformsCompose(
             pipeline=[
-                LoadPointsFromFile(load_dim=5, use_dim=(0, 1, 2, 3)),
+                LoadPointsFromFile(use_dim=(0, 1, 2, 3)),
                 LoadImagesFromFile(),
                 ImageAug3D(
                     final_dim=[24, 32],
@@ -168,7 +168,7 @@ class TestCameraPipelineSmoke(unittest.TestCase):
         transforms = TransformsCompose(
             pipeline=[
                 LoadImagesFromFile(),
-                LoadPointsFromFile(load_dim=5, use_dim=(0, 1, 2, 3)),
+                LoadPointsFromFile(use_dim=(0, 1, 2, 3)),
                 CropBoxInner(crop_box=EGO_BOX),
                 UndistortImage(alpha=0.0),
                 CalibrationMisalignment(
@@ -211,7 +211,7 @@ class TestCameraPipelineSmoke(unittest.TestCase):
         transforms = TransformsCompose(
             pipeline=[
                 LoadImagesFromFile(),
-                LoadPointsFromFile(load_dim=5, use_dim=(0, 1, 2, 3)),
+                LoadPointsFromFile(use_dim=(0, 1, 2, 3)),
                 LidarCameraFusion(max_depth=128.0, dilation_size=1),
             ]
         )
