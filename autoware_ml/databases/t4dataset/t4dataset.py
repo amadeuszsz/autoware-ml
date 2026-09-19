@@ -46,11 +46,13 @@ class T4RecordsGeneratorWorkerParams:
       database_root_path: Root path of the T4 database.
       scenario_data: Scenario data.
       lidar_pointcloud_num_features: Number of features in the lidar pointcloud.
+      box_annotation_dir: Directory of the scene holding the box category tables.
     """
 
     database_root_path: str
     scenario_data: ScenarioData
     lidar_pointcloud_num_features: int
+    box_annotation_dir: str
     taxonomy: DatabaseTaxonomy
     box3d_pipelines: Sequence[Box3DPipeline]
 
@@ -74,6 +76,7 @@ def _apply_t4_records_generator(
         sample_steps=t4_records_generator_worker_params.scenario_data.sample_steps,
         max_sweeps=t4_records_generator_worker_params.scenario_data.max_sweeps,
         lidar_pointcloud_num_features=t4_records_generator_worker_params.lidar_pointcloud_num_features,
+        box_annotation_dir=t4_records_generator_worker_params.box_annotation_dir,
         taxonomy=t4_records_generator_worker_params.taxonomy,
         box3d_pipelines=t4_records_generator_worker_params.box3d_pipelines,
     )
@@ -95,6 +98,7 @@ class T4Dataset(BaseDatabase):
         taxonomy: DatabaseTaxonomy,
         lidar_pointcloud_num_features: int,
         box3d_pipelines: Sequence[Box3DPipeline],
+        box_annotation_dir: str = "annotation",
     ) -> None:
         """
         Initialize T4 dataset. Please refer to the BaseDatabase class for more details.
@@ -109,6 +113,9 @@ class T4Dataset(BaseDatabase):
           taxonomy: Taxonomies the labels of the database are baked with.
           lidar_pointcloud_num_features: Number of features in the lidar pointcloud.
           box3d_pipelines: List of box 3D pipelines to process the box 3D annotations.
+          box_annotation_dir: Directory of every scene holding the category and instance
+            tables the box names are read from. A pseudo labelled corpus keeps the original
+            tables beside the rewritten ones, so it names the directory it trains on.
         """
 
         logger.info("Initializing T4 dataset...")
@@ -123,6 +130,7 @@ class T4Dataset(BaseDatabase):
         )
         self._scenarios = scenarios
         self._lidar_pointcloud_num_features = lidar_pointcloud_num_features
+        self._box_annotation_dir = box_annotation_dir
 
     def __str__(self) -> str:
         """
@@ -138,6 +146,7 @@ class T4Dataset(BaseDatabase):
             f"cache path={str(self._cache_path)}, "
             f"cache file prefix name={self._cache_file_prefix_name}, "
             f"taxonomy={self._taxonomy}, "
+            f"box_annotation_dir={self._box_annotation_dir}, "
             f"box3d_pipelines=[{', '.join([str(pipeline) for pipeline in self._box3d_pipelines])}], "
             f"{self.scenarios_string_repr}"
             f")"
@@ -227,6 +236,7 @@ class T4Dataset(BaseDatabase):
                 database_root_path=str(self._root_path),
                 scenario_data=scenario,
                 lidar_pointcloud_num_features=self._lidar_pointcloud_num_features,
+                box_annotation_dir=self._box_annotation_dir,
                 taxonomy=self._taxonomy,
                 box3d_pipelines=self._box3d_pipelines,
             )
