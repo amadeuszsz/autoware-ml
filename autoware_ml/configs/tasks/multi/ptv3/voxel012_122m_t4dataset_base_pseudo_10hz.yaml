@@ -1,0 +1,65 @@
+# @package _global_
+
+# Stage 3 of the pipeline: joint training on the 10 Hz pseudo labelled corpus, every lidar
+# frame of the J6 gen2, large bus and JPN taxi releases, together with the human joint ground
+# truth. Both carry boxes in the current annotation specification and masks with the fine
+# classes, so both tasks are supervised on every source and no keyframe corpus is rehearsed.
+# Initialized from the stage 2 checkpoint, so the warmup is short and the peak sits below the
+# stage that trained the weights. Validation and test stay on the J6 gen2 platforms.
+
+defaults:
+  - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
+  - /database@jpntaxi_database: t4dataset/t4dataset_pseudo_10hz_jpntaxi
+  - /database@joint_database: t4dataset/t4dataset_j6gen2_segdet3d
+  - override /database@database: t4dataset/t4dataset_pseudo_10hz_j6gen2
+  - _self_
+
+datamodule:
+  # The joint ground truth is repeated to about a tenth of the epoch, felt but not dominant.
+  train_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: true
+      repeat: 1
+    - database: ${jpntaxi_database}
+      det3d: true
+      seg3d: true
+      repeat: 1
+    - database: ${joint_database}
+      det3d: true
+      seg3d: true
+      repeat: 15
+  validation_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: true
+      repeat: 1
+    - database: ${joint_database}
+      det3d: true
+      seg3d: true
+      repeat: 1
+  test_sources: ${datamodule.validation_sources}
+
+model:
+  # Both branches arrive trained from stage 2. The frames are 100 ms apart and heavily
+  # correlated, so the epochs are few and the peak is low.
+  optimizer:
+    lr: 0.0001
+  optimizer_group_overrides:
+    encoder_block:
+      lr: 0.00001
+    encoder_default:
+      lr: 0.000025
+    seg3d_head:
+      lr: 0.00005
+  scheduler:
+    warmup_epochs: 2
+    # Warmup plus decay has to cover max_epochs, the cosine turns back upwards beyond it.
+    decay_epochs: 8
+    max_lr_factor: 2.0
+
+trainer:
+  max_epochs: 10
+
+callbacks:
+  early_stopping: null

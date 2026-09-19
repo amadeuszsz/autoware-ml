@@ -1,0 +1,27 @@
+# The 10 Hz pseudo labelled JPN taxi databases, gen1 and gen2: every lidar frame of a scene
+# carries boxes and masks in the L1 pseudo labelling taxonomy, the boxes follow the current
+# annotation specification. The scenes live under pseudo_10hz and share their point clouds
+# with the source databases. Kept apart from the J6 gen2 databases so a training run can
+# weight and validate the platforms separately.
+_target_: autoware_ml.databases.t4dataset.t4dataset.T4Dataset
+_convert_: all
+
+defaults:
+  - t4dataset/taxonomy@taxonomy: default_coarse
+  - t4dataset/box3d_pipelines@box3d_pipelines: default_box3d_pipelines
+  - t4dataset/scenarios@scenarios.db_pseudo_10hz_jpntaxi: detection3d_segmentation3d_pseudo_10hz/db_pseudo_10hz_jpntaxi
+
+version: T4Dataset-pseudo_10hz_jpntaxi-v1.0.0
+# Root path of actual annotation files
+root_path: ${data_root_path}/t4dataset/pseudo_10hz/
+
+# Caches
+cache_path: ${cache_root_path}/t4dataset_pseudo_10hz/
+# Prefix name of the cache file, it will be <cache_file_prefix_name>_<database_hash>.parquet
+cache_file_prefix_name: database
+
+# Processor settings
+num_workers: 16
+
+# Sensor channel of the lidar frame every sample is built around
+lidar_channel: LIDAR_CONCAT

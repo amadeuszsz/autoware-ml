@@ -1,0 +1,70 @@
+# @package _global_
+
+# Stage 2 of the voxel006 teacher pipeline: pretraining on the mixed ODD base set, detection
+# ground truth with pseudo segmentation, with the j6gen2 seg3d ground truth frames rehearsed
+# in. The base set is split over two databases, the other platforms and the J6 gen2 releases.
+# Architecture, precision and the fine taxonomy come from the j6gen2 joint voxel006
+# config, and every added database is bound to the same taxonomy level and pipelines.
+
+defaults:
+  - /tasks/multi/ptv3/voxel006_122m_t4dataset_j6gen2
+  - /database@j6gen2_database: t4dataset/t4dataset_j6gen2_pseudo
+  - /database@rehearsal_database: t4dataset/t4dataset_j6gen2_semaseg
+  - override /database/t4dataset/taxonomy@j6gen2_database.taxonomy: default_fine
+  - override /database/t4dataset/box3d_pipelines@j6gen2_database.box3d_pipelines: trailer_class_box3d_pipelines
+  - override /database/t4dataset/taxonomy@rehearsal_database.taxonomy: default_fine
+  - override /database/t4dataset/box3d_pipelines@rehearsal_database.box3d_pipelines: trailer_class_box3d_pipelines
+  - override /database@database: t4dataset/t4dataset_base_pseudo
+  - _self_
+
+datamodule:
+  # Training mixes the pseudo corpora with the rehearsed seg3d GT frames.
+  # Validation and test score detection on the pseudo corpora boxes and
+  # segmentation on the GT masks only, each frame once.
+  train_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: true
+      repeat: 1
+    - database: ${j6gen2_database}
+      det3d: true
+      seg3d: true
+      repeat: 1
+    - database: ${rehearsal_database}
+      det3d: false
+      seg3d: true
+      repeat: 6
+  validation_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: false
+      repeat: 1
+    - database: ${j6gen2_database}
+      det3d: true
+      seg3d: false
+      repeat: 1
+    - database: ${rehearsal_database}
+      det3d: false
+      seg3d: true
+      repeat: 1
+  test_sources: ${datamodule.validation_sources}
+
+model:
+  optimizer_group_overrides:
+    encoder_block:
+      lr: 0.00001
+    encoder_default:
+      lr: 0.000025
+    seg3d_head:
+      lr: 0.00005
+  scheduler:
+    warmup_epochs: 2
+    decay_epochs: 22
+    max_lr_factor: 5.0
+
+trainer:
+  max_epochs: 24
+
+callbacks:
+  early_stopping:
+    patience: 8

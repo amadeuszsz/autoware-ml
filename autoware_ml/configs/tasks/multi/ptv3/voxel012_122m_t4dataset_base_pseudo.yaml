@@ -1,0 +1,66 @@
+# @package _global_
+
+# Stage 2 of the pipeline: pretraining on every pseudo labelled keyframe corpus. The other
+# platforms supervise detection only, their pseudo masks come from a teacher trained on another
+# sensor. The J6 gen2 and large bus corpus supervises both tasks and the J6 gen2 seg3d ground
+# truth frames are rehearsed in. The detection branch trains from scratch here, so it takes the
+# full peak while the encoder groups arrive trained from stage 1 and stay cool.
+
+defaults:
+  - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
+  - /database@j6gen2_database: t4dataset/t4dataset_j6gen2_pseudo
+  - /database@rehearsal_database: t4dataset/t4dataset_j6gen2_semaseg
+  - override /database@database: t4dataset/t4dataset_base_pseudo
+  - _self_
+
+# The pseudo masks carry the category names of the auto label generator, the segmentation
+# vocabulary of the database absorbs them, so this stage needs no class remapping.
+
+datamodule:
+  # Validation and test score detection on the J6 gen2 pseudo corpus boxes and
+  # segmentation on the GT masks only, each frame once.
+  train_sources:
+    - database: ${database}
+      det3d: true
+      seg3d: false
+      repeat: 1
+    - database: ${j6gen2_database}
+      det3d: true
+      seg3d: true
+      repeat: 1
+    - database: ${rehearsal_database}
+      det3d: false
+      seg3d: true
+      repeat: 6
+  validation_sources:
+    - database: ${j6gen2_database}
+      det3d: true
+      seg3d: false
+      repeat: 1
+    - database: ${rehearsal_database}
+      det3d: false
+      seg3d: true
+      repeat: 1
+  test_sources: ${datamodule.validation_sources}
+
+model:
+  optimizer:
+    lr: 0.0001
+  optimizer_group_overrides:
+    encoder_block:
+      lr: 0.00001
+    encoder_default:
+      lr: 0.000025
+    seg3d_head:
+      lr: 0.00005
+  scheduler:
+    warmup_epochs: 4
+    decay_epochs: 20
+    # Caps the peak learning rate of the detection branch trained from scratch
+    max_lr_factor: 5.0
+
+trainer:
+  max_epochs: 24
+
+callbacks:
+  early_stopping: null
