@@ -1,0 +1,30 @@
+# @package _global_
+
+# Final stage, fine tuning on the J6 gen2 ground truth frames
+
+defaults:
+  - /tasks/multi/ptv3/voxel012_122m_t4dataset_j6gen2
+  - _self_
+
+model:
+  # Small corpus, the encoder stays cool while the heads learn the fine classes
+  optimizer:
+    lr: 0.0001
+  optimizer_group_overrides:
+    encoder_block:
+      lr: 0.00001
+    encoder_default:
+      lr: 0.000025
+    seg3d_head:
+      lr: 0.0001
+  scheduler:
+    warmup_epochs: 2
+    # Warmup plus decay covers max_epochs
+    decay_epochs: 38
+    max_lr_factor: 2.0
+
+trainer:
+  max_epochs: 40
+
+callbacks:
+  early_stopping: null
