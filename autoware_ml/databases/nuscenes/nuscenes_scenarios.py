@@ -29,7 +29,7 @@ from autoware_ml.databases.scenarios import DatasetParams, ScenarioData, Scenari
 logger = logging.getLogger(__name__)
 
 # Maps a NuScenes version directory name to the nuscenes-devkit `nuscenes.utils.splits` scene-name
-# lists that apply to it. 
+# lists that apply to it.
 _VERSION_TO_SPLIT_SCENE_NAMES = {
     "v1.0-trainval": {
         SplitType.TRAIN: nuscenes_splits.train,
