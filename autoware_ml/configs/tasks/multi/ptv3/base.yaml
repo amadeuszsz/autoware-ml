@@ -135,6 +135,10 @@ trainer:
 callbacks:
   early_stopping:
     patience: 30
+  # Validation and the saved checkpoint use the moving average of the weights
+  ema:
+    _target_: autoware_ml.callbacks.ema.EMAWeights
+    decay: 0.999
 
 deploy:
   onnx:
