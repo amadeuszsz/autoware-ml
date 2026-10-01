@@ -24,9 +24,11 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated
 
+from jaxtyping import Bool
 import numpy as np
 import torch
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from torch import Tensor
 
 from autoware_ml.geometry.points.base_points import BasePoints
 from autoware_ml.geometry.points.lidar_points import LiDARPoints
@@ -122,6 +124,22 @@ class LoadPointsFromFile(BaseTransform):
         self.use_dim = use_dim
         self.bev_remove_radius = bev_remove_radius
 
+    def far_from_origin(self, points_data: BasePoints) -> Bool[Tensor, " num_points"]:
+        """Mask of the points outside the removal radius around the origin.
+
+        Args:
+            points_data: Points to test.
+
+        Returns:
+            Bool[Tensor, " num_points"]: True for every point to keep, all of them when the
+              removal is disabled.
+        """
+        if self.bev_remove_radius <= 0:
+            return torch.ones(len(points_data), dtype=torch.bool, device=points_data.points.device)
+        x_filtered = torch.abs(points_data.points[:, PointFieldIndex.X]) < self.bev_remove_radius
+        y_filtered = torch.abs(points_data.points[:, PointFieldIndex.Y]) < self.bev_remove_radius
+        return ~(x_filtered & y_filtered)
+
     def remove_close(self, points_data: BasePoints) -> BasePoints:
         """Remove point too close within a certain radius from origin.
 
@@ -131,12 +149,7 @@ class LoadPointsFromFile(BaseTransform):
         Returns:
             BasePoints: Points after removing.
         """
-        if self.bev_remove_radius <= 0:
-            return points_data
-        x_filtered = torch.abs(points_data.points[:, PointFieldIndex.X]) < self.bev_remove_radius
-        y_filtered = torch.abs(points_data.points[:, PointFieldIndex.Y]) < self.bev_remove_radius
-        not_close = ~(x_filtered & y_filtered)
-        points_data.remove_points(not_close)
+        points_data.remove_points(self.far_from_origin(points_data))
         return points_data
 
     def load_points_from_samples(
@@ -219,9 +232,16 @@ class LoadPointsFromFile(BaseTransform):
 
         # Always select 0 for the point cloud at the current frame.
         lidar_points = self.load_points_from_samples(0, model_gt_sample.lidar_point_cloud_samples)
-        self.remove_close(lidar_points)
+        # The semantic labels belong to the points of this frame, so they are removed with them
+        keep_mask = self.far_from_origin(lidar_points)
+        lidar_points.remove_points(keep_mask)
+        segmentation3d_gt_sample = model_gt_sample.segmentation3d_gt_sample
+        if segmentation3d_gt_sample is not None:
+            segmentation3d_gt_sample = segmentation3d_gt_sample.remove_labels(keep_mask)
 
-        return model_gt_sample._replace(point_cloud_data=lidar_points)
+        return model_gt_sample._replace(
+            point_cloud_data=lidar_points, segmentation3d_gt_sample=segmentation3d_gt_sample
+        )
 
 
 class LoadMultiSweepPointsFromFile(LoadPointsFromFile):
