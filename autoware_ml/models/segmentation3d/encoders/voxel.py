@@ -21,6 +21,8 @@ import torch.nn as nn
 
 TIME_LAG_COLUMN = 4
 POINT_CHANNELS = TIME_LAG_COLUMN + 1
+# Channels of a single frame point: x, y, z and intensity.
+FRAME_POINT_CHANNELS = TIME_LAG_COLUMN
 # Channels of one side: offset from the voxel position, intensity, share and mean time lag.
 SIDE_CHANNELS = 6
 
@@ -34,10 +36,12 @@ class VoxelFeatureEncoder(nn.Module):
 
     Attributes:
         out_channels: Width of the voxel feature vector.
+        reads_time_lag: Whether the encoder reads the time lag column of the points.
         reads_future: Whether the encoder describes future points.
     """
 
     out_channels: int
+    reads_time_lag: bool = True
     reads_future: bool
 
     @staticmethod
@@ -112,6 +116,41 @@ class VoxelFeatureEncoder(nn.Module):
         intensity = torch.where(observed, side_mean[:, 3:4], torch.zeros_like(side_count))
         lag = torch.where(observed, side_mean[:, 4:5], torch.zeros_like(side_count))
         return torch.cat([offset, intensity, side_count / total_count, lag], dim=1)
+
+
+class MeanVoxelFeatureEncoder(VoxelFeatureEncoder):
+    """Encode a single frame voxel as the mean of its points.
+
+    Points are laid out as ``(x, y, z, intensity)`` with no time lag, so the voxel is placed at
+    the mean of its points and carries their mean intensity.
+    """
+
+    out_channels = FRAME_POINT_CHANNELS
+    reads_time_lag = False
+    reads_future = False
+
+    def forward(self, voxels: torch.Tensor, num_points: torch.Tensor) -> torch.Tensor:
+        """Reduce padded voxel points to one feature vector per voxel.
+
+        Args:
+            voxels: Padded voxel points of shape ``(num_voxels, max_points, 4)``.
+            num_points: Number of valid points per voxel of shape ``(num_voxels,)``.
+
+        Returns:
+            Voxel features of shape ``(num_voxels, 4)``, the mean position and intensity of the
+            points of the voxel.
+
+        Raises:
+            ValueError: If the points are not laid out as ``(x, y, z, intensity)``.
+        """
+        if voxels.shape[2] != FRAME_POINT_CHANNELS:
+            raise ValueError(
+                f"{type(self).__name__} needs points laid out as (x, y, z, intensity), got "
+                f"{voxels.shape[2]} channels. Load no sweeps."
+            )
+        slots = torch.arange(voxels.shape[1], device=voxels.device).unsqueeze(0)
+        _, mean = self._summarize(voxels, slots < num_points.long().unsqueeze(1))
+        return mean
 
 
 class SweepSplitVoxelFeatureEncoder(VoxelFeatureEncoder):

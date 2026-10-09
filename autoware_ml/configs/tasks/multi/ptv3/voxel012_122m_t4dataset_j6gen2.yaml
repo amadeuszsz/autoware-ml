@@ -33,16 +33,6 @@ datamodule:
           _convert_: all
           use_dim: [0, 1, 2, 3]
           bev_remove_radius: 0.0
-        - _target_: autoware_ml.transforms.point_cloud.loading.LoadMultiSweepPointsFromFile
-          _convert_: all
-          past:
-            _target_: autoware_ml.transforms.point_cloud.loading.SweepWindow
-            num: 1
-            time_lag_range: [0.05, 0.25]
-            selection: random
-          bev_remove_radius: 1.0
-          use_timestamp_difference: true
-          use_dim: [0, 1, 2, 3]
         - _target_: autoware_ml.transforms.point_cloud.geometry.RandomRotateTargetAngle
           _convert_: all
           probability: 0.75
@@ -104,16 +94,6 @@ datamodule:
           _convert_: all
           use_dim: [0, 1, 2, 3]
           bev_remove_radius: 0.0
-        - _target_: autoware_ml.transforms.point_cloud.loading.LoadMultiSweepPointsFromFile
-          _convert_: all
-          past:
-            _target_: autoware_ml.transforms.point_cloud.loading.SweepWindow
-            num: 1
-            time_lag_range: [0.05, 0.25]
-            selection: nearest
-          bev_remove_radius: 1.0
-          use_timestamp_difference: true
-          use_dim: [0, 1, 2, 3]
         - _target_: autoware_ml.transforms.point_cloud.geometry.PointsRangeFilter
           _convert_: all
           points_range: ${point_cloud_range}
@@ -141,11 +121,30 @@ datamodule:
     pedestrian_class_name: pedestrian
 
 model:
+  voxel_encoder:
+    _target_: autoware_ml.models.segmentation3d.encoders.voxel.MeanVoxelFeatureEncoder
+  encoder:
+    in_channels: 4
+  export_output_names:
+    [
+      pred_labels,
+      pred_probs,
+      dense_heatmap,
+      query_heatmap_score,
+      query_labels,
+      heatmap,
+      center,
+      height,
+      dim,
+      rot,
+    ]
   bev_neck:
     bev_projector:
       output_shape: [256, 256]
       assume_valid_grid_coord: true
   bbox_head:
+    use_velocity: false
+    code_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
     nms_type: circle
     nms_min_radius: 1.0
     nms_groups:
@@ -171,5 +170,6 @@ model:
         nms_radius: 0.0
         post_max_size: 50
     bbox_coder:
+      code_size: 8
       post_center_range: [-132.88, -132.88, -5.0, 132.88, 132.88, 12.0]
       score_threshold: [0.015, 0.010, 0.010, 0.020, 0.020, 0.030, 0.030, 0.020, 0.040, 0.020]

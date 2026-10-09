@@ -250,21 +250,24 @@ class PTv3BaseModel(BaseModel):
             Deepest encoder point with the full pooling chain attached.
 
         Raises:
-            ValueError: If the points carry the time lag in another column than
-                the voxel encoder reads, or hold future points the voxel encoder does not read.
+            ValueError: If the voxel encoder reads the time lag and the points carry it in
+                another column than it reads, or hold future points it does not read.
             RuntimeError: If the voxelizer dropped occupied voxels.
         """
-        if time_lag_column != TIME_LAG_COLUMN:
-            raise ValueError(
-                f"PTv3 needs the time lag of the points in column {TIME_LAG_COLUMN}, the batch "
-                f"has it in column {time_lag_column}. Enable use_timestamp_difference in the "
-                "sweep loader."
-            )
-        if not self.voxel_encoder.reads_future and bool((voxels[..., TIME_LAG_COLUMN] < 0).any()):
-            raise ValueError(
-                f"{type(self.voxel_encoder).__name__} reads no future points, but the batch has "
-                "some. Load no future sweeps or use PastFutureVoxelFeatureEncoder."
-            )
+        if self.voxel_encoder.reads_time_lag:
+            if time_lag_column != TIME_LAG_COLUMN:
+                raise ValueError(
+                    f"PTv3 needs the time lag of the points in column {TIME_LAG_COLUMN}, the "
+                    f"batch has it in column {time_lag_column}. Enable use_timestamp_difference "
+                    "in the sweep loader."
+                )
+            if not self.voxel_encoder.reads_future and bool(
+                (voxels[..., TIME_LAG_COLUMN] < 0).any()
+            ):
+                raise ValueError(
+                    f"{type(self.voxel_encoder).__name__} reads no future points, but the batch "
+                    "has some. Load no future sweeps or use PastFutureVoxelFeatureEncoder."
+                )
         if int(num_dropped_voxels) > 0:
             raise RuntimeError(
                 f"The voxelizer dropped {int(num_dropped_voxels)} occupied voxels. Increase "

@@ -262,3 +262,9 @@ def test_current_frame_mask_reads_the_time_lag_column() -> None:
     points = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.1]])
 
     assert current_frame_mask(points).tolist() == [True, False]
+
+
+def test_current_frame_mask_keeps_every_point_without_a_time_lag_column() -> None:
+    points = torch.tensor([[0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.5]])
+
+    assert current_frame_mask(points, time_lag_column=-1).tolist() == [True, True]
