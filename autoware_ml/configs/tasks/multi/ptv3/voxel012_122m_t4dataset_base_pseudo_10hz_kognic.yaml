@@ -9,6 +9,25 @@ defaults:
   - override /database@joint_database: t4dataset/t4dataset_j6gen2_segdet3d_kognic
   - _self_
 
+# TODO(amadeuszsz): restore db_jpntaxi_v1 once its LIDAR_CONCAT packs name their frames like the
+# annotations do (they hold 00000.pcd.bin, ... instead of 0.pcd.bin, 0-01.pcd.bin, ...)
+jpntaxi_database:
+  scenarios:
+    db_pseudo_10hz_jpntaxi:
+      dataset_params:
+        - _target_: autoware_ml.databases.scenarios.DatasetParams
+          _convert_: all
+          dataset_name: db_jpntaxigen2_v1
+          max_past_sweeps: 2
+          max_future_sweeps: 0
+          sample_steps: 1
+        - _target_: autoware_ml.databases.scenarios.DatasetParams
+          _convert_: all
+          dataset_name: db_jpntaxigen2_v2
+          max_past_sweeps: 2
+          max_future_sweeps: 0
+          sample_steps: 1
+
 datamodule:
   train_sources:
     - database: ${database}
