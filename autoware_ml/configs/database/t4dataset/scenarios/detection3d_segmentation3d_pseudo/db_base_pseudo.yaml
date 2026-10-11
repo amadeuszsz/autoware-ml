@@ -6,25 +6,9 @@ scenario_root_path: ${t4dataset_scenario_root_path}/detection3d_segmentation3d_p
 
 # List of dataset parameters, and dataset_name is the yaml file name in T4Dataset,
 # which consists of train/val/test splits
+# TODO(amadeuszsz): restore db_jpntaxi_v1 once its LIDAR_CONCAT packs name their frames like the
+# annotations do (they hold 00000.pcd.bin, ... instead of 0.pcd.bin, 0-01.pcd.bin, ...)
 dataset_params:
-  - _target_: autoware_ml.databases.scenarios.DatasetParams
-    _convert_: all
-    dataset_name: db_jpntaxi_v1
-    max_past_sweeps: 2
-    max_future_sweeps: 0
-    sample_steps: 1
-  - _target_: autoware_ml.databases.scenarios.DatasetParams
-    _convert_: all
-    dataset_name: db_jpntaxi_v2
-    max_past_sweeps: 2
-    max_future_sweeps: 0
-    sample_steps: 1
-  - _target_: autoware_ml.databases.scenarios.DatasetParams
-    _convert_: all
-    dataset_name: db_jpntaxi_v4
-    max_past_sweeps: 2
-    max_future_sweeps: 0
-    sample_steps: 1
   - _target_: autoware_ml.databases.scenarios.DatasetParams
     _convert_: all
     dataset_name: db_jpntaxigen2_v1
