@@ -1,8 +1,6 @@
 # @package _global_
 
-# Stage 2: joint training on the 10 Hz pseudo labels with the Kognic pre-delivery boxes and masks,
-# starting from the segmentation3d stage. The detection head starts untrained, so it takes the
-# schedule of the first detection stage rather than the one of a fine-tune.
+# Stage 3: joint training on the 10 Hz pseudo labels with the Kognic pre-delivery boxes and masks
 
 defaults:
   - /tasks/multi/ptv3/voxel012_122m_t4dataset_base_pseudo_10hz
@@ -42,12 +40,3 @@ datamodule:
       det3d: true
       seg3d: true
       repeat: 6
-
-model:
-  scheduler:
-    warmup_epochs: 4
-    decay_epochs: 20
-    max_lr_factor: 5.0
-
-trainer:
-  max_epochs: 24
