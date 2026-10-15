@@ -307,21 +307,15 @@ class DistributedWeightedRandomSampler(DistributedSampler):
 class GroupStreamingSampler(Sampler[int]):
     """Interleave scene-contiguous frame indices across dataloader lanes.
 
-    Each of the ``batch_size`` dataloader lanes walks whole scenes frame by
-    frame, so consecutive iterations feed consecutive frames of the same scene
-    into the same batch position. Stateful temporal models can therefore carry
-    per-lane memory across iterations, with scene changes signalled by the
-    dataset's ``prev_exists`` metadata. Scenes are shuffled per epoch and
-    partitioned round-robin over distributed ranks and lanes. Each rank builds
-    its own index list, and every list is then truncated to the length of the
-    shortest one, so all ranks iterate the same number of steps and every
-    batch stays complete. Without that equalization the ranks would run a
-    different number of steps and collective operations would deadlock.
+    Each lane walks scenes frame by frame, so a stateful temporal model can keep
+    per-lane memory and detect scene changes from the frame metadata. Scenes
+    longer than ``max_group_length`` frames are cut into chunks, and the chunks
+    are shuffled per epoch, concatenated and cut into lanes of equal length.
+    All ranks and epochs thus run the same number of steps, which the
+    collectives and the validation schedule rely on.
 
-    The sampler shards by rank itself, so the trainer must run with
-    ``use_distributed_sampler: false`` (the StreamPETR base config does):
-    Lightning would otherwise wrap it in a ``DistributedSamplerWrapper``,
-    re-striding the indices and destroying the lane/scene contiguity.
+    The sampler shards the ranks itself, so the trainer must run with
+    ``use_distributed_sampler: false``.
     """
 
     def __init__(
@@ -330,6 +324,7 @@ class GroupStreamingSampler(Sampler[int]):
         batch_size: int,
         shuffle: bool = True,
         seed: int = 0,
+        max_group_length: int | None = None,
     ) -> None:
         """Initialize the streaming sampler.
 
@@ -340,8 +335,16 @@ class GroupStreamingSampler(Sampler[int]):
                 the dataloader batch size.
             shuffle: Whether to shuffle the scene order every epoch.
             seed: Base seed for the per-epoch scene shuffle.
+            max_group_length: Longest stream in frames, longer scenes are cut
+                into consecutive chunks. None streams whole scenes.
         """
-        self.scene_groups = dataset.scene_index_groups()
+        if max_group_length is not None and max_group_length < 1:
+            raise ValueError(f"max_group_length must be positive, got {max_group_length}.")
+        self.scene_groups = [
+            group[start : start + (max_group_length or len(group))]
+            for group in dataset.scene_index_groups()
+            for start in range(0, len(group), max_group_length or max(len(group), 1))
+        ]
         if not self.scene_groups:
             raise ValueError("GroupStreamingSampler requires at least one scene group.")
         self.batch_size = batch_size
@@ -368,32 +371,33 @@ class GroupStreamingSampler(Sampler[int]):
         else:
             scene_order = list(range(len(self.scene_groups)))
 
-        per_rank_indices: list[list[int]] = []
-        for rank in range(self.world_size):
-            lanes: list[list[int]] = [[] for _ in range(self.batch_size)]
-            for scene_position, scene_index in enumerate(scene_order[rank :: self.world_size]):
-                lanes[scene_position % self.batch_size].extend(self.scene_groups[scene_index])
-            rounds = min(len(lane) for lane in lanes)
-            indices = [lane[round_index] for round_index in range(rounds) for lane in lanes]
-            per_rank_indices.append(indices)
-
-        min_length = min(len(indices) for indices in per_rank_indices)
-        if min_length == 0:
+        # Lane ``rank * batch_size + position`` feeds ``position`` of ``rank``
+        num_lanes = self.world_size * self.batch_size
+        frames = [index for scene_index in scene_order for index in self.scene_groups[scene_index]]
+        rounds = len(frames) // num_lanes
+        if rounds == 0:
             raise ValueError(
                 f"GroupStreamingSampler cannot fill {self.world_size} rank(s) x "
-                f"{self.batch_size} lane(s) from {len(self.scene_groups)} scene(s); "
+                f"{self.batch_size} lane(s) from {len(frames)} frame(s); "
                 "reduce batch_size or world size."
             )
+        lanes = [frames[lane * rounds : (lane + 1) * rounds] for lane in range(num_lanes)]
         self._cached_epoch = epoch
-        self._cached_indices = [indices[:min_length] for indices in per_rank_indices]
-        total_frames = sum(len(group) for group in self.scene_groups)
-        dropped = total_frames - min_length * self.world_size
+        self._cached_indices = [
+            [
+                lanes[rank * self.batch_size + position][round_index]
+                for round_index in range(rounds)
+                for position in range(self.batch_size)
+            ]
+            for rank in range(self.world_size)
+        ]
+        dropped = len(frames) - rounds * num_lanes
         if dropped:
             logger.warning(
                 "GroupStreamingSampler serves %d/%d frames this epoch; %d tail frames are "
                 "trimmed to keep %d rank(s) x %d lane(s) aligned.",
-                min_length * self.world_size,
-                total_frames,
+                rounds * num_lanes,
+                len(frames),
                 dropped,
                 self.world_size,
                 self.batch_size,

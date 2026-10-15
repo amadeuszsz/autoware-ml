@@ -44,16 +44,19 @@ def detection_eval_output(
                 "bboxes_3d": prediction.bboxes_3d,
                 "scores_3d": prediction.scores_3d,
                 "labels_3d": prediction.labels_3d,
+                "instance_ids": prediction.instance_ids,
             }
             for prediction in predictions.detection3d_predictions
         ],
         "gt_boxes": gt_boxes,
         "gt_labels": gt_detections.valid_labels_3d(),
         "gt_num_points": gt_detections.valid_bboxes_num_points(),
+        "gt_instance_ids": gt_detections.valid_bboxes_instance_ids(),
     }
     # Per frame metadata for the region and collision filters, when the dataset attached it.
     frame_meta_batch = batch_inputs.multi_task_gt_batch.frame_meta_batch
     if frame_meta_batch is not None:
         eval_out["ego2global"] = list(frame_meta_batch.ego2globals)
         eval_out["scene_token"] = list(frame_meta_batch.scene_tokens)
+        eval_out["timestamp"] = list(frame_meta_batch.timestamps_seconds)
     return eval_out

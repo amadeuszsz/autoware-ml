@@ -40,10 +40,10 @@ from autoware_ml.models.common.layers.conv import ConvModule
 from autoware_ml.models.detection3d.task_modules.assigners import HungarianAssigner3D
 from autoware_ml.models.detection3d.task_modules.bbox_coders import TransFusionBBoxCoder
 from autoware_ml.models.detection3d.task_modules.heatmap import (
-    circle_nms,
     draw_heatmap_gaussian,
     draw_heatmap_gaussian_oriented,
     gaussian_radius,
+    grouped_circle_nms,
 )
 
 # Box regression branches every TransFusion head predicts, the velocity branch is optional
@@ -596,40 +596,6 @@ class TransFusionHead(nn.Module):
             for class_id in range(self.num_classes)
         ]
 
-    def _apply_circle_nms(
-        self,
-        boxes: torch.Tensor,
-        scores: torch.Tensor,
-        labels: torch.Tensor,
-    ) -> torch.Tensor:
-        """Apply grouped circle NMS and return kept indices."""
-        keep_mask = torch.zeros(scores.shape[0], dtype=torch.bool, device=scores.device)
-        covered_mask = torch.zeros(scores.shape[0], dtype=torch.bool, device=scores.device)
-
-        for group in self._circle_nms_groups():
-            group_mask = torch.zeros(scores.shape[0], dtype=torch.bool, device=scores.device)
-            for class_id in group["class_ids"]:
-                group_mask |= labels == class_id
-            if not group_mask.any():
-                continue
-            covered_mask |= group_mask
-            group_indices = group_mask.nonzero(as_tuple=False).squeeze(1)
-            group_post_max_size = group["post_max_size"]
-            if group["nms_radius"] <= 0:
-                # No suppression: keep the group's highest-scoring predictions.
-                keep = scores[group_mask].argsort(descending=True)[:group_post_max_size]
-            else:
-                keep = circle_nms(
-                    boxes[group_mask],
-                    scores[group_mask],
-                    group["nms_radius"],
-                    group_post_max_size,
-                )
-            keep_mask[group_indices[keep]] = True
-
-        keep_mask |= ~covered_mask
-        return keep_mask.nonzero(as_tuple=False).squeeze(1)
-
     def _create_2d_grid(self, width: int, height: int, device: torch.device) -> torch.Tensor:
         """Create BEV cell centers for positional encoding.
 
@@ -767,7 +733,7 @@ class TransFusionHead(nn.Module):
             if self.nms_type is None:
                 kept_indices = torch.arange(scores.shape[0], device=scores.device)
             elif self.nms_type == "circle":
-                kept_indices = self._apply_circle_nms(boxes, scores, labels)
+                kept_indices = grouped_circle_nms(boxes, scores, labels, self._circle_nms_groups())
             else:
                 raise RuntimeError(
                     f"Unsupported TransFusion NMS type at runtime: {self.nms_type!r}"

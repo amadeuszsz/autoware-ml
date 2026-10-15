@@ -11,6 +11,7 @@ from autoware_ml.datamodule.base_dataset import BaseDataset, ConcatDataset
 from autoware_ml.datamodule.samplers import (
     DistributedWeightedRandomSampler,
     FrameSamplingConfig,
+    GroupStreamingSampler,
     compute_frame_sampling_weights,
 )
 from autoware_ml.datamodule.sources import DatasetSource
@@ -54,6 +55,7 @@ class DataModule(L.LightningDataModule):
         test_dataloader: DataLoaderConfig | None,
         predict_dataloader: DataLoaderConfig | None,
         train_frame_sampling: FrameSamplingConfig | None,
+        streaming: bool = False,
     ) -> None:
         """
         Initialize the datamodule.
@@ -75,6 +77,8 @@ class DataModule(L.LightningDataModule):
           predict_dataloader: Dataloader settings of the predict split.
           train_frame_sampling: Repeat factor sampling of the training split, None when its
             samples are drawn uniformly.
+          streaming: Whether every dataloader streams scenarios frame by frame, one per batch
+            lane. The trainer must set use_distributed_sampler to false.
         """
         super().__init__()
 
@@ -117,6 +121,12 @@ class DataModule(L.LightningDataModule):
         self.test_dataloader_config = test_dataloader
         self.predict_dataloader_config = predict_dataloader
         self.train_frame_sampling = train_frame_sampling
+        self.streaming = streaming
+        if streaming and train_frame_sampling is not None:
+            raise ValueError(
+                "Streaming dataloaders follow the frame order of every scenario, they cannot "
+                "use frame sampling. Set train_frame_sampling to null."
+            )
 
     def _validate_shared_taxonomy(self) -> None:
         """
@@ -235,7 +245,19 @@ class DataModule(L.LightningDataModule):
 
         dataset = self.datasets[split]
         kwargs = config.to_dataloader_kwargs()
-        if split == SplitType.TRAIN and self.train_frame_sampling is not None:
+        if self.streaming:
+            if config.shuffle:
+                raise ValueError(
+                    "The streaming sampler owns the sample order, set the dataloader shuffle "
+                    "to false."
+                )
+            kwargs["sampler"] = GroupStreamingSampler(
+                dataset,
+                batch_size=config.batch_size,
+                shuffle=split == SplitType.TRAIN,
+                max_group_length=config.stream_max_frames,
+            )
+        elif split == SplitType.TRAIN and self.train_frame_sampling is not None:
             if config.shuffle:
                 raise ValueError(
                     "The training dataloader cannot shuffle when frame sampling is on, the "

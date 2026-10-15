@@ -324,6 +324,34 @@ def det_head_export_dynamic_axes(stage_count: int) -> dict[str, dict[int, str]]:
     }
 
 
+def det_head_export_args(context: "PTv3ExportContext") -> tuple[torch.Tensor, ...]:
+    """Return the split det-head export inputs of the two coarsest encoder stages."""
+    skip_stage = context.stage_count - 2
+    skip_grid_coord = (
+        context.inputs.grid_coord
+        if skip_stage == 0
+        else context.inputs.pooling_metadata[skip_stage - 1].grid_coord
+    )
+    return (
+        context.stage_feats[skip_stage],
+        context.stage_feats[context.stage_count - 1],
+        context.inputs.pooling_metadata[skip_stage].cluster,
+        skip_grid_coord,
+    )
+
+
+def rebuild_coarse_point(
+    skip_feat: torch.Tensor,
+    deepest_feat: torch.Tensor,
+    cluster: torch.Tensor,
+    skip_grid_coord: torch.Tensor,
+) -> Point:
+    """Rebuild the deepest point and its pooling link from the split det-head export inputs."""
+    offset = shape_as_tensor(skip_feat)[:1].to(skip_feat.device)
+    parent = Point(feat=skip_feat, grid_coord=skip_grid_coord, offset=offset)
+    return Point(feat=deepest_feat, pooling_parent=parent, pooling_inverse=cluster)
+
+
 def build_det_head_export_spec(
     context: "PTv3ExportContext",
     bev_neck: PTv3DetBEVNeck,
@@ -343,20 +371,9 @@ def build_det_head_export_spec(
         bbox_head=bbox_head,
         output_names=output_names,
     ).eval()
-    skip_stage = context.stage_count - 2
-    skip_grid_coord = (
-        context.inputs.grid_coord
-        if skip_stage == 0
-        else context.inputs.pooling_metadata[skip_stage - 1].grid_coord
-    )
     return ExportSpec(
         module=module,
-        args=(
-            context.stage_feats[skip_stage],
-            context.stage_feats[context.stage_count - 1],
-            context.inputs.pooling_metadata[skip_stage].cluster,
-            skip_grid_coord,
-        ),
+        args=det_head_export_args(context),
         input_param_names=det_head_export_input_names(context.stage_count),
         output_names=list(output_names),
         dynamic_axes=det_head_export_dynamic_axes(context.stage_count),
@@ -435,9 +452,7 @@ class _PTv3DetHeadExportModule(nn.Module):
         skip_grid_coord: torch.Tensor,
     ) -> tuple[torch.Tensor, ...]:
         """Rebuild the coarse pooling link, project to BEV, and run the head."""
-        offset = shape_as_tensor(skip_feat)[:1].to(skip_feat.device)
-        parent = Point(feat=skip_feat, grid_coord=skip_grid_coord, offset=offset)
-        point = Point(feat=deepest_feat, pooling_parent=parent, pooling_inverse=cluster)
+        point = rebuild_coarse_point(skip_feat, deepest_feat, cluster, skip_grid_coord)
         bev = self.bev_neck(point)
         outputs = self.bbox_head(bev)
         return outputs.export_tensors(self.output_names)

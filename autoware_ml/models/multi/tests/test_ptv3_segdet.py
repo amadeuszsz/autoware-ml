@@ -44,9 +44,6 @@ def _make_masking_model(recorded_calls: list) -> SimpleNamespace:
         bbox_head=SimpleNamespace(loss=bbox_loss),
         segmentation_loss_weight=1.0,
         detection_loss_weight=1.0,
-        _detection_gt_batch=PTv3SegDetModel._detection_gt_batch,
-        _detection_frame_mask=PTv3SegDetModel._detection_frame_mask,
-        _mask_list=PTv3SegDetModel._mask_list,
     )
 
 
@@ -175,8 +172,6 @@ def _make_eval_model() -> SimpleNamespace:
 
     return SimpleNamespace(
         bbox_head=SimpleNamespace(predict=predict),
-        _detection_gt_batch=PTv3SegDetModel._detection_gt_batch,
-        _detection_frame_mask=PTv3SegDetModel._detection_frame_mask,
     )
 
 

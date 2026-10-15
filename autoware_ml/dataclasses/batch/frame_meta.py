@@ -1,17 +1,17 @@
-"""Per-frame evaluation metadata carried next to the model inputs.
+"""Per-frame metadata carried next to the model inputs.
 
 The region and collision evaluation filters need two things the model inputs do not
 carry: the pose of the frame in the map and a scene identifier the lanelet map provider
 resolves to the scene's map. The dataset attaches them to every sample, the collation
 stacks them, and the detection eval-output builders hand them to the metrics as
-``ego2global`` and ``scene_token``.
+``ego2global`` and ``scene_token``. Temporal models also read the frame timestamp.
 """
 
 from __future__ import annotations
 
 from typing import NamedTuple, Sequence
 
-from jaxtyping import Float32
+from jaxtyping import Float32, Float64
 import torch
 from torch import Tensor
 
@@ -19,29 +19,33 @@ from autoware_ml.dataclasses.geometry.transformation import LiDARTransformationS
 
 
 class FrameMetaSample(NamedTuple):
-    """Evaluation metadata of one frame.
+    """Metadata of one frame.
 
     Attributes:
         ego2global: 4x4 transform from the frame the points and boxes are expressed in (the
             main lidar frame) to the map frame. It is named after the ``ego2global`` key the
             metrics read; the lidar mounting is already composed in.
         scene_token: Scene identifier the lanelet map provider resolves to the scene's map.
+        timestamp_seconds: Timestamp of the lidar frame in seconds.
     """
 
     ego2global: Float32[Tensor, "4 4"]
     scene_token: str
+    timestamp_seconds: float
 
 
 class FrameMetaBatch(NamedTuple):
-    """Evaluation metadata of every frame of a batch.
+    """Metadata of every frame of a batch.
 
     Attributes:
         ego2globals: Per-frame 4x4 transforms from the (augmented) lidar frame to the map frame.
         scene_tokens: Per-frame scene identifiers.
+        timestamps_seconds: Per-frame lidar timestamps in seconds.
     """
 
     ego2globals: Float32[Tensor, "batch_size 4 4"]
     scene_tokens: Sequence[str]
+    timestamps_seconds: Float64[Tensor, " batch_size"]
 
     @staticmethod
     def collate_gt_samples(
@@ -87,17 +91,23 @@ class FrameMetaBatch(NamedTuple):
         return FrameMetaBatch(
             ego2globals=torch.stack(ego2globals, dim=0),
             scene_tokens=[frame_meta.scene_token for frame_meta in frame_meta_samples],
+            timestamps_seconds=torch.tensor(
+                [frame_meta.timestamp_seconds for frame_meta in frame_meta_samples],
+                dtype=torch.float64,
+            ),
         )
 
     def to_device(self, device: torch.device) -> FrameMetaBatch:
-        """Move the transforms to ``device``.
+        """Move the transforms and the timestamps to ``device``.
 
         Args:
             device: Target device.
 
         Returns:
-            The batch with its transforms on ``device``.
+            The batch with its tensors on ``device``.
         """
         return FrameMetaBatch(
-            ego2globals=self.ego2globals.to(device), scene_tokens=self.scene_tokens
+            ego2globals=self.ego2globals.to(device),
+            scene_tokens=self.scene_tokens,
+            timestamps_seconds=self.timestamps_seconds.to(device),
         )

@@ -86,6 +86,7 @@ class TestTypedDetectionEvalOutput(unittest.TestCase):
             gt_labels_3d=gt_labels_3d,
             gt_valid_bboxes=gt_valid_bboxes,
             gt_bboxes_num_points=gt_bboxes_num_points,
+            gt_bboxes_instance_ids=torch.tensor([[1, 2], [3, -1]], device=self.device),
         )
         self.multi_task_batch_inputs = ModelBatchInputs(
             multi_task_gt_batch=ModelGTBatch(
@@ -199,7 +200,9 @@ class TestTypedDetectionEvalOutput(unittest.TestCase):
         ego2globals[1, 0, 3] = 7.0
         gt_batch = self.multi_task_batch_inputs.multi_task_gt_batch._replace(
             frame_meta_batch=FrameMetaBatch(
-                ego2globals=ego2globals, scene_tokens=["db/scene_a/0", "db/scene_b/1"]
+                ego2globals=ego2globals,
+                scene_tokens=["db/scene_a/0", "db/scene_b/1"],
+                timestamps_seconds=torch.zeros(2, dtype=torch.float64, device=self.device),
             )
         )
         multi_task_batch_inputs = ModelBatchInputs(

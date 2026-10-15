@@ -25,6 +25,7 @@ from autoware_ml.models.detection3d.task_modules.heatmap import (
     vectorize_gaussian_radii,
     create_gaussian_heatmaps,
     batch_circle_nms,
+    grouped_circle_nms,
 )
 
 
@@ -677,6 +678,27 @@ class TestBatchCircleNMS(unittest.TestCase):
         expected_keep_masks = self._expected_keep_masks([True, False])
         self.assertTrue(torch.equal(keep_masks, expected_keep_masks))
         self.assertEqual(int(keep_masks.sum().item()), self.batch_size * self.num_classes)
+
+
+class TestGroupedCircleNMS(unittest.TestCase):
+    """Unit tests for the grouped_circle_nms function."""
+
+    def test_groups_suppress_across_their_classes_only(self) -> None:
+        """Test that a group suppresses across its classes and other classes stay untouched."""
+        boxes = torch.tensor(
+            [[0.0, 0.0], [0.3, 0.0], [0.2, 0.0], [5.0, 0.0], [5.1, 0.0], [5.2, 0.0]]
+        )
+        scores = torch.tensor([0.9, 0.8, 0.7, 0.6, 0.5, 0.4])
+        # Class 0 and 1 share a group, class 2 has a capped zero radius group, class 3 has none
+        labels = torch.tensor([0, 1, 3, 2, 2, 2])
+        groups = [
+            {"class_ids": [0, 1], "nms_radius": 0.5, "post_max_size": 10},
+            {"class_ids": [2], "nms_radius": 0.0, "post_max_size": 2},
+        ]
+
+        keep = grouped_circle_nms(boxes, scores, labels, groups)
+
+        self.assertEqual(keep.tolist(), [0, 2, 3, 4])
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ from autoware_ml.datamodule.data_module import DataModule
 from autoware_ml.datamodule.samplers import (
     DistributedWeightedRandomSampler,
     FrameSamplingConfig,
+    GroupStreamingSampler,
 )
 from autoware_ml.datamodule.sources import DatasetSource
 from autoware_ml.datamodule.t4dataset.dataset import T4Dataset
@@ -204,6 +205,7 @@ class MultiSourceTestCase(unittest.TestCase):
         validation_sources: Sequence[Mapping[str, object]] | None = None,
         train_dataloader: DataLoaderConfig | None = None,
         train_frame_sampling: FrameSamplingConfig | None = None,
+        streaming: bool = False,
     ) -> DataModule:
         """Build a datamodule whose validation split reads the main corpus by default."""
         factory = build_dataset_factory()
@@ -226,6 +228,7 @@ class MultiSourceTestCase(unittest.TestCase):
             test_dataloader=None,
             predict_dataloader=None,
             train_frame_sampling=train_frame_sampling,
+            streaming=streaming,
         )
 
 
@@ -559,6 +562,101 @@ class TestFrameSampling(MultiSourceTestCase):
 
         with self.assertRaisesRegex(ValueError, "shuffle"):
             data_module.train_dataloader()
+
+
+class TestScenarioStreams(MultiSourceTestCase):
+    """Scenario streams of the datasets and the streaming dataloaders."""
+
+    def build_stream_database(self) -> FakeDatabase:
+        """A corpus of two interleaved scenarios whose records are out of time order."""
+        root = Path(self._directory.name) / "stream"
+        records = write_corpus(root, num_records=4).with_columns(
+            pl.Series(DatasetTableSchema.SCENARIO_ID.name, ["b", "a", "b", "a"]),
+            pl.Series(DatasetTableSchema.TIMESTAMP_SECONDS.name, [3.0, 2.0, 1.0, 0.0]),
+        )
+        return FakeDatabase(root, records, "stream", build_taxonomy())
+
+    def test_dataset_groups_scenarios_in_time_order(self) -> None:
+        """
+        Input: four records of scenarios b, a, b, a with timestamps 3, 2, 1, 0.
+        Expected: one group per scenario, every group sorted by timestamp.
+        Check: compare the groups with the record indices of a and b in time order.
+        """
+        data_module = self.build_data_module([{"database": self.build_stream_database()}])
+        data_module.setup("fit")
+
+        self.assertEqual(
+            data_module.datasets[SplitType.TRAIN].scene_index_groups(), [[3, 1], [2, 0]]
+        )
+
+    def test_concatenated_split_repeats_the_groups_of_a_source(self) -> None:
+        """
+        Input: the three record main corpus repeated twice and the one record seg3d corpus.
+        Expected: the groups of every source repeat follow the split index of its samples.
+        Check: compare the groups with the split indices of every source copy.
+        """
+        data_module = self.build_data_module(
+            [
+                {"database": self.main_database, "repeat": 2},
+                {"database": self.seg3d_gt_database},
+            ]
+        )
+        data_module.setup("fit")
+
+        self.assertEqual(
+            data_module.datasets[SplitType.TRAIN].scene_index_groups(),
+            [[0, 1, 2], [3, 4, 5], [6]],
+        )
+
+    def test_streaming_loader_feeds_one_scenario_per_lane(self) -> None:
+        """
+        Input: the two scenario corpus streamed with two lanes.
+        Expected: the streaming sampler draws the order, every lane walks one scenario.
+        Check: the sampler type and that every batch pairs the next frame of both scenarios.
+        """
+        data_module = self.build_data_module(
+            [{"database": self.build_stream_database()}],
+            train_dataloader=DataLoaderConfig(batch_size=2),
+            streaming=True,
+        )
+        data_module.setup("fit")
+
+        loader = data_module.train_dataloader()
+        indices = list(loader.sampler)
+
+        self.assertIsInstance(loader.sampler, GroupStreamingSampler)
+        self.assertEqual(sorted(indices[0::2] + indices[1::2]), [0, 1, 2, 3])
+        self.assertIn(indices[0::2], ([3, 1], [2, 0]))
+        self.assertIn(indices[1::2], ([3, 1], [2, 0]))
+
+    def test_streaming_rejects_a_shuffling_loader(self) -> None:
+        """
+        Input: a streaming datamodule whose training loader asks to shuffle.
+        Expected: the streaming sampler owns the order, a shuffle would break the streams.
+        Check: building the training loader raises a ValueError naming the shuffle.
+        """
+        data_module = self.build_data_module(
+            [{"database": self.main_database}],
+            train_dataloader=DataLoaderConfig(batch_size=1, shuffle=True),
+            streaming=True,
+        )
+        data_module.setup("fit")
+
+        with self.assertRaisesRegex(ValueError, "shuffle"):
+            data_module.train_dataloader()
+
+    def test_streaming_rejects_frame_sampling(self) -> None:
+        """
+        Input: a streaming datamodule with frame sampling settings.
+        Expected: frame sampling reorders frames, which breaks the scenario streams.
+        Check: building the datamodule raises a ValueError naming the frame sampling.
+        """
+        with self.assertRaisesRegex(ValueError, "frame sampling"):
+            self.build_data_module(
+                [{"database": self.main_database}],
+                train_frame_sampling=FRAME_SAMPLING,
+                streaming=True,
+            )
 
 
 if __name__ == "__main__":

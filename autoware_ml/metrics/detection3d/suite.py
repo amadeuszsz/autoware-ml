@@ -72,6 +72,7 @@ class Detection3DMetricSuite(MetricSuite[DetectionState]):
         ),
         eval_class_range: dict[str, float] | None = None,
         min_num_points: int = 0,
+        observed_only: bool = False,
         match_cost: str = "center",
         class_groups: dict[str, list[str]] | None = None,
         collision: Any = None,
@@ -88,6 +89,8 @@ class Detection3DMetricSuite(MetricSuite[DetectionState]):
                 filter at accumulation.
             min_num_points: Minimum LiDAR points a GT box needs to count, 0 disables the
                 filter.
+            observed_only: Count only the GT boxes the model observed in its stream so far, as
+                a temporal model reports in ``gt_observed``.
             match_cost: Matching cost name, ``center`` or ``corner``.
             class_groups: Group name to member class names. When set, labels are folded onto
                 the group taxonomy at state build, so matching happens between grouped classes.
@@ -101,6 +104,7 @@ class Detection3DMetricSuite(MetricSuite[DetectionState]):
         _validate_name_tokens(self.class_names)
         self.eval_class_range = eval_class_range
         self.min_num_points = int(min_num_points)
+        self.observed_only = bool(observed_only)
         self.match_cost = str(match_cost)
         resolve_match_cost(self.match_cost)  # a config typo must fail at build, not after the epoch
         self.collision = collision
@@ -216,6 +220,8 @@ class Detection3DMetricSuite(MetricSuite[DetectionState]):
             keys = tuple(dict.fromkeys(keys + ("ego2global", "scene_token")))
         if self.min_num_points > 0:
             keys = tuple(dict.fromkeys(keys + ("gt_num_points",)))
+        if self.observed_only:
+            keys = tuple(dict.fromkeys(keys + ("gt_observed",)))
         return keys
 
     def update(self, eval_out: dict[str, Any]) -> None:
@@ -263,6 +269,8 @@ class Detection3DMetricSuite(MetricSuite[DetectionState]):
                 self.eval_class_range,
                 self.min_num_points,
             )
+            if self.observed_only:
+                keep &= eval_out["gt_observed"][i].to(device=keep.device)
 
             pred_boxes = prediction["bboxes_3d"].detach().to(dtype=torch.float32)
             self.pred_boxes.append(pred_boxes)
