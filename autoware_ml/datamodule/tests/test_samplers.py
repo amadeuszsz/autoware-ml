@@ -313,11 +313,18 @@ class _FakeScenesDataset:
 
 
 def test_lanes_stay_scene_contiguous_across_batches() -> None:
-    # Scenes 0-9, 10-14, 15-19; two lanes: lane0 gets scenes 0 and 2, lane1
-    # scene 1. rounds = min(15, 5) = 5, so batch position k always continues
-    # the same scene across consecutive batches.
+    # Lane0 gets scene 0-9, lane1 gets scenes 10-14 and 15-19
     sampler = GroupStreamingSampler(_FakeScenesDataset([10, 5, 5]), batch_size=2, shuffle=False)
-    assert list(sampler) == [0, 10, 1, 11, 2, 12, 3, 13, 4, 14]
+    assert list(sampler) == [index for pair in zip(range(10), range(10, 20)) for index in pair]
+
+
+def test_long_scenes_are_cut_into_chunks() -> None:
+    # The chunks are concatenated and cut into lanes 0-4 and 5-9
+    sampler = GroupStreamingSampler(
+        _FakeScenesDataset([8, 2]), batch_size=2, shuffle=False, max_group_length=4
+    )
+    assert sampler.scene_groups == [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9]]
+    assert list(sampler) == [0, 5, 1, 6, 2, 7, 3, 8, 4, 9]
 
 
 def test_per_rank_length_is_a_whole_number_of_batches() -> None:
@@ -334,7 +341,7 @@ def test_trimming_logs_a_warning(caplog: pytest.LogCaptureFixture) -> None:
     assert any("trimmed" in record.message for record in caplog.records)
 
 
-def test_ranks_agree_on_length_and_shard_disjoint_scenes() -> None:
+def test_ranks_agree_on_length_and_shard_disjoint_frames() -> None:
     dataset = _FakeScenesDataset([6, 6, 6, 6, 6, 6])
     rank_indices = []
     for rank in range(2):
@@ -359,6 +366,18 @@ def test_set_epoch_reshuffles_deterministically() -> None:
     assert epoch_indices(0) != epoch_indices(1)
 
 
+def test_shuffled_epochs_have_the_same_length() -> None:
+    sampler = GroupStreamingSampler(
+        _FakeScenesDataset([9, 2, 7, 3, 8, 1, 6, 4, 5, 5]), batch_size=2, shuffle=True, seed=0
+    )
+    lengths = set()
+    for epoch in range(20):
+        sampler.set_epoch(epoch)
+        lengths.add(len(list(sampler)))
+
+    assert lengths == {len(sampler)}
+
+
 def test_raises_when_lanes_cannot_be_filled() -> None:
     with pytest.raises(ValueError, match="cannot fill"):
-        list(GroupStreamingSampler(_FakeScenesDataset([5]), batch_size=2, shuffle=False))
+        list(GroupStreamingSampler(_FakeScenesDataset([1]), batch_size=2, shuffle=False))

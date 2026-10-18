@@ -29,6 +29,7 @@ class DataLoaderConfig:
         persistent_workers: Whether worker processes stay alive across epochs.
         shuffle: Whether the dataloader shuffles samples.
         drop_last: Whether to drop the final incomplete batch.
+        stream_max_frames: Longest stream of a streaming datamodule, None for whole scenarios.
     """
 
     batch_size: int = 1
@@ -37,6 +38,7 @@ class DataLoaderConfig:
     persistent_workers: bool = False
     shuffle: bool = False
     drop_last: bool = False
+    stream_max_frames: int | None = None
 
     def to_dataloader_kwargs(self) -> dict[str, Any]:
         """Convert to keyword arguments accepted by ``DataLoader``.

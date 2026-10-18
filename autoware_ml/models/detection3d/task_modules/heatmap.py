@@ -6,6 +6,9 @@ shared by CenterPoint-style dense heads.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 from jaxtyping import Bool, Float32, Int32, Int64
 import math
 
@@ -553,3 +556,42 @@ def circle_nms(
         distance = torch.norm(centers[remaining] - centers[current], dim=1)
         order = remaining[distance > min_radius]
     return scores.new_tensor(keep, dtype=torch.long)
+
+
+def grouped_circle_nms(
+    boxes: torch.Tensor,
+    scores: torch.Tensor,
+    labels: torch.Tensor,
+    groups: Sequence[Mapping[str, Any]],
+) -> torch.Tensor:
+    """Apply circle NMS across the classes of each group.
+
+    Args:
+        boxes: Decoded boxes in metric space.
+        scores: Confidence scores for the boxes.
+        labels: Class labels for the boxes.
+        groups: Groups with ``class_ids``, ``nms_radius`` and ``post_max_size``. A group with
+            ``nms_radius`` of ``0`` keeps its highest-scoring predictions.
+
+    Returns:
+        Indices of the kept boxes. Boxes of classes outside every group are kept.
+    """
+    keep_mask = torch.zeros(scores.shape[0], dtype=torch.bool, device=scores.device)
+    covered_mask = torch.zeros(scores.shape[0], dtype=torch.bool, device=scores.device)
+    for group in groups:
+        group_mask = torch.zeros(scores.shape[0], dtype=torch.bool, device=scores.device)
+        for class_id in group["class_ids"]:
+            group_mask |= labels == class_id
+        if not group_mask.any():
+            continue
+        covered_mask |= group_mask
+        group_indices = group_mask.nonzero(as_tuple=False).squeeze(1)
+        if group["nms_radius"] <= 0:
+            keep = scores[group_mask].argsort(descending=True)[: group["post_max_size"]]
+        else:
+            keep = circle_nms(
+                boxes[group_mask], scores[group_mask], group["nms_radius"], group["post_max_size"]
+            )
+        keep_mask[group_indices[keep]] = True
+    keep_mask |= ~covered_mask
+    return keep_mask.nonzero(as_tuple=False).squeeze(1)

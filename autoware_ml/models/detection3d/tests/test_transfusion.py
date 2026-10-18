@@ -380,7 +380,7 @@ def test_transfusion_predict_skips_circle_nms_by_default(monkeypatch: pytest.Mon
         raise AssertionError("circle_nms should not run when nms_type is None")
 
     monkeypatch.setattr(
-        "autoware_ml.models.detection3d.heads.transfusion.circle_nms", fail_circle_nms
+        "autoware_ml.models.detection3d.task_modules.heatmap.circle_nms", fail_circle_nms
     )
 
     predictions = head.predict(build_transfusion_outputs(tensors))
@@ -408,7 +408,7 @@ def test_transfusion_predict_applies_circle_nms_when_requested(
         return torch.tensor([0], dtype=torch.long)
 
     monkeypatch.setattr(
-        "autoware_ml.models.detection3d.heads.transfusion.circle_nms", fake_circle_nms
+        "autoware_ml.models.detection3d.task_modules.heatmap.circle_nms", fake_circle_nms
     )
 
     predictions = head.predict(build_transfusion_outputs(tensors))

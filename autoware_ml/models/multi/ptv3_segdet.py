@@ -67,6 +67,75 @@ from autoware_ml.models.segmentation3d.ptv3_base import (
 from autoware_ml.utils.deploy import ExportSpec
 
 
+def detection_gt_batch(batch_inputs: ModelBatchInputs) -> Detection3DGTBatch:
+    """Read the detection ground truth of the batch.
+
+    Args:
+        batch_inputs: Model inputs of the batch.
+
+    Returns:
+        The detection ground truth.
+
+    Raises:
+        ValueError: If the batch carries no detection ground truth.
+    """
+    gt_detections = batch_inputs.multi_task_gt_batch.detection3d_gt_batch
+    if gt_detections is None:
+        raise ValueError("PTv3 seg det needs the 3D detection ground truth of the batch.")
+    return gt_detections
+
+
+def detection_frame_mask(gt_detections: Detection3DGTBatch) -> torch.Tensor:
+    """Return the per-frame detection supervision mask.
+
+    Supervision is carried by the annotations themselves: a frame with no
+    ground-truth box contributes no detection supervision. This includes
+    genuinely empty scenes, which therefore provide no pure-background
+    signal - the deliberate price of not carrying a separate flag.
+
+    Args:
+        gt_detections: Detection ground truth of the batch.
+
+    Returns:
+        Boolean tensor of shape ``(batch_size,)``.
+    """
+    return gt_detections.gt_valid_bboxes > 0
+
+
+def mask_samples(values: Sequence[Any], mask: torch.Tensor) -> list[Any]:
+    """Select the flagged entries from a per-sample list."""
+    return [value for value, flagged in zip(values, mask.tolist()) if flagged]
+
+
+def empty_unsupervised_predictions(
+    predictions: Sequence[Detection3DSamplePredictions], mask: torch.Tensor
+) -> list[Detection3DSamplePredictions]:
+    """Empty the predictions of the frames without detection supervision.
+
+    Such frames still contribute one entry each to the detection metric: its list states are
+    gathered per element under DDP, so every rank must grow them by exactly one entry per
+    frame. Empty predictions next to the (already empty) ground truth are metric neutral.
+
+    Args:
+        predictions: Decoded predictions of every frame of the batch.
+        mask: Per-frame detection supervision mask.
+
+    Returns:
+        The predictions, emptied for the unsupervised frames.
+    """
+    return [
+        prediction
+        if flagged
+        else Detection3DSamplePredictions(
+            bboxes_3d=prediction.bboxes_3d[:0],
+            scores_3d=prediction.scores_3d[:0],
+            labels_3d=prediction.labels_3d[:0],
+            instance_ids=None if prediction.instance_ids is None else prediction.instance_ids[:0],
+        )
+        for prediction, flagged in zip(predictions, mask.tolist())
+    ]
+
+
 class PTv3SegDetModel(PTv3BaseModel):
     """PTv3 joint segmentation and detection model.
 
@@ -184,46 +253,6 @@ class PTv3SegDetModel(PTv3BaseModel):
             segmentation3d_head_outputs=Segmentation3DHeadOutputs(logits=seg_logits),
         )
 
-    @staticmethod
-    def _detection_gt_batch(batch_inputs: ModelBatchInputs) -> Detection3DGTBatch:
-        """Read the detection ground truth of the batch.
-
-        Args:
-            batch_inputs: Model inputs of the batch.
-
-        Returns:
-            The detection ground truth.
-
-        Raises:
-            ValueError: If the batch carries no detection ground truth.
-        """
-        gt_detections = batch_inputs.multi_task_gt_batch.detection3d_gt_batch
-        if gt_detections is None:
-            raise ValueError("PTv3 seg det needs the 3D detection ground truth of the batch.")
-        return gt_detections
-
-    @staticmethod
-    def _detection_frame_mask(gt_detections: Detection3DGTBatch) -> torch.Tensor:
-        """Return the per-frame detection supervision mask.
-
-        Supervision is carried by the annotations themselves: a frame with no
-        ground-truth box contributes no detection supervision. This includes
-        genuinely empty scenes, which therefore provide no pure-background
-        signal - the deliberate price of not carrying a separate flag.
-
-        Args:
-            gt_detections: Detection ground truth of the batch.
-
-        Returns:
-            Boolean tensor of shape ``(batch_size,)``.
-        """
-        return gt_detections.gt_valid_bboxes > 0
-
-    @staticmethod
-    def _mask_list(values: Sequence[Any], mask: torch.Tensor) -> list[Any]:
-        """Select the flagged entries from a per-sample list."""
-        return [value for value, flagged in zip(values, mask.tolist()) if flagged]
-
     def compute_metrics(
         self,
         batch_inputs: ModelBatchInputs,
@@ -239,13 +268,13 @@ class PTv3SegDetModel(PTv3BaseModel):
         det_outputs = outputs.detection3d().transfusion_head()
         seg_metrics = segmentation_point_loss(self.seg3d_head, seg_logits, batch_inputs)
 
-        gt_detections = self._detection_gt_batch(batch_inputs)
-        det_mask = self._detection_frame_mask(gt_detections)
+        gt_detections = detection_gt_batch(batch_inputs)
+        det_mask = detection_frame_mask(gt_detections)
         if bool(det_mask.any()):
             det_metrics = self.bbox_head.loss(
                 det_outputs.select_samples(det_mask),
-                self._mask_list(gt_detections.valid_bboxes_3d(), det_mask),
-                self._mask_list(gt_detections.valid_labels_3d(), det_mask),
+                mask_samples(gt_detections.valid_bboxes_3d(), det_mask),
+                mask_samples(gt_detections.valid_labels_3d(), det_mask),
             )
         else:
             # Keep the detection branch in the autograd graph with zero
@@ -282,24 +311,13 @@ class PTv3SegDetModel(PTv3BaseModel):
         """Produce the detection and the current frame segmentation eval data.
 
         Frames without detection supervision contribute empty predictions and
-        their (already empty) ground truth instead of being dropped: the
-        detection metric state must grow by exactly one entry per frame on
-        every rank, or torchmetrics' per-element list-state ``all_gather``
-        deadlocks under DDP when ranks see different seg/det frame mixes.
-        Empty prediction + empty ground truth is metric-neutral.
+        their (already empty) ground truth instead of being dropped, see
+        :func:`empty_unsupervised_predictions`.
         """
-        det_mask = self._detection_frame_mask(self._detection_gt_batch(batch))
-        predictions = self.bbox_head.predict(outputs.detection3d().transfusion_head())
-        predictions = [
-            prediction
-            if flagged
-            else Detection3DSamplePredictions(
-                bboxes_3d=prediction.bboxes_3d[:0],
-                scores_3d=prediction.scores_3d[:0],
-                labels_3d=prediction.labels_3d[:0],
-            )
-            for prediction, flagged in zip(predictions, det_mask.tolist())
-        ]
+        det_mask = detection_frame_mask(detection_gt_batch(batch))
+        predictions = empty_unsupervised_predictions(
+            self.bbox_head.predict(outputs.detection3d().transfusion_head()), det_mask
+        )
         eval_out = detection_eval_output(
             ModelPredictions(detection3d_predictions=predictions), batch
         )

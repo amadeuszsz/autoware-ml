@@ -19,6 +19,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from autoware_ml.databases.base_database import BaseDatabase
+from autoware_ml.types.dataset import SplitType
+
+_SCENARIO_SPLITS = (SplitType.TRAIN, SplitType.VAL, SplitType.TEST)
 
 
 @dataclass(frozen=True)
@@ -35,12 +38,15 @@ class DatasetSource:
       det3d: Whether the boxes of the source are used.
       seg3d: Whether the semantic masks of the source are used.
       repeat: How many times the frames of the source appear in one epoch.
+      scenario_split: Scenario split the records are read from, None for the split the source
+        is declared in.
     """
 
     database: BaseDatabase
     det3d: bool = True
     seg3d: bool = True
     repeat: int = 1
+    scenario_split: SplitType | None = None
 
     def __post_init__(self) -> None:
         """Validate the source declaration."""
@@ -50,3 +56,11 @@ class DatasetSource:
             )
         if self.repeat < 1:
             raise ValueError(f"A dataset source repeat must be at least 1, got {self.repeat}.")
+        if self.scenario_split is not None:
+            scenario_split = SplitType(self.scenario_split)
+            if scenario_split not in _SCENARIO_SPLITS:
+                raise ValueError(
+                    "A dataset source reads the train, val or test scenarios, "
+                    f"got {scenario_split.value!r}."
+                )
+            object.__setattr__(self, "scenario_split", scenario_split)

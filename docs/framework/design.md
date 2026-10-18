@@ -117,6 +117,7 @@ class DataModule(L.LightningDataModule):
         test_dataloader: DataLoaderConfig | None,
         predict_dataloader: DataLoaderConfig | None,
         train_frame_sampling: FrameSamplingConfig | None,
+        streaming: bool = False,
     ) -> None:
         ...
 ```
@@ -130,6 +131,15 @@ others. All sources of a datamodule must share one taxonomy.
 The dataset factory of a split is a partial dataset config. The datamodule completes it with
 the root path, the records and the supervision of each source, and concatenates the datasets
 of a split in declaration order.
+
+Temporal models need consecutive frames of one scenario in the same batch position. With
+`streaming=True` every dataloader draws its order from `GroupStreamingSampler`: each batch lane
+walks scenarios frame by frame, in timestamp order, and the training split shuffles the
+scenario order every epoch. The `stream_max_frames` of a dataloader cuts longer scenarios into
+consecutive chunks, and the chunks are split into lanes of equal length, so every rank and every
+epoch runs the same number of steps. The sampler shards the
+ranks itself, so the trainer runs with `use_distributed_sampler: false`, and frame sampling is
+not available.
 
 ### Dataset
 

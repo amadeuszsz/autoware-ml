@@ -9,6 +9,7 @@ import polars as pl
 from torch.utils.data import Dataset
 
 from autoware_ml.dataclasses.batch.sample_batch import ModelGTBatch, ModelGTSample
+from autoware_ml.databases.schemas.dataset_schemas import DatasetTableSchema
 from autoware_ml.transforms.base import TransformsCompose
 
 
@@ -62,6 +63,35 @@ class BaseDataset(Dataset):
           int: Record index.
         """
         return sample_index // self.samples_per_record
+
+    def scene_index_groups(self) -> list[list[int]]:
+        """
+        Group the sample indices by scenario, each group in frame time order.
+
+        Temporal models follow every scenario frame by frame, see GroupStreamingSampler.
+
+        Returns:
+          list[list[int]]: Sample indices of every scenario, sorted by frame timestamp.
+
+        Raises:
+          ValueError: If a record serves several samples, which share one timestamp.
+        """
+        if self.samples_per_record != 1:
+            raise ValueError(
+                "Scenario streams need one sample per record, the dataset serves "
+                f"{self.samples_per_record}."
+            )
+        scenario_id = DatasetTableSchema.SCENARIO_ID.name
+        groups = (
+            self.dataset_records_dataframe.select(
+                scenario_id, DatasetTableSchema.TIMESTAMP_SECONDS.name
+            )
+            .with_row_index("sample_index")
+            .sort([scenario_id, DatasetTableSchema.TIMESTAMP_SECONDS.name])
+            .group_by(scenario_id, maintain_order=True)
+            .agg("sample_index")
+        )
+        return [list(group) for group in groups["sample_index"].to_list()]
 
     def __len__(self) -> int:
         """Return the number of samples, one per record and served source.
@@ -169,6 +199,25 @@ class ConcatDataset(Dataset):
           int: Number of samples.
         """
         return self.ends[-1]
+
+    def scene_index_groups(self) -> list[list[int]]:
+        """
+        Group the sample indices of the split by scenario, each group in frame time order.
+
+        Every repeat of a source contributes its scenarios once more.
+
+        Returns:
+          list[list[int]]: Split indices of every scenario of every source and repeat.
+        """
+        groups: list[list[int]] = []
+        start = 0
+        for dataset, repeat in zip(self.datasets, self.repeats, strict=True):
+            dataset_groups = dataset.scene_index_groups()
+            for copy_index in range(repeat):
+                offset = start + copy_index * len(dataset)
+                groups.extend([offset + index for index in group] for group in dataset_groups)
+            start += len(dataset) * repeat
+        return groups
 
     def locate(self, index: int) -> tuple[int, int]:
         """Find the source and the sample behind one index of the split.

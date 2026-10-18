@@ -19,8 +19,8 @@ class FrameMetaTestCase(unittest.TestCase):
         """Build two frames whose map poses are translations of 1 and 2 along x."""
         self.device = torch.device("cpu")
         self.samples = [
-            FrameMetaSample(self.make_ego2global(1.0), "db/scene_a/0"),
-            FrameMetaSample(self.make_ego2global(2.0), "db/scene_b/1"),
+            FrameMetaSample(self.make_ego2global(1.0), "db/scene_a/0", 1700000000.25),
+            FrameMetaSample(self.make_ego2global(2.0), "db/scene_b/1", 1700000000.35),
         ]
 
     def make_ego2global(self, x: float, yaw_rad: float = 0.0) -> torch.Tensor:
@@ -67,22 +67,25 @@ class TestFrameMetaSample(FrameMetaTestCase):
     def test_field_order(self) -> None:
         """
         Input: the class itself.
-        Expected: the tuple exposes ``ego2global`` then ``scene_token``, since the dataset
-        builds it positionally.
+        Expected: the tuple exposes ``ego2global``, ``scene_token`` then
+        ``timestamp_seconds``.
         Check: compare ``_fields`` against the expected names.
         """
-        self.assertEqual(FrameMetaSample._fields, ("ego2global", "scene_token"))
+        self.assertEqual(
+            FrameMetaSample._fields, ("ego2global", "scene_token", "timestamp_seconds")
+        )
 
     def test_holds_given_fields(self) -> None:
         """
         Input: the first fixture sample.
-        Expected: the pose and scene token are stored as given.
-        Check: compare the pose with ``torch.equal`` and read the token back.
+        Expected: the pose, the scene token and the timestamp are stored as given.
+        Check: compare the pose with ``torch.equal`` and read the token and timestamp back.
         """
         sample = self.samples[0]
 
         self.assertTrue(torch.equal(sample.ego2global, self.make_ego2global(1.0)))
         self.assertEqual(sample.scene_token, "db/scene_a/0")
+        self.assertEqual(sample.timestamp_seconds, 1700000000.25)
 
     def test_is_immutable(self) -> None:
         """
@@ -100,10 +103,13 @@ class TestFrameMetaBatchFields(FrameMetaTestCase):
     def test_field_order(self) -> None:
         """
         Input: the class itself.
-        Expected: the tuple exposes ``ego2globals`` then ``scene_tokens``.
+        Expected: the tuple exposes ``ego2globals``, ``scene_tokens`` then
+        ``timestamps_seconds``.
         Check: compare ``_fields`` against the expected names.
         """
-        self.assertEqual(FrameMetaBatch._fields, ("ego2globals", "scene_tokens"))
+        self.assertEqual(
+            FrameMetaBatch._fields, ("ego2globals", "scene_tokens", "timestamps_seconds")
+        )
 
     def test_is_immutable(self) -> None:
         """
@@ -133,6 +139,19 @@ class TestFrameMetaBatchCollate(FrameMetaTestCase):
         self.assertTrue(torch.equal(batch.ego2globals[0], self.samples[0].ego2global))
         self.assertTrue(torch.equal(batch.ego2globals[1], self.samples[1].ego2global))
         self.assertEqual(list(batch.scene_tokens), ["db/scene_a/0", "db/scene_b/1"])
+
+    def test_stacks_timestamps_in_float64(self) -> None:
+        """
+        Input: the two fixture samples with timestamps 0.1 s apart around 1.7e9 s.
+        Expected: the timestamps stack in batch order in float64, which keeps the 0.1 s gap.
+        Check: compare the stacked tensor and the recovered gap.
+        """
+        batch = FrameMetaBatch.collate_gt_samples(self.samples, [None, None])
+
+        self.assertEqual(batch.timestamps_seconds.dtype, torch.float64)
+        self.assertEqual(batch.timestamps_seconds.tolist(), [1700000000.25, 1700000000.35])
+        gap = float(batch.timestamps_seconds[1] - batch.timestamps_seconds[0])
+        self.assertAlmostEqual(gap, 0.1, places=6)
 
     def test_output_dtype(self) -> None:
         """
@@ -203,7 +222,7 @@ class TestFrameMetaBatchLidarAugmentation(FrameMetaTestCase):
         expected = ego2global @ torch.linalg.inv(augmentation.transformation_matrix)
 
         batch = FrameMetaBatch.collate_gt_samples(
-            [FrameMetaSample(ego2global, "db/scene/0")], [augmentation]
+            [FrameMetaSample(ego2global, "db/scene/0", 0.0)], [augmentation]
         )
 
         torch.testing.assert_close(batch.ego2globals[0], expected)
@@ -225,7 +244,7 @@ class TestFrameMetaBatchLidarAugmentation(FrameMetaTestCase):
         augmented_point = self.apply(augmentation.transformation_matrix, raw_point)
 
         batch = FrameMetaBatch.collate_gt_samples(
-            [FrameMetaSample(ego2global, "db/scene/0")], [augmentation]
+            [FrameMetaSample(ego2global, "db/scene/0", 0.0)], [augmentation]
         )
 
         expected_map_point = self.apply(ego2global, raw_point)

@@ -5,6 +5,7 @@ from autoware_ml.databases.schemas.dataset_schemas import DatasetTableSchema
 from autoware_ml.databases.schemas.box3d_schemas import Box3DDatasetSchema
 from autoware_ml.datamodule.base_dataset_task import BaseDatasetTask
 from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
+from autoware_ml.geometry.bbox_3d.instance_ids import hash_instance_ids
 from autoware_ml.geometry.bbox_3d.lidar_bbox3d import LidarBBoxes3D
 from autoware_ml.types.geometry import Box3DFieldIndex, Box3DCenterCoordinateType
 
@@ -58,11 +59,15 @@ class Detection3DTask(BaseDatasetTask):
         gt_bboxes_attributes = selected_row.field(
             Box3DDatasetSchema.BOX3D_ATTRIBUTES.name
         ).to_list()
+        gt_bboxes_instance_ids = hash_instance_ids(
+            selected_row.field(Box3DDatasetSchema.BOX3D_INSTANCE_ID.name).to_list()
+        )
 
         if not len(gt_bboxes_3d):
             gt_bboxes_3d = np.zeros((0, len(Box3DFieldIndex)), dtype=np.float32)
             gt_bboxes_labels = np.zeros((0,), dtype=np.int32)
             gt_bboxes_num_lidar_points = np.zeros((0,), dtype=np.int32)
+            gt_bboxes_instance_ids = np.zeros((0,), dtype=np.int64)
         else:
             # A box with no annotated velocity is stored with a non finite one and is served
             # at zero velocity. The size targets are log encoded, so boxes with a non finite
@@ -79,6 +84,7 @@ class Detection3DTask(BaseDatasetTask):
                 name for name, keep in zip(gt_bboxes_label_names, valid, strict=True) if keep
             ]
             gt_bboxes_num_lidar_points = gt_bboxes_num_lidar_points[valid]
+            gt_bboxes_instance_ids = gt_bboxes_instance_ids[valid]
             gt_bboxes_attributes = [
                 attributes
                 for attributes, keep in zip(gt_bboxes_attributes, valid, strict=True)
@@ -91,6 +97,7 @@ class Detection3DTask(BaseDatasetTask):
             bbox_center_coordinate_type=Box3DCenterCoordinateType.GRAVITY_CENTER,
             bbox_label_names=gt_bboxes_label_names,
             bbox_num_lidar_points=gt_bboxes_num_lidar_points,
+            bbox_instance_ids=gt_bboxes_instance_ids,
             bbox_attributes=gt_bboxes_attributes,
         )
 

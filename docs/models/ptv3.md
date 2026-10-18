@@ -13,6 +13,10 @@ PointTransformerV3 is a LiDAR encoder for LiDAR 3D semantic segmentation and
 - Detection: `PTv3DetBEVNeck` fuses the two coarsest encoder stages
   (`PTv3DetFeatureFusion`), scatters them onto a dense BEV canvas at the
   detection-head resolution, and feeds a `TransFusionHead`.
+- Temporal detection (experimental): `PTv3SegDetSparse4DModel` feeds the same
+  stage fusion to a `Sparse4DHead`, whose queries sample the sparse voxels at
+  keypoints around their anchors with no BEV canvas, and carry the most
+  confident instances from one frame of a scenario to the next.
 
 The model reads the current lidar frame and its sweeps, and every point has a time lag. The
 voxel feature encoder places each voxel at its current frame points and describes the past
@@ -42,14 +46,15 @@ implementation so ONNX export remains supported.
 
 ## Available Configurations
 
-| Config Name                                          | Task                         | Dataset   | Head        | Range | Purpose                        |
-| ---------------------------------------------------- | ---------------------------- | --------- | ----------- | ----- | ------------------------------ |
-| `segmentation3d/ptv3/voxel005_51m_nuscenes`          | segmentation3d               | nuScenes  | Seg decoder | 51 m  | nuScenes segmentation          |
-| `segmentation3d/ptv3/voxel012_122m_t4dataset_j6gen2` | segmentation3d               | T4Dataset | Seg decoder | 122 m | T4Dataset segmentation         |
-| `detection3d/ptv3/voxel005_51m_nuscenes`             | detection3d                  | nuScenes  | TransFusion | 51 m  | nuScenes detection             |
-| `detection3d/ptv3/voxel012_122m_t4dataset_j6gen2`    | detection3d                  | T4Dataset | TransFusion | 122 m | T4Dataset detection            |
-| `multi/ptv3/voxel005_51m_nuscenes`                   | segmentation3d + detection3d | nuScenes  | TransFusion | 51 m  | Joint segmentation + detection |
-| `multi/ptv3/voxel012_122m_t4dataset_j6gen2`          | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Joint segmentation + detection |
+| Config Name                                               | Task                         | Dataset   | Head        | Range | Purpose                                                  |
+| --------------------------------------------------------- | ---------------------------- | --------- | ----------- | ----- | -------------------------------------------------------- |
+| `segmentation3d/ptv3/voxel005_51m_nuscenes`               | segmentation3d               | nuScenes  | Seg decoder | 51 m  | nuScenes segmentation                                    |
+| `segmentation3d/ptv3/voxel012_122m_t4dataset_j6gen2`      | segmentation3d               | T4Dataset | Seg decoder | 122 m | T4Dataset segmentation                                   |
+| `detection3d/ptv3/voxel005_51m_nuscenes`                  | detection3d                  | nuScenes  | TransFusion | 51 m  | nuScenes detection                                       |
+| `detection3d/ptv3/voxel012_122m_t4dataset_j6gen2`         | detection3d                  | T4Dataset | TransFusion | 122 m | T4Dataset detection                                      |
+| `multi/ptv3/voxel005_51m_nuscenes`                        | segmentation3d + detection3d | nuScenes  | TransFusion | 51 m  | Joint segmentation + detection                           |
+| `multi/ptv3/voxel012_122m_t4dataset_j6gen2`               | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Joint segmentation + detection                           |
+| `multi/ptv3/voxel012_122m_t4dataset_pseudo_10hz_temporal` | segmentation3d + detection3d | T4Dataset | Sparse4D    | 122 m | Joint segmentation + temporal detection on 10 Hz streams |
 
 ## Training
 
@@ -58,6 +63,14 @@ autoware-ml train --config-name segmentation3d/ptv3/voxel005_51m_nuscenes
 autoware-ml train --config-name segmentation3d/ptv3/voxel012_122m_t4dataset_j6gen2
 autoware-ml train --config-name detection3d/ptv3/voxel005_51m_nuscenes
 autoware-ml train --config-name detection3d/ptv3/voxel012_122m_t4dataset_j6gen2
+```
+
+The Sparse4D head reads k-means anchors of the training boxes. Generate them once per task,
+they land in the anchor file of the config under the cache directory:
+
+```bash
+python -m autoware_ml.scripts.generate_anchors \
+    --config-name tasks/multi/ptv3/voxel012_122m_t4dataset_pseudo_10hz_temporal
 ```
 
 For a pipeline validation run:
@@ -149,8 +162,8 @@ number of serialization orders.
 | `voxels`               | `[N_0, P, 5]` | Points of every voxel as `(x, y, z, intensity, time_lag)`, zero padded. `time_lag` is in seconds, 0 for the current frame, positive for a past sweep and negative for a future one. |
 | `num_points_per_voxel` | `[N_0]`       | Number of points every voxel holds.                                                                                                                                                 |
 | `grid_coord`           | `[N_0, 3]`    | Integer voxel coordinates.                                                                                                                                                          |
-| `patch_order`          | `[O, S_0]`    | The order padded to whole attention windows (see below).                                                                                                                           |
-| `serialized_inverse`   | `[O, N_0]`    | Inverse of the serialization order per curve (argsort of the codes).                                                                                                               |
+| `patch_order`          | `[O, S_0]`    | The order padded to whole attention windows (see below).                                                                                                                            |
+| `serialized_inverse`   | `[O, N_0]`    | Inverse of the serialization order per curve (argsort of the codes).                                                                                                                |
 
 `S_k = ceil(N_k / patch_size_k) * patch_size_k` is the padded slot count of level `k`.
 The graph does not sort: preprocessing computes the input level's order anyway
@@ -227,7 +240,21 @@ The split export produces one graph per `deploy.onnx.modules` entry:
   from the artifact's `dec_depths`.
 - `det3d_head` - consumes `point_feat_{S-2}`, `point_feat_{S-1}`,
   `pooling_cluster_{S-2}`, and `point_grid_coord_{S-2}` and outputs the
-  detection head tensors.
+  detection head tensors. The temporal Sparse4D graph instead consumes the
+  stage features from the finest pyramid stage to the deepest one with the
+  pooling clusters and voxel coordinates in between, plus the deepest voxel
+  coordinates when the pyramid keeps that stage as a level, and takes the instance
+  memory of the last frame (`temp_instance_feature`, `temp_anchor`,
+  `temp_confidence`) with the continuity gate `temp_valid`, the frame gap
+  `time_interval` and the transform `prev2current` from the last frame into
+  the current one. Besides the last decoder layer of every query
+  (`classification`, `prediction`, `quality`) it returns the memory of the
+  next frame (`temp_*_out`) and `temp_query_index_out`, the query every
+  memory slot was selected from, which lets the runtime carry the track of a
+  query into its slot. Every decoder layer samples the stages with one
+  `autoware::SparseDeformableAggregation` node, which reads the keypoints, the
+  sampling weights and the padded features and dense voxel lookups of every
+  stage, and is served by the TensorRT plugin of the same name.
 
 ## Implementation
 
@@ -237,10 +264,14 @@ The split export produces one graph per `deploy.onnx.modules` entry:
 | `autoware_ml/models/segmentation3d/heads/ptv3.py`     | PTv3 segmentation decoder head                 |
 | `autoware_ml/models/detection3d/ptv3.py`              | PTv3 BEV neck and detection model wrapper      |
 | `autoware_ml/models/detection3d/heads/transfusion.py` | TransFusion detection head                     |
+| `autoware_ml/models/detection3d/heads/sparse4d.py`    | Sparse4D temporal query detection head         |
+| `autoware_ml/models/multi/ptv3_segdet_sparse4d.py`    | PTv3 segmentation and Sparse4D model wrapper   |
+| `autoware_ml/scripts/generate_anchors.py`             | Sparse4D anchors from the training boxes       |
 | `autoware_ml/models/segmentation3d/encoders/ptv3.py`  | Reusable PTv3 encoder components               |
 | `autoware_ml/models/segmentation3d/encoders/voxel.py` | Voxel feature encoder of the frame and sweeps  |
 | `autoware_ml/utils/point_cloud/`                      | Shared point-cloud utilities and serialization |
 | `autoware_ml/ops/segment/segment_csr.py`              | Segment reduction export operator              |
+| `autoware_ml/ops/deformable_aggregation/`             | Sparse4D keypoint sampling export operator     |
 | `autoware_ml/losses/segmentation3d/`                  | Segmentation losses used by PTv3               |
 | `autoware_ml/datamodule/t4dataset/dataset.py`         | T4Dataset records as a dataset                 |
 | `autoware_ml/datamodule/nuscenes/dataset.py`          | nuScenes dataset                               |

@@ -157,12 +157,7 @@ def test_ptv3_seg_split_export_supports_decoder_blocks() -> None:
 
 
 def test_ptv3_segdet_eval_output_scatters_segmentation_to_original_points() -> None:
-    model = SimpleNamespace(
-        bbox_head=_DummyBBoxHead(),
-        _detection_gt_batch=PTv3SegDetModel._detection_gt_batch,
-        _detection_frame_mask=PTv3SegDetModel._detection_frame_mask,
-        _mask_list=PTv3SegDetModel._mask_list,
-    )
+    model = SimpleNamespace(bbox_head=_DummyBBoxHead())
     det_outputs = build_transfusion_outputs(
         {
             name: torch.zeros((1, channels, 8))
