@@ -144,6 +144,7 @@ def frame_inputs(device: torch.device, timestamp: float) -> ModelBatchInputs:
             timestamps=torch.tensor([timestamp], dtype=torch.float64, device=device),
             key_frames=[True],
             lanelet_map_paths=[None],
+            lidar_augmentations=torch.eye(4, device=device)[None],
         ),
     )
     return batch.replace(multi_task_gt_batch=gt_batch)
@@ -161,6 +162,7 @@ def _three_frame_step(
         timestamps=torch.full((3,), 100.0, dtype=torch.float64),
         key_frames=key_frames,
         lanelet_map_paths=[None] * 3,
+        lidar_augmentations=torch.eye(4, dtype=torch.float64).repeat(3, 1, 1),
     )
     batch = ModelBatchInputs(
         multi_task_gt_batch=ModelGTBatch(

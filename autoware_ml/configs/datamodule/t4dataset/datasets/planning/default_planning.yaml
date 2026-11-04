@@ -1,0 +1,16 @@
+# Future of the ego vehicle (3 s) at 0.5 s steps, ego status from the records 0.2 s and 0.4 s
+# back, finer steps make the acceleration noisy
+_target_: autoware_ml.datamodule.common.planning.PlanningTask
+_convert_: all
+_partial_: true
+
+ego_steps: 6
+step_seconds: 0.5
+status_step_seconds: 0.2
+time_tolerance_seconds: 0.03
+# Ego path out to 48 m, dense near the ego where turns bend, from the ego poses of the next 15 s.
+# Moves below 0.3 m are pose noise of a standing ego.
+path_distances: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0, 18.0, 22.0, 27.0, 33.0, 40.0, 48.0]
+path_seconds: 15.0
+path_step_seconds: 0.2
+path_min_spacing: 0.3

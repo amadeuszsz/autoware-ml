@@ -35,6 +35,7 @@ def _batch(padding: list[bool], key_frames: list[bool] | None) -> ModelGTBatch:
             timestamps=torch.zeros(len(padding), dtype=torch.float64),
             lanelet_map_paths=[None] * len(padding),
             key_frames=key_frames,
+            lidar_augmentations=torch.eye(4).repeat(len(padding), 1, 1),
         )
     )
     return ModelGTBatch(

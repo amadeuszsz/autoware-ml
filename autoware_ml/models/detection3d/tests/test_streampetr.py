@@ -225,6 +225,7 @@ def _build_frame_meta(
         timestamps=torch.tensor(timestamps, dtype=torch.float64),
         lanelet_map_paths=[None] * batch_size,
         key_frames=[True] * batch_size,
+        lidar_augmentations=torch.eye(4).repeat(batch_size, 1, 1),
     )
 
 

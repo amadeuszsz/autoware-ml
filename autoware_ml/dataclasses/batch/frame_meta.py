@@ -73,6 +73,8 @@ class FrameMetaBatch(NamedTuple):
             resolve epoch seconds.
         lanelet_map_paths: Per-frame lanelet map paths, ``None`` for frames without a map.
         key_frames: Per-frame flags, whether the frame is a key frame of its scene.
+        lidar_augmentations: Per-frame 4x4 transforms from the raw to the augmented lidar frame,
+            the identity for frames without an augmentation.
     """
 
     ego2globals: Float64[Tensor, "batch_size 4 4"]
@@ -80,6 +82,7 @@ class FrameMetaBatch(NamedTuple):
     timestamps: Float64[Tensor, " batch_size"]
     lanelet_map_paths: Sequence[str | None]
     key_frames: Sequence[bool]
+    lidar_augmentations: Float64[Tensor, "batch_size 4 4"]
 
     @staticmethod
     def collate_gt_samples(
@@ -111,16 +114,17 @@ class FrameMetaBatch(NamedTuple):
                 f"{len(lidar_transformation_samples)} lidar transformation samples."
             )
 
-        ego2globals = []
+        ego2globals, augmentations = [], []
         for frame_meta, lidar_transformation in zip(
             frame_meta_samples, lidar_transformation_samples
         ):
             ego2global = frame_meta.ego2global
+            augmentation = torch.eye(4, dtype=ego2global.dtype)
             if lidar_transformation is not None:
-                ego2global = ego2global @ torch.linalg.inv(
-                    lidar_transformation.transformation_matrix.to(ego2global)
-                )
+                augmentation = lidar_transformation.transformation_matrix.to(ego2global)
+                ego2global = ego2global @ torch.linalg.inv(augmentation)
             ego2globals.append(ego2global)
+            augmentations.append(augmentation)
 
         return FrameMetaBatch(
             ego2globals=torch.stack(ego2globals, dim=0),
@@ -131,6 +135,7 @@ class FrameMetaBatch(NamedTuple):
             ),
             lanelet_map_paths=[frame_meta.lanelet_map_path for frame_meta in frame_meta_samples],
             key_frames=[frame_meta.key_frame for frame_meta in frame_meta_samples],
+            lidar_augmentations=torch.stack(augmentations, dim=0),
         )
 
     def sample(self, index: int) -> FrameMetaSample:
@@ -151,7 +156,7 @@ class FrameMetaBatch(NamedTuple):
         )
 
     def to_device(self, device: torch.device) -> FrameMetaBatch:
-        """Move the transforms and the timestamps to ``device``.
+        """Move the transforms, the augmentations and the timestamps to ``device``.
 
         Args:
             device: Target device.
@@ -165,4 +170,5 @@ class FrameMetaBatch(NamedTuple):
             timestamps=self.timestamps.to(device),
             lanelet_map_paths=self.lanelet_map_paths,
             key_frames=self.key_frames,
+            lidar_augmentations=self.lidar_augmentations.to(device),
         )

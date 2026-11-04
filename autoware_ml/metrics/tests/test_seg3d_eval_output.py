@@ -46,6 +46,7 @@ def _batch_inputs(
         timestamps=torch.zeros(num_frames, dtype=torch.float64),
         lanelet_map_paths=["/maps/a.osm", None][:num_frames],
         key_frames=list(key_frames[:num_frames]),
+        lidar_augmentations=torch.eye(4).repeat(num_frames, 1, 1),
     )
     gt_batch = batch_inputs.multi_task_gt_batch._replace(frame_meta_batch=frame_meta)
     return batch_inputs.replace(multi_task_gt_batch=gt_batch)

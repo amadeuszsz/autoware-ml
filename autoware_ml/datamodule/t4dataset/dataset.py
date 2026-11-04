@@ -253,6 +253,11 @@ class T4Dataset(BaseDataset):
             if TaskType.MOTION in data_samples
             else None
         )
+        planning_gt_sample = (
+            data_samples[TaskType.PLANNING].planning_gt_sample
+            if TaskType.PLANNING in data_samples
+            else None
+        )
         # The motion task carries the map elements of the record when it trains the online map
         online_map_gt_sample = (
             data_samples[TaskType.MOTION].online_map_gt_sample
@@ -292,6 +297,7 @@ class T4Dataset(BaseDataset):
                 detection3d_traffic_cone_barrier_bbox_status
             ),
             motion_gt_sample=motion_gt_sample,
+            planning_gt_sample=planning_gt_sample,
             online_map_gt_sample=online_map_gt_sample,
         )
 

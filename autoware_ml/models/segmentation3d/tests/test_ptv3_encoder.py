@@ -820,6 +820,7 @@ def test_point_loss_leaves_out_the_padding_and_non_key_samples() -> None:
             timestamps=torch.tensor([0.0, 0.1], dtype=torch.float64),
             lanelet_map_paths=[None, None],
             key_frames=key_frames,
+            lidar_augmentations=torch.eye(4, dtype=torch.float64).repeat(2, 1, 1),
         )
 
     gt_batch = batch.multi_task_gt_batch

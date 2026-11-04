@@ -127,12 +127,19 @@ class TestFrameMetaBatchFields(FrameMetaTestCase):
         """
         Input: the class itself.
         Expected: the tuple exposes ``ego2globals``, ``scene_tokens``, ``timestamps``,
-        ``lanelet_map_paths`` and ``key_frames``.
+        ``lanelet_map_paths``, ``key_frames`` and ``lidar_augmentations``.
         Check: compare ``_fields`` against the expected names.
         """
         self.assertEqual(
             FrameMetaBatch._fields,
-            ("ego2globals", "scene_tokens", "timestamps", "lanelet_map_paths", "key_frames"),
+            (
+                "ego2globals",
+                "scene_tokens",
+                "timestamps",
+                "lanelet_map_paths",
+                "key_frames",
+                "lidar_augmentations",
+            ),
         )
 
     def test_is_immutable(self) -> None:
@@ -291,8 +298,9 @@ class TestFrameMetaBatchLidarAugmentation(FrameMetaTestCase):
         Input: the two fixture samples, the first augmented by a 90 degree yaw and the second
         left ``None``.
         Expected: only the first pose is composed with the inverse rotation while the second
-        is kept as given, and the tokens stay in batch order.
-        Check: compare each pose against its expectation and read the token list.
+        is kept as given, the augmentations are the rotation and the identity, and the tokens
+        stay in batch order.
+        Check: compare each pose and augmentation against its expectation and read the tokens.
         """
         augmentation = self.make_augmentation(yaw_rad=math.pi / 2)
         expected_first = self.samples[0].ego2global @ torch.linalg.inv(
@@ -303,6 +311,8 @@ class TestFrameMetaBatchLidarAugmentation(FrameMetaTestCase):
 
         torch.testing.assert_close(batch.ego2globals[0], expected_first)
         self.assertTrue(torch.equal(batch.ego2globals[1], self.samples[1].ego2global))
+        torch.testing.assert_close(batch.lidar_augmentations[0], augmentation.transformation_matrix)
+        self.assertTrue(torch.equal(batch.lidar_augmentations[1], torch.eye(4)))
         self.assertEqual(list(batch.scene_tokens), ["db/scene_a/0", "db/scene_b/1"])
         self.assertEqual(list(batch.lanelet_map_paths), [None, "/maps/scene_b.osm"])
 

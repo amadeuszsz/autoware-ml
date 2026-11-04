@@ -24,3 +24,4 @@ class TaskType(StrEnum):
     DETECTION3D = "detection3d"
     SEGMENTATION3D = "segmentation3d"
     MOTION = "motion"
+    PLANNING = "planning"

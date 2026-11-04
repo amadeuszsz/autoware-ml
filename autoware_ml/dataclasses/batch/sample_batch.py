@@ -34,6 +34,7 @@ from autoware_ml.dataclasses.batch.motion import (
 )
 from autoware_ml.dataclasses.batch.frame_meta import FrameMetaBatch, FrameMetaSample
 from autoware_ml.dataclasses.batch.online_map import OnlineMapGTBatch, OnlineMapGTSample
+from autoware_ml.dataclasses.batch.planning import PlanningGTBatch, PlanningGTSample
 from autoware_ml.dataclasses.batch.segmentation3d import (
     Segmentation3DGTBatch,
     Segmentation3DGTSample,
@@ -100,6 +101,8 @@ class ModelGTSample(NamedTuple):
     # Ground truth of the motion task: the agent tracks and the vector map of the
     # scenario. None when the sample carries none.
     motion_gt_sample: MotionGTSample | None = None
+    # Future of the ego vehicle in the raw frame, None without planning GT.
+    planning_gt_sample: PlanningGTSample | None = None
 
     # Map elements near the frame in the raw frame, None without map GT.
     online_map_gt_sample: OnlineMapGTSample | None = None
@@ -161,6 +164,8 @@ class ModelGTBatch(NamedTuple):
 
     # Agent tracks and vector maps of every scenario, None when the samples carry none.
     motion_gt_batch: MotionGTBatch | None = None
+    # Ego futures in the augmented frames, None without planning GT.
+    planning_gt_batch: PlanningGTBatch | None = None
 
     # Map elements in the augmented frames, resampled and padded. None without map GT.
     online_map_gt_batch: OnlineMapGTBatch | None = None
@@ -198,6 +203,9 @@ class ModelGTBatch(NamedTuple):
             padding_mask=self.padding_mask.to(device),
             motion_gt_batch=self.motion_gt_batch.to_device(device)
             if self.motion_gt_batch is not None
+            else None,
+            planning_gt_batch=self.planning_gt_batch.to_device(device)
+            if self.planning_gt_batch is not None
             else None,
             online_map_gt_batch=self.online_map_gt_batch.to_device(device)
             if self.online_map_gt_batch is not None
@@ -515,6 +523,38 @@ class ModelGTBatch(NamedTuple):
         )
 
     @staticmethod
+    def collate_planning_gt_samples(
+        gt_samples: Sequence[ModelGTSample],
+    ) -> PlanningGTBatch | None:
+        """
+        Collate the ego futures of a batch into the augmented frames.
+
+        Args:
+          gt_samples: Sequence of ModelGTSample to be collated.
+
+        Returns:
+          PlanningGTBatch | None: Collated ego futures, None when no sample carries them.
+
+        Raises:
+          ValueError: If only some samples carry ego futures.
+        """
+        planning_gt_samples = [
+            sample.planning_gt_sample
+            for sample in gt_samples
+            if sample.planning_gt_sample is not None
+        ]
+        if not len(planning_gt_samples):
+            return None
+        if len(planning_gt_samples) != len(gt_samples):
+            raise ValueError("All samples must have planning_gt_sample for collating.")
+        return PlanningGTBatch.collate_gt_samples(
+            planning_gt_samples=planning_gt_samples,
+            lidar_transformation_samples=[
+                sample.lidar_transformation_sample for sample in gt_samples
+            ],
+        )
+
+    @staticmethod
     def collate_online_map_gt_samples(
         gt_samples: Sequence[ModelGTSample],
     ) -> OnlineMapGTBatch | None:
@@ -593,6 +633,9 @@ class ModelGTBatch(NamedTuple):
         # Collate the scenarios of the motion task
         motion_gt_batch = ModelGTBatch.collate_motion_gt_samples(gt_samples=gt_samples)
 
+        # Collate the ego futures into the augmented frames
+        planning_gt_batch = ModelGTBatch.collate_planning_gt_samples(gt_samples=gt_samples)
+
         # Collate the map elements into the augmented frames
         online_map_gt_batch = ModelGTBatch.collate_online_map_gt_samples(gt_samples=gt_samples)
 
@@ -608,5 +651,6 @@ class ModelGTBatch(NamedTuple):
                 [sample.is_padding for sample in gt_samples], dtype=torch.bool
             ),
             motion_gt_batch=motion_gt_batch,
+            planning_gt_batch=planning_gt_batch,
             online_map_gt_batch=online_map_gt_batch,
         )

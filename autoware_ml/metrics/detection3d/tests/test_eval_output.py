@@ -220,6 +220,7 @@ class TestTypedDetection3DEvalOutput(unittest.TestCase):
                 timestamps=torch.tensor([0.0, 0.1], dtype=torch.float64, device=self.device),
                 lanelet_map_paths=["/maps/scene_a.osm", None],
                 key_frames=[True, False],
+                lidar_augmentations=torch.eye(4, device=self.device).repeat(2, 1, 1),
             )
         )
 
