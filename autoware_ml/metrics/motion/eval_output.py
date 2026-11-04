@@ -38,7 +38,12 @@ class MotionEvalFrame(BaseModel):
       gt_labels: Class of every ground truth agent.
       gt_futures: Future positions of every ground truth agent.
       gt_valid: Whether a future position is known.
+      gt_size: Length and width of every ground truth agent.
+      gt_yaw: Heading of every ground truth agent.
       gt_observed: Whether the stream observed every ground truth agent so far.
+      plan: Planned ego positions per future step, for a planning model.
+      ego_future: Future ego positions per step, for a planning model.
+      ego_future_valid: Whether a future ego position is known, for a planning model.
       scored: Whether the metrics score the frame. A frame padding a streaming lane or lying
         between key frames is kept so every rank gathers as many frames, and left out.
     """
@@ -55,7 +60,12 @@ class MotionEvalFrame(BaseModel):
     gt_labels: Int[torch.Tensor, " num_gts"]
     gt_futures: Float[torch.Tensor, "num_gts num_steps 2"]
     gt_valid: Bool[torch.Tensor, "num_gts num_steps"]
+    gt_size: Float[torch.Tensor, "num_gts 2"]
+    gt_yaw: Float[torch.Tensor, " num_gts"]
     gt_observed: Bool[torch.Tensor, " num_gts"]
+    plan: Float[torch.Tensor, "num_plan_steps 2"] | None = None
+    ego_future: Float[torch.Tensor, "num_plan_steps 2"] | None = None
+    ego_future_valid: Bool[torch.Tensor, " num_plan_steps"] | None = None
     scored: bool
 
     @model_validator(mode="after")
@@ -87,6 +97,16 @@ class MotionEvalOutput(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True)
 
     frames: Sequence[MotionEvalFrame]
+
+    @property
+    def check_all_plans(self) -> bool:
+        """Whether the frames carry the plan and the future of the ego."""
+        return all(
+            frame.plan is not None
+            and frame.ego_future is not None
+            and frame.ego_future_valid is not None
+            for frame in self.frames
+        )
 
 
 class OnlineMapEvalFrame(BaseModel):

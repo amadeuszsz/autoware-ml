@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Builders of the typed motion eval output for the motion metric tests."""
+"""Builders of the typed motion eval output for the motion and planning metric tests."""
 
 from __future__ import annotations
 

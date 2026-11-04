@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""History of the detection queries, per batch lane."""
+"""History of the detection queries and of the extra queries after them, per batch lane."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ class QueueState(NamedTuple):
         Args:
             batch_size: Number of lanes.
             length: Entries per lane.
-            num_queries: Detection queries per frame.
+            num_queries: Queries per frame, the detection queries and the extra queries after them.
             embed_dims: Feature width of the queries.
             stride: Frames between two pushed entries.
             device: Device of the state.
@@ -80,6 +80,7 @@ def advance_queue(
     carried_index: Int64[torch.Tensor, "batch_size num_temp_instances"],
     prev2current: Float[torch.Tensor, "batch_size 4 4"],
     stride: int,
+    num_extra: int,
 ) -> QueueState:
     """Move the history to the queries and into the frame of the new frame.
 
@@ -90,13 +91,18 @@ def advance_queue(
             from ``(B, K)``.
         prev2current: Transform from the previous to the current frame ``(B, 4, 4)``.
         stride: Frames between two pushed entries.
+        num_extra: Queries after the detection queries that keep their slot, such as the ego.
 
     Returns:
         The history of the new frame, empty for the restarted lanes.
     """
     batch_size, length, total = state.query_map.shape
+    num_queries = total - num_extra
     previous = torch.full((batch_size, total), -1, dtype=torch.long, device=state.query_map.device)
     previous[:, : carried_index.shape[1]] = carried_index
+    # A head without extra queries writes no slot, an empty write breaks the ONNX export
+    if num_extra > 0:
+        previous[:, num_queries:] = torch.arange(num_queries, total, device=previous.device)
     gathered = state.query_map.gather(2, previous.clamp(min=0)[:, None].expand(-1, length, -1))
     query_map = torch.where(previous[:, None] >= 0, gathered, torch.full_like(gathered, -1))
     restart = ~lane_continues

@@ -323,6 +323,16 @@ class VehicleGeometry:
         return self.wheel_tread + self.left_overhang + self.right_overhang
 
     @property
+    def length(self) -> float:
+        """Body length in meters."""
+        return self.front + self.rear
+
+    @property
+    def center_x(self) -> float:
+        """Distance of the body center ahead of the rear axle in meters."""
+        return (self.front - self.rear) / 2.0
+
+    @property
     def min_turn_radius(self) -> float:
         """Tightest turn radius of the rear axle at full steering, in meters."""
         return self.wheel_base / tan(self.max_steer_angle)

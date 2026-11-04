@@ -142,14 +142,17 @@ class TestMotionExport(unittest.TestCase):
             state = list(outputs[2:])
 
     @requires_cuda_spconv
-    def test_the_onnx_motion_graph_predicts_like_the_export_module(self) -> None:
+    def test_the_onnx_motion_graph_without_extra_queries_predicts_like_the_export_module(
+        self,
+    ) -> None:
         """
-        Input: the motion graph exported with the deploy settings and run in ONNX Runtime over
-          two frames, the history of the first frame feeding the second.
+        Input: the motion graph of a head without extra queries, exported with the deploy settings
+          and run in ONNX Runtime over two frames, the history of the first frame feeding the second.
         Expected: the export succeeds and every output of both frames matches the export module.
         """
         device = torch.device("cuda")
         model = build_model(self.tmp_path).to(device).eval()
+        self.assertEqual(model.motion_head.num_extra_queries, 0)
         spec = model.build_export_specs(build_inputs(device=device))["ptv3_motion_head"]
         onnx_cfg = OmegaConf.create(
             {"opset_version": 17, "dynamo": False, "do_constant_folding": False}

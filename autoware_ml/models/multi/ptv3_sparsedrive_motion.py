@@ -50,6 +50,7 @@ from autoware_ml.models.detection3d.heads.sparse4d import (
     Sparse4DHead,
     Sparse4DTargets,
 )
+from autoware_ml.models.detection3d.ptv3 import SparseStage
 from autoware_ml.models.motion.online_map_head import OnlineMapHead
 from autoware_ml.models.motion.instance_queue import QueueState
 from autoware_ml.models.motion.motion_head import (
@@ -198,7 +199,11 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
             )
             map_context = self.map_context(online_map_outputs)
         motion_outputs = self.forward_motion(
-            multi_task_batch_inputs, branches.det3d_outputs, carried_index, map_context
+            multi_task_batch_inputs,
+            branches.stages,
+            branches.det3d_outputs,
+            carried_index,
+            map_context,
         )
         return ModelOutputs(
             detection3d_head_outputs=Detection3DHeadOutputs(
@@ -214,6 +219,7 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
     def forward_motion(
         self,
         multi_task_batch_inputs: ModelBatchInputs,
+        stages: Sequence[SparseStage],
         det3d_outputs: Sparse4DHeadOutputs,
         carried_index: Int64[torch.Tensor, "batch_size num_temp_instances"] | None,
         map_context: MapContext | None,
@@ -222,6 +228,7 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
 
         Args:
             multi_task_batch_inputs: Model inputs with the frame metadata.
+            stages: Fused stages the detection head sampled, read by a planner.
             det3d_outputs: Outputs of the detection head.
             carried_index: Slot index of the previous frame, None at the first frame.
             map_context: Map queries of a model with a map head.
@@ -481,6 +488,8 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
                     gt_labels=gt_detections.gt_labels_3d[index, :count],
                     gt_futures=targets.agent_future_positions[index, :count],
                     gt_valid=targets.agent_future_valid[index, :count],
+                    gt_size=boxes[:, 3:5],
+                    gt_yaw=boxes[:, 6],
                     gt_observed=detection_frame.gt_observed,
                     scored=detection_frame.scored,
                 )

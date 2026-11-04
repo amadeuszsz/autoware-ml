@@ -1,0 +1,12 @@
+# @package _global_
+defaults:
+  - voxel012_b8_36e_t4dataset_122m_planning
+  - base_online_map
+  - _self_
+
+experiment_name: voxel012_b8_36e_t4dataset_122m_planning_online_map
+
+model:
+  motion_head:
+    planner:
+      with_map: true

@@ -59,6 +59,8 @@ class MotionFrame:
         gt_labels: Classes of the ground truth agents ``(G,)``.
         gt_futures: Future positions ``(G, T, 2)``.
         gt_valid: Whether a future position is known ``(G, T)``.
+        gt_size: Length and width ``(G, 2)``.
+        gt_yaw: Heading ``(G,)``.
     """
 
     pred_xy: Float[np.ndarray, "num_preds 2"]
@@ -71,6 +73,8 @@ class MotionFrame:
     gt_labels: Int[np.ndarray, " num_gts"]
     gt_futures: Float[np.ndarray, "num_gts num_steps 2"]
     gt_valid: Bool[np.ndarray, "num_gts num_steps"]
+    gt_size: Float[np.ndarray, "num_gts 2"]
+    gt_yaw: Float[np.ndarray, " num_gts"]
 
 
 @dataclass(frozen=True)
@@ -367,6 +371,8 @@ class MotionMetricSuite(MetricSuite[MotionState]):
         "gt_labels",
         "gt_futures",
         "gt_valid",
+        "gt_size",
+        "gt_yaw",
     )
 
     def __init__(

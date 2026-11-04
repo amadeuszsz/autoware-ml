@@ -49,6 +49,8 @@ def frame(prediction_offset: float) -> dict[str, torch.Tensor]:
         "gt_labels": torch.zeros(1, dtype=torch.long),
         "gt_futures": future,
         "gt_valid": torch.ones(1, 2, dtype=torch.bool),
+        "gt_size": torch.full((1, 2), 1.0),
+        "gt_yaw": torch.zeros(1),
     }
 
 

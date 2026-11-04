@@ -1,0 +1,65 @@
+# @package _global_
+# SparseDrive motion planner on top of base_motion: an ego query joins the detection queries of
+# the motion head and scores a vocabulary of paths and speed profiles along the lidar stages
+# (SparseDrive). An experiment composes it after base_motion and adds the planning task to its
+# extra sources. With base_online_map it sets model.motion_head.planner.with_map.
+defaults:
+  - /datamodule/t4dataset/datasets/planning@datasets.train.dataset_tasks.planning: default_planning
+  - /datamodule/t4dataset/datasets/planning@datasets.test.dataset_tasks.planning: default_planning
+  - /metrics/t4dataset/planning@planning_metrics: default_planning_metric_suites
+  - _self_
+
+# The planning suites score the trajectories next to the plans
+motion_metrics: ${planning_metrics}
+
+model:
+  _target_: autoware_ml.models.multi.ptv3_sparsedrive.PTv3SparseDriveModel
+  motion_head:
+    _target_: autoware_ml.models.planning.motion_planning_head.MotionPlanningHead
+    # Top of the ego body above the frame origin on the ground
+    ego_height: ${ego.box[5]}
+    # A turn from 2 m lateral offset at the end of the ego future
+    command_lateral_threshold: 2.0
+    planner:
+      _target_: autoware_ml.models.planning.vocabulary_planner.VocabularyPlanner
+      embed_dims: ${model.bbox_head.embed_dims}
+      # Path and speed vocabularies from every training record, built into the cache before the
+      # first training
+      anchor_recipe:
+        _target_: autoware_ml.anchors.planner.PlannerVocabularyRecipe
+        cache_path: ${cache_root_path}/anchors
+        num_paths: ${model.motion_head.planner.num_paths}
+        num_speeds: ${model.motion_head.planner.num_speeds}
+        record_stride: 1
+        iterations: 100
+        seed: 0
+      path_distances: ${datasets.train.dataset_tasks.planning.path_distances}
+      # Half the SparseDrive vocabulary on both axes, the first layer keeps a quarter of it and
+      # the second a quarter of that, 256 trajectories in the end
+      num_paths: 512
+      num_speeds: 128
+      keep: [[128, 32], [32, 8]]
+      ego_steps: ${datasets.train.dataset_tasks.planning.ego_steps}
+      step_seconds: ${datasets.train.dataset_tasks.planning.step_seconds}
+      # Road surface and obstacle height above every path point
+      keypoint_heights: [0.3, 1.0]
+      vehicle: ${ego.vehicle}
+      # The coarsest fused stage of the det head, 0.96 m voxels, keeps the dense lookup small
+      point_cloud_range: ${point_cloud_range}
+      grid_size: ${grid_size}
+      feature_strides: [8]
+      num_heads: ${model.bbox_head.num_heads}
+      num_groups: ${model.bbox_head.num_groups}
+
+# The planner graph takes the encoder stages the det head graph takes. Plans are positions of the
+# frame origin.
+deploy:
+  onnx:
+    modules:
+      ptv3_motion_head:
+        metainfo:
+          ego_steps: ${model.motion_head.planner.ego_steps}
+          path_vocabulary_size: ${model.motion_head.planner.num_paths}
+          speed_vocabulary_size: ${model.motion_head.planner.num_speeds}
+          commands: [straight, left, right]
+          ego_status_layout: [vx, vy, ax, ay, yaw_rate]

@@ -108,6 +108,7 @@ function torchmetrics uses to combine that state across GPUs.
 | `TrackingMetricSuite`                      | `track`      | `EvalOutput.detection3d` with track ids | per-frame box and track id tensors (`None`)               |
 | `MotionMetricSuite`                        | `motion`     | `EvalOutput.motion` frames              | per-frame trajectory tensors (`None`)                     |
 | `OnlineMapMetricSuite`                     | `online_map` | `EvalOutput.online_map` frames          | per-frame polyline tensors (`None`)                       |
+| `MotionPlanningMetricSuite`                | `motion`     | `EvalOutput.motion` with the plan       | per-frame trajectory and plan tensors (`None`)            |
 
 - **Confusion counts `sum`.** A confusion matrix is a bounded sufficient statistic, so adding the
   per-rank tensors is exact.

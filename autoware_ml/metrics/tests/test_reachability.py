@@ -604,3 +604,14 @@ def test_a_nan_ttc_is_not_read_as_zero_risk() -> None:
         collision_weights([float("nan"), 1.0], 0.1)
     with pytest.raises(ValueError, match="finite"):
         collision_weights([1.0], float("nan"))
+
+
+def test_the_body_box_follows_the_vehicle_description() -> None:
+    """
+    Input: a minibus description, measured from the rear axle.
+    Expected: a 7.24 m x 2.29 m body whose center lies 2.09 m ahead of the rear axle.
+    """
+    vehicle = VehicleGeometry(4.76, 0.95, 1.53, 1.75, 0.27, 0.27, 0.64)
+    assert vehicle.length == pytest.approx(7.24)
+    assert vehicle.width == pytest.approx(2.29)
+    assert vehicle.center_x == pytest.approx(2.09)

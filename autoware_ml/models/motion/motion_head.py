@@ -38,6 +38,7 @@ from autoware_ml.dataclasses.models.motion.targets import AgentFutureTargets
 from autoware_ml.losses.detection3d.focal import SigmoidFocalLoss
 from autoware_ml.models.anchored import DataAnchored, anchor_tensor
 from autoware_ml.models.detection3d.heads.sparse4d import (
+    ANCHOR_DIM,
     DecoupledInstanceAttention,
     linear_relu_ln,
 )
@@ -83,17 +84,22 @@ class AttendedQueries(NamedTuple):
     """Queries of one frame after the attention layers.
 
     Attributes:
-        feature: Refined features of the detection queries ``(B, N, C)``.
-        anchor_embed: Anchor embeddings of the same queries ``(B, N, C)``.
-        anchors: Anchors of the same queries ``(B, N, 10)``.
+        feature: Refined features of the detection and the extra queries ``(B, N + E, C)``.
+        anchor_embed: Anchor embeddings of the same queries ``(B, N + E, C)``.
+        anchors: Anchors of the same queries ``(B, N + E, 10)``.
         instance_feature: Detection features the queries started from ``(B, N, C)``.
+        top: Most confident detection queries every query attended to ``(B, K)``.
+        map_keys: Most confident map queries with their embeddings ``(B, M, C)``, None without
+            a map.
         queue_state: History of the frame before this frame is pushed.
     """
 
-    feature: Float[torch.Tensor, "batch_size num_queries embed_dims"]
-    anchor_embed: Float[torch.Tensor, "batch_size num_queries embed_dims"]
-    anchors: Float[torch.Tensor, "batch_size num_queries anchor_dim"]
+    feature: Float[torch.Tensor, "batch_size num_slots embed_dims"]
+    anchor_embed: Float[torch.Tensor, "batch_size num_slots embed_dims"]
+    anchors: Float[torch.Tensor, "batch_size num_slots anchor_dim"]
     instance_feature: Float[torch.Tensor, "batch_size num_queries embed_dims"]
+    top: torch.Tensor
+    map_keys: torch.Tensor | None
     queue_state: QueueState
 
 
@@ -109,10 +115,18 @@ def _without_grad(
     return call
 
 
+def with_total(losses: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Add the sum of the ``loss_`` terms under ``loss``."""
+    losses["loss"] = sum(value for key, value in losses.items() if key.startswith("loss_"))
+    return losses
+
+
 class MotionHead(DataAnchored):
     """Predict the trajectories of the tracked agents."""
 
     anchor_names = ("motion_anchors",)
+    # Queries after the detection queries that keep their history slot, a subclass adds them
+    num_extra_queries = 0
 
     def __init__(
         self,
@@ -272,7 +286,7 @@ class MotionHead(DataAnchored):
             self._queue_state = QueueState.empty(
                 batch_size,
                 self.queue_length - 1,
-                num_queries,
+                num_queries + self.num_extra_queries,
                 self.embed_dims,
                 self.queue_stride,
                 anchor.device,
@@ -363,6 +377,8 @@ class MotionHead(DataAnchored):
             anchor,
             cls_logits,
             anchor_encoder,
+            instance_feature.new_zeros(anchor.shape[0], 0, self.embed_dims),
+            anchor.new_zeros(anchor.shape[0], 0, ANCHOR_DIM),
             queue_state,
             lane_continues,
             carried_index,
@@ -383,19 +399,23 @@ class MotionHead(DataAnchored):
         anchor: Float[torch.Tensor, "batch_size num_queries anchor_dim"],
         cls_logits: Float[torch.Tensor, "batch_size num_queries num_classes"],
         anchor_encoder: nn.Module,
+        extra_feature: torch.Tensor,
+        extra_anchor: torch.Tensor,
         queue_state: QueueState,
         lane_continues: Bool[torch.Tensor, " batch_size"],
         carried_index: Int64[torch.Tensor, "batch_size num_temp_instances"],
         prev2current: Float[torch.Tensor, "batch_size 4 4"],
         map_context: MapContext | None,
     ) -> AttendedQueries:
-        """Refine the detection queries over their history, the agents and the map.
+        """Refine the detection and the extra queries over their history, the agents and the map.
 
         Args:
             instance_feature: Last layer features of the detection queries ``(B, N, C)``.
             anchor: Last layer anchors of the detection queries ``(B, N, 10)``.
             cls_logits: Last layer class logits of the detection queries ``(B, N, num_classes)``.
-            anchor_encoder: Anchor encoder of the detection head.
+            anchor_encoder: Anchor encoder of the detection head, shared with the extra queries.
+            extra_feature: Features of the extra queries after the detections ``(B, E, C)``.
+            extra_anchor: Anchors of the extra queries ``(B, E, 10)``.
             queue_state: History after the last frame.
             lane_continues: Whether every lane continues its stream ``(B,)``.
             carried_index: Previous frame query every leading temporal slot comes from
@@ -416,11 +436,13 @@ class MotionHead(DataAnchored):
             instance_feature, anchor = instance_feature.detach(), anchor.detach()
             cls_logits, anchor_encoder = cls_logits.detach(), _without_grad(anchor_encoder)
         batch_size, num_queries = anchor.shape[:2]
-        feature = instance_feature
-        anchor_embed = anchor_encoder(anchor)
+        num_extra = extra_feature.shape[1]
+        feature = torch.cat([instance_feature, extra_feature], dim=1)
+        anchors = torch.cat([anchor, extra_anchor], dim=1)
+        anchor_embed = anchor_encoder(anchors)
 
         queue_state = advance_queue(
-            queue_state, lane_continues, carried_index, prev2current, self.queue_stride
+            queue_state, lane_continues, carried_index, prev2current, self.queue_stride, num_extra
         )
         history = queue_history(queue_state)
         # The current frame leads the keys of the temporal attention
@@ -430,7 +452,13 @@ class MotionHead(DataAnchored):
         key_valid = torch.cat([torch.ones_like(history.valid[:, :, :1]), history.valid], 2)
 
         confidence = cls_logits.detach().max(dim=-1).values
-        agent_keys = confidence.topk(min(self.num_agent_keys, num_queries), dim=1).indices
+        top = confidence.topk(min(self.num_agent_keys, num_queries), dim=1).indices
+        # ONNX sizes an expanded empty tensor as one key, so no extra queries means detections only
+        agent_keys = top
+        if num_extra > 0:
+            extra_keys = torch.arange(num_queries, num_queries + num_extra, device=top.device)
+            agent_keys = torch.cat([top, extra_keys.expand(batch_size, -1)], dim=1)
+        map_keys = None
         if map_context is not None:
             map_top = (
                 map_context.scores.detach()
@@ -440,16 +468,18 @@ class MotionHead(DataAnchored):
             )
             map_feature = map_context.feature.gather(1, map_top)
             map_embed = map_context.anchor_embed.gather(1, map_top)
+            map_keys = map_feature + map_embed
 
+        total = num_queries + num_extra
         for layer in range(self.num_layers):
             flat = self.temporal_attention[layer](
-                feature.reshape(batch_size * num_queries, 1, -1),
-                anchor_embed.reshape(batch_size * num_queries, 1, -1),
-                key_feature.reshape(batch_size * num_queries, length, -1),
-                key_embed.reshape(batch_size * num_queries, length, -1),
-                key_padding_mask=~key_valid.reshape(batch_size * num_queries, length),
+                feature.reshape(batch_size * total, 1, -1),
+                anchor_embed.reshape(batch_size * total, 1, -1),
+                key_feature.reshape(batch_size * total, length, -1),
+                key_embed.reshape(batch_size * total, length, -1),
+                key_padding_mask=~key_valid.reshape(batch_size * total, length),
             )
-            feature = self.temporal_norm[layer](flat.reshape(batch_size, num_queries, -1))
+            feature = self.temporal_norm[layer](flat.reshape(batch_size, total, -1))
             keys = agent_keys[..., None].expand(-1, -1, self.embed_dims)
             feature = self.agent_attention[layer](
                 feature, anchor_embed, feature.gather(1, keys), anchor_embed.gather(1, keys)
@@ -462,15 +492,21 @@ class MotionHead(DataAnchored):
         return AttendedQueries(
             feature=feature,
             anchor_embed=anchor_embed,
-            anchors=anchor,
+            anchors=anchors,
             instance_feature=instance_feature,
+            top=top,
+            map_keys=map_keys,
             queue_state=queue_state,
         )
 
     def push(self, attended: AttendedQueries) -> QueueState:
-        """Store the detection features and anchors of the frame in the history."""
+        """Store the frame in the history, the detection features and the refined extra queries."""
+        num_queries = attended.instance_feature.shape[1]
         return push_queue(
-            attended.queue_state, attended.instance_feature, attended.anchors, self.queue_stride
+            attended.queue_state,
+            torch.cat([attended.instance_feature, attended.feature[:, num_queries:]], dim=1),
+            attended.anchors,
+            self.queue_stride,
         )
 
     def prepare_for_export(self) -> MotionHead:
@@ -503,7 +539,7 @@ class MotionHead(DataAnchored):
             QueueState.empty(
                 1,
                 self.queue_length - 1,
-                num_queries,
+                num_queries + self.num_extra_queries,
                 self.embed_dims,
                 self.queue_stride,
                 device,
@@ -512,7 +548,7 @@ class MotionHead(DataAnchored):
 
     def _predict_agents(
         self,
-        context: Float[torch.Tensor, "batch_size num_queries embed_dims"],
+        context: Float[torch.Tensor, "batch_size num_slots embed_dims"],
         anchor: Float[torch.Tensor, "batch_size num_queries anchor_dim"],
         cls_logits: Float[torch.Tensor, "batch_size num_queries num_classes"],
     ) -> tuple[
@@ -522,7 +558,8 @@ class MotionHead(DataAnchored):
         """Turn the refined detection queries into trajectories.
 
         Args:
-            context: Refined features with their anchor embeddings ``(B, N, C)``.
+            context: Refined features with their anchor embeddings ``(B, N, C)``, extra queries
+                after them are ignored.
             anchor: Anchors of the detection queries ``(B, N, 10)``.
             cls_logits: Class logits of the detection queries ``(B, N, num_classes)``.
 
@@ -530,6 +567,7 @@ class MotionHead(DataAnchored):
             Mode logits ``(B, N, M)`` and trajectories ``(B, N, M, T, 2)``.
         """
         batch_size, num_queries = anchor.shape[:2]
+        context = context[:, :num_queries]
         # Mode queries of an agent: the anchor ends of its class, turned to its heading
         classes = cls_logits.detach().argmax(dim=-1)
         endpoints = self.motion_anchors[:, :, -1][classes]
@@ -565,6 +603,31 @@ class MotionHead(DataAnchored):
     ) -> dict[str, Float[torch.Tensor, ""]]:
         """Supervise the agent trajectories of the matched queries.
 
+        Args:
+            outputs: Raw outputs from :meth:`forward`.
+            assigned_instance: Instance the last detection layer matched every query to
+                ``(B, N)``, -1 for background.
+            gt_boxes: Padded ground truth boxes of the frames ``(B, M, >=7)``.
+            gt_instance_ids: Instance id of every padded box slot ``(B, M)``, -1 for padding.
+            targets: Futures of the agents of the box slots of the frames.
+
+        Returns:
+            Loss dictionary with the terms and their sum under ``loss``.
+        """
+        return with_total(
+            self.agent_losses(outputs, assigned_instance, gt_boxes, gt_instance_ids, targets)
+        )
+
+    def agent_losses(
+        self,
+        outputs: MotionHeadOutputs,
+        assigned_instance: Int64[torch.Tensor, "batch_size num_queries"],
+        gt_boxes: Float[torch.Tensor, "batch_size max_gts box_dim"],
+        gt_instance_ids: Int64[torch.Tensor, "batch_size max_gts"],
+        targets: AgentFutureTargets,
+    ) -> dict[str, Float[torch.Tensor, ""]]:
+        """Supervise the agent trajectories of the matched queries, the terms without their sum.
+
         An agent query is a target when the detection head matched it to a box with a known
         future. The best mode of a target is the one closest to its future (winner takes all).
 
@@ -577,7 +640,7 @@ class MotionHead(DataAnchored):
             targets: Futures of the agents of the box slots of the frames.
 
         Returns:
-            The mode and the trajectory loss, their sum under ``loss`` and the number of targets.
+            The mode and the trajectory loss and the number of targets.
         """
         # Box slot of the instance every query was matched to
         matches = (assigned_instance[..., None] >= 0) & (
@@ -620,11 +683,8 @@ class MotionHead(DataAnchored):
         )
         # Summed over the steps and axes of an agent and averaged over the agents, as in SparseDrive
         loss_motion_reg = (best_error * future_valid).sum() / num_targets
-        loss_motion_cls = self.loss_motion_cls_weight * loss_motion_cls
-        loss_motion_reg = self.loss_motion_reg_weight * loss_motion_reg
         return {
-            "loss_motion_cls": loss_motion_cls,
-            "loss_motion_reg": loss_motion_reg,
+            "loss_motion_cls": self.loss_motion_cls_weight * loss_motion_cls,
+            "loss_motion_reg": self.loss_motion_reg_weight * loss_motion_reg,
             "num_motion_targets": outputs.agent_mode_logits.new_tensor(float(target.sum())),
-            "loss": loss_motion_cls + loss_motion_reg,
         }

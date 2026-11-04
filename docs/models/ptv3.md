@@ -15,6 +15,7 @@ PointTransformerV3 is a LiDAR encoder for LiDAR 3D semantic segmentation and
   detection-head resolution, and feeds a `TransFusionHead`.
 - Temporal detection (experimental): `PTv3Det3DSeg3DSparse4DModel` fuses the deepest encoder stage top-down into finer ones (`PTv3Det3DFeaturePyramid`) and feeds a `Sparse4DHead`. Its queries sample the sparse voxels and one dense BEV level at keypoints around their anchors, predict velocity, and carry the most confident instances from one frame of a scenario to the next.
 - Agent motion (experimental): `PTv3SparseDriveMotionModel` adds the SparseDrive `MotionHead`, which predicts the trajectories of the tracked agents. With the online map branch an `OnlineMapHead` predicts lane markings, road borders and crosswalks from the lidar as polylines, and the motion queries attend to them.
+- Planning (experimental): `PTv3SparseDriveModel` adds the ego query and the SparseDrive vocabulary planner (`MotionPlanningHead`), which scores fixed paths and speed profiles.
 
 The models read single lidar frames, every point as `(x, y, z, intensity)`. The voxel feature
 encoder turns each voxel into the mean x, y, z and intensity of its points, 4 features per voxel,
@@ -48,17 +49,18 @@ With `cosine_attention: true` the serialized attention is cosine attention: quer
 
 ## Available Configurations
 
-| Config Name                                                  | Task                                  | Dataset   | Head              | Range | Purpose                                      |
-| ------------------------------------------------------------ | ------------------------------------- | --------- | ----------------- | ----- | -------------------------------------------- |
-| `segmentation3d/ptv3/nuscenes/voxel005_b16_50e_nuscenes_51m` | segmentation3d                        | nuScenes  | Seg decoder       | 51 m  | nuScenes segmentation                        |
-| `segmentation3d/ptv3/t4dataset/base_voxel012_122m`           | segmentation3d                        | T4Dataset | Seg decoder       | 122 m | T4Dataset segmentation                       |
-| `detection3d/ptv3/nuscenes/voxel005_b16_30e_nuscenes_51m`    | detection3d                           | nuScenes  | TransFusion       | 51 m  | nuScenes detection                           |
-| `detection3d/ptv3/t4dataset/base_voxel012_122m`              | detection3d                           | T4Dataset | TransFusion       | 122 m | T4Dataset detection                          |
-| `multi/ptv3/nuscenes/voxel005_b16_100e_nuscenes_51m`         | segmentation3d + detection3d          | nuScenes  | TransFusion       | 51 m  | Joint segmentation + detection               |
-| `multi/ptv3/t4dataset/base_voxel012_122m`                    | segmentation3d + detection3d          | T4Dataset | TransFusion       | 122 m | Joint segmentation + detection               |
-| `multi/ptv3_sparse4d/t4dataset/base_voxel012_122m`           | segmentation3d + detection3d          | T4Dataset | Sparse4D          | 122 m | Joint segmentation + temporal detection      |
-| `multi/ptv3_sparsedrive/t4dataset/base_motion`               | segmentation3d + detection3d + motion | T4Dataset | Sparse4D + motion | 122 m | Agent motion add-on of a Sparse4D experiment |
-| `multi/ptv3_sparsedrive/t4dataset/base_online_map`           | segmentation3d + detection3d + motion | T4Dataset | Sparse4D + motion | 122 m | Online map add-on of a motion experiment     |
+| Config Name                                                  | Task                                             | Dataset   | Head              | Range | Purpose                                      |
+| ------------------------------------------------------------ | ------------------------------------------------ | --------- | ----------------- | ----- | -------------------------------------------- |
+| `segmentation3d/ptv3/nuscenes/voxel005_b16_50e_nuscenes_51m` | segmentation3d                                   | nuScenes  | Seg decoder       | 51 m  | nuScenes segmentation                        |
+| `segmentation3d/ptv3/t4dataset/base_voxel012_122m`           | segmentation3d                                   | T4Dataset | Seg decoder       | 122 m | T4Dataset segmentation                       |
+| `detection3d/ptv3/nuscenes/voxel005_b16_30e_nuscenes_51m`    | detection3d                                      | nuScenes  | TransFusion       | 51 m  | nuScenes detection                           |
+| `detection3d/ptv3/t4dataset/base_voxel012_122m`              | detection3d                                      | T4Dataset | TransFusion       | 122 m | T4Dataset detection                          |
+| `multi/ptv3/nuscenes/voxel005_b16_100e_nuscenes_51m`         | segmentation3d + detection3d                     | nuScenes  | TransFusion       | 51 m  | Joint segmentation + detection               |
+| `multi/ptv3/t4dataset/base_voxel012_122m`                    | segmentation3d + detection3d                     | T4Dataset | TransFusion       | 122 m | Joint segmentation + detection               |
+| `multi/ptv3_sparse4d/t4dataset/base_voxel012_122m`           | segmentation3d + detection3d                     | T4Dataset | Sparse4D          | 122 m | Joint segmentation + temporal detection      |
+| `multi/ptv3_sparsedrive/t4dataset/base_motion`               | segmentation3d + detection3d + motion            | T4Dataset | Sparse4D + motion | 122 m | Agent motion add-on of a Sparse4D experiment |
+| `multi/ptv3_sparsedrive/t4dataset/base_online_map`           | segmentation3d + detection3d + motion            | T4Dataset | Sparse4D + motion | 122 m | Online map add-on of a motion experiment     |
+| `multi/ptv3_sparsedrive/t4dataset/base_planning`             | segmentation3d + detection3d + motion + planning | T4Dataset | Sparse4D + motion | 122 m | Planning add-on of a motion experiment       |
 
 The T4Dataset rows are bases. They declare the classes the model trains and require the taxonomy
 that folds the labels of the database onto them, so a T4Dataset experiment that binds one lives in
@@ -73,6 +75,8 @@ The model aligns every agent track of the `motion` dataset task, described in [D
 
 The `base_online_map` add-on composes after `base_motion` and adds the online map branch. The lanelet2 map of every scene only gives its training targets, the model predicts the map from the lidar. By default the map graph hands the motion graph its context only. `model.export_online_map` adds the polylines and their class scores to the outputs of the map graph.
 
+The `base_planning` add-on composes after `base_motion` and adds the planner and the `planning` dataset task, the ego future, status and path. The planner and the planning metrics take the ego body from the `ego` config of the experiment, `base_link` at the rear axle centre. With `base_online_map` the experiment sets `model.motion_head.planner.with_map`.
+
 ## Training
 
 ```bash
@@ -81,7 +85,7 @@ autoware-ml train --config-name detection3d/ptv3/nuscenes/voxel005_b16_30e_nusce
 autoware-ml train --config-name multi/ptv3/nuscenes/voxel005_b16_100e_nuscenes_51m
 ```
 
-The Sparse4D head starts from k-means anchors of the training boxes, the motion head from anchors of the training futures and the online map head from anchors of the training map elements. The `anchor_recipe` of every head sets how they are derived, and [Adding Models](../contributing/adding-models.md#key-points) describes how training builds them into the anchor cache and how weights carry them.
+The Sparse4D head starts from k-means anchors of the training boxes, the motion head from anchors of the training futures, the planner from vocabularies of the training ego futures and the online map head from anchors of the training map elements. The `anchor_recipe` of every head sets how they are derived, and [Adding Models](../contributing/adding-models.md#key-points) describes how training builds them into the anchor cache and how weights carry them.
 
 For a pipeline validation run:
 
@@ -259,36 +263,41 @@ The split export produces one graph per `deploy.onnx.modules` entry:
 
 ## Implementation
 
-| Path                                                                    | Description                                                 |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `autoware_ml/models/segmentation3d/ptv3.py`                             | PTv3 Lightning model wrapper                                |
-| `autoware_ml/models/segmentation3d/heads/ptv3.py`                       | PTv3 segmentation decoder head                              |
-| `autoware_ml/models/detection3d/ptv3.py`                                | PTv3 BEV neck and detection model wrapper                   |
-| `autoware_ml/models/detection3d/heads/transfusions/transfusion_head.py` | TransFusion detection head                                  |
-| `autoware_ml/models/detection3d/heads/sparse4d.py`                      | Sparse4D temporal query detection head                      |
-| `autoware_ml/models/multi/ptv3_det3d_seg3d_sparse4d.py`                 | PTv3 segmentation and Sparse4D model wrapper                |
-| `autoware_ml/anchors/`                                                  | Anchor recipes of the Sparse4D, motion and online map heads |
-| `autoware_ml/models/motion/motion_head.py`                              | Agent motion head on the detection queries                  |
-| `autoware_ml/models/multi/ptv3_sparsedrive_motion.py`                   | PTv3 Sparse4D model with the motion head                    |
-| `autoware_ml/datamodule/common/motion.py`                               | Agent tracks of a record                                    |
-| `autoware_ml/models/motion/online_map_head.py`                          | Online map head predicting polylines                        |
-| `autoware_ml/datamodule/common/online_map.py`                           | Map elements of a record from its lanelet2 map              |
-| `autoware_ml/metrics/motion/`                                           | Agent motion metrics                                        |
-| `autoware_ml/models/segmentation3d/encoders/ptv3.py`                    | Reusable PTv3 encoder components                            |
-| `autoware_ml/models/segmentation3d/encoders/voxel.py`                   | Voxel feature encoders of single frames and sweeps          |
-| `autoware_ml/utils/point_cloud/`                                        | Shared point-cloud utilities and serialization              |
-| `autoware_ml/ops/segment/segment_csr.py`                                | Segment reduction export operator                           |
-| `autoware_ml/ops/deformable_aggregation/`                               | Sparse4D keypoint sampling export operators                 |
-| `autoware_ml/losses/segmentation3d/`                                    | Segmentation losses used by PTv3                            |
-| `autoware_ml/datamodule/t4dataset/dataset.py`                           | T4Dataset records as a dataset                              |
-| `autoware_ml/datamodule/nuscenes/dataset.py`                            | nuScenes dataset                                            |
-| `autoware_ml/datamodule/t4dataset/segmentation3d.py`                    | Semantic masks of a T4Dataset record                        |
-| `autoware_ml/datamodule/common/detection3d.py`                          | 3D boxes of a record                                        |
-| `autoware_ml/transforms/point_cloud/`                                   | Shared point-cloud transforms used by PTv3                  |
-| `autoware_ml/configs/tasks/segmentation3d/ptv3/`                        | Segmentation experiment configurations                      |
-| `autoware_ml/configs/tasks/detection3d/ptv3/`                           | Detection experiment configurations                         |
-| `autoware_ml/configs/tasks/multi/ptv3_sparse4d/`                        | Sparse4D experiment configurations                          |
-| `autoware_ml/configs/tasks/multi/ptv3_sparsedrive/`                     | SparseDrive experiment configurations                       |
+| Path                                                                    | Description                                                          |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `autoware_ml/models/segmentation3d/ptv3.py`                             | PTv3 Lightning model wrapper                                         |
+| `autoware_ml/models/segmentation3d/heads/ptv3.py`                       | PTv3 segmentation decoder head                                       |
+| `autoware_ml/models/detection3d/ptv3.py`                                | PTv3 BEV neck and detection model wrapper                            |
+| `autoware_ml/models/detection3d/heads/transfusions/transfusion_head.py` | TransFusion detection head                                           |
+| `autoware_ml/models/detection3d/heads/sparse4d.py`                      | Sparse4D temporal query detection head                               |
+| `autoware_ml/models/multi/ptv3_det3d_seg3d_sparse4d.py`                 | PTv3 segmentation and Sparse4D model wrapper                         |
+| `autoware_ml/anchors/`                                                  | Anchor recipes of the Sparse4D, motion, planner and online map heads |
+| `autoware_ml/models/motion/motion_head.py`                              | Agent motion head on the detection queries                           |
+| `autoware_ml/models/multi/ptv3_sparsedrive_motion.py`                   | PTv3 Sparse4D model with the motion head                             |
+| `autoware_ml/datamodule/common/motion.py`                               | Agent tracks of a record                                             |
+| `autoware_ml/models/motion/online_map_head.py`                          | Online map head predicting polylines                                 |
+| `autoware_ml/datamodule/common/online_map.py`                           | Map elements of a record from its lanelet2 map                       |
+| `autoware_ml/models/planning/motion_planning_head.py`                   | Motion head with the ego query and the planner                       |
+| `autoware_ml/models/planning/vocabulary_planner.py`                     | SparseDrive vocabulary planner                                       |
+| `autoware_ml/models/multi/ptv3_sparsedrive.py`                          | PTv3 Sparse4D model with the planner                                 |
+| `autoware_ml/datamodule/common/planning.py`                             | Ego future, status and path of a record                              |
+| `autoware_ml/metrics/planning/`                                         | Planning metrics                                                     |
+| `autoware_ml/metrics/motion/`                                           | Agent motion metrics                                                 |
+| `autoware_ml/models/segmentation3d/encoders/ptv3.py`                    | Reusable PTv3 encoder components                                     |
+| `autoware_ml/models/segmentation3d/encoders/voxel.py`                   | Voxel feature encoders of single frames and sweeps                   |
+| `autoware_ml/utils/point_cloud/`                                        | Shared point-cloud utilities and serialization                       |
+| `autoware_ml/ops/segment/segment_csr.py`                                | Segment reduction export operator                                    |
+| `autoware_ml/ops/deformable_aggregation/`                               | Sparse4D keypoint sampling export operators                          |
+| `autoware_ml/losses/segmentation3d/`                                    | Segmentation losses used by PTv3                                     |
+| `autoware_ml/datamodule/t4dataset/dataset.py`                           | T4Dataset records as a dataset                                       |
+| `autoware_ml/datamodule/nuscenes/dataset.py`                            | nuScenes dataset                                                     |
+| `autoware_ml/datamodule/t4dataset/segmentation3d.py`                    | Semantic masks of a T4Dataset record                                 |
+| `autoware_ml/datamodule/common/detection3d.py`                          | 3D boxes of a record                                                 |
+| `autoware_ml/transforms/point_cloud/`                                   | Shared point-cloud transforms used by PTv3                           |
+| `autoware_ml/configs/tasks/segmentation3d/ptv3/`                        | Segmentation experiment configurations                               |
+| `autoware_ml/configs/tasks/detection3d/ptv3/`                           | Detection experiment configurations                                  |
+| `autoware_ml/configs/tasks/multi/ptv3_sparse4d/`                        | Sparse4D experiment configurations                                   |
+| `autoware_ml/configs/tasks/multi/ptv3_sparsedrive/`                     | SparseDrive experiment configurations                                |
 
 ## Acknowledgment
 
@@ -313,3 +322,9 @@ The motion head and the online map blocks were ported from the official SparseDr
 - Repository: <https://github.com/swc-17/SparseDrive>
 - License: MIT
 - Paper: Sun, Wenchao, et al. "SparseDrive: End-to-End Autonomous Driving via Sparse Scene Representation." ICRA, 2025.
+
+The vocabulary planner follows the v2 version of SparseDrive.
+
+- Repository: <https://github.com/swc-17/SparseDriveV2>
+- License: Apache 2.0
+- Paper: Sun, Wenchao, et al. "SparseDriveV2: Scoring is All You Need for End-to-End Autonomous Driving." arXiv, 2026.

@@ -87,7 +87,7 @@ def cluster_modes(
     """Cluster arrays of one shape into modes of the same shape.
 
     Args:
-        samples: Trajectories of one shape.
+        samples: Trajectories, paths or speed profiles of one shape.
         num_modes: Number of modes.
         iterations: Number of k-means iterations.
         seed: Seed of the initial centroid draw.

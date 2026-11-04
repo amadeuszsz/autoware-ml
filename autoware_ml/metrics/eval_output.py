@@ -269,6 +269,7 @@ class MetricRequirements(BaseModel):
       segmentation3d: The suite reads the segmentation frames.
       motion: The suite reads the motion frames.
       online_map: The suite reads the online map frames.
+      plans: The suite reads the plan and the future of the ego in the motion frames.
       frame_meta: A filter or a collision provider reads the pose and lanelet map of the frames.
       gt_num_points: A ground truth point filter reads the lidar point count of every box.
       gt_observed: A suite counts only the boxes a temporal model observed in its stream.
@@ -283,6 +284,7 @@ class MetricRequirements(BaseModel):
     segmentation3d: bool = False
     motion: bool = False
     online_map: bool = False
+    plans: bool = False
     frame_meta: bool = False
     gt_num_points: bool = False
     gt_observed: bool = False
@@ -311,6 +313,10 @@ class MetricRequirements(BaseModel):
             missing.append("motion frames")
         if self.online_map and eval_output.online_map is None:
             missing.append("online map frames")
+        if self.plans and not (
+            eval_output.motion is not None and eval_output.motion.check_all_plans
+        ):
+            missing.append("plan, ego_future and ego_future_valid (motion frames of a planner)")
         # The metadata counts as present when every part the output holds carries it.
         has_frame_meta = (
             (detection is not None or segmentation is not None)

@@ -1,0 +1,9 @@
+# Planning suites of the SparseDrive models: the trajectories of the tracked agents and the plans.
+- _target_: autoware_ml.metrics.planning.suite.MotionPlanningMetricSuite
+  components:
+    - _target_: autoware_ml.metrics.motion.suite.AgentMotionSummary
+    - _target_: autoware_ml.metrics.planning.suite.PlanningSummary
+  class_names: ${taxonomy.detection3d.class_names}
+  score_threshold: ${track_birth_score}
+  step_seconds: ${datasets.train.dataset_tasks.planning.step_seconds}
+  vehicle: ${ego.vehicle}
