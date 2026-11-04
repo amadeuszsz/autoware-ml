@@ -17,7 +17,8 @@ PointTransformerV3 is a LiDAR encoder for LiDAR 3D semantic segmentation and
   deepest encoder stage top-down into finer ones (`PTv3Det3DFeaturePyramid`) and
   feeds a `Sparse4DHead`, whose queries sample the sparse voxels at keypoints
   around their anchors with no BEV canvas, and carry the most confident
-  instances from one frame of a scenario to the next.
+  instances from one frame of a scenario to the next. The keypoints sample the
+  sparse voxels, dense BEV maps, or both.
 
 The models read single lidar frames, every point as `(x, y, z, intensity)`. The voxel feature
 encoder turns each voxel into the mean x, y, z and intensity of its points, 4 features per voxel,
@@ -58,6 +59,25 @@ implementation so ONNX export remains supported.
 | `multi/ptv3/nuscenes/voxel005_base_b16_100e_nuscenes_51m`                                       | segmentation3d + detection3d | nuScenes  | TransFusion | 51 m  | Joint segmentation + detection                           |
 | `multi/ptv3/t4dataset/voxel012_tiny_b8_100e_t4dataset_122m_j6gen2_det3d_seg3d`                  | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Joint segmentation + detection                           |
 | `multi/ptv3_sparse4d/t4dataset/voxel012_tiny_b8_24e_t4dataset_122m_pseudo_10hz`                 | segmentation3d + detection3d | T4Dataset | Sparse4D    | 122 m | Joint segmentation + temporal detection on 10 Hz streams |
+
+### Sparse4D configurations
+
+Every Sparse4D experiment starts from the temporal detection config
+`voxel012_tiny_b8_24e_t4dataset_122m_pseudo_10hz` and adds features with these configs
+under `multi/ptv3_sparse4d/t4dataset/`:
+
+| Add-on                       | Adds                                                              |
+| ---------------------------- | ----------------------------------------------------------------- |
+| `base_bev_level`             | One dense BEV level (0.96 m) sampled next to the sparse voxels    |
+| `base_sparse_bev_multiscale` | A three scale BEV pyramid (0.48, 0.96, 1.92 m) next to the voxels |
+| `base_bev_multiscale`        | The three scale BEV pyramid in place of the sparse voxels         |
+
+Every lidar experiment comes in four samplings, named by the suffix of its config: none for
+the sparse voxels, `_sparse_bev`, `_sparse_bev_multiscale` and `_bev`.
+
+| Experiment                 | Config                                            |
+| -------------------------- | ------------------------------------------------- |
+| Detection and segmentation | `voxel012_tiny_b8_24e_t4dataset_122m_pseudo_10hz` |
 
 ## Training
 
