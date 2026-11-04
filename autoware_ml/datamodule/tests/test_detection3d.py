@@ -210,6 +210,16 @@ def build_task_with_status(boxes: list[dict], status: bool | None) -> Detection3
     )
 
 
+def test_two_boxes_of_one_instance_in_a_record_are_rejected() -> None:
+    """
+    Input: a record whose two boxes carry one instance token.
+    Expected: ValueError when the task is built, the tracker and the futures need one box per
+      object.
+    """
+    with pytest.raises(ValueError, match="Record 0 holds two boxes of one instance"):
+        build_task_with_status([box("a", "car"), box("a", "pedestrian")], True)
+
+
 def test_records_without_the_cone_and_barrier_flag_column_are_rejected() -> None:
     """
     Every record table built by this version carries the flag column, so a table without it is

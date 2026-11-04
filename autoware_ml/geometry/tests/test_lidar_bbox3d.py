@@ -47,6 +47,7 @@ def boxes(params: list[list[float]]) -> LidarBBoxes3D:
         bbox_labels=torch.zeros(count, dtype=torch.int32),
         bbox_label_names=["car"] * count,
         bbox_num_lidar_points=torch.zeros(count, dtype=torch.int32),
+        bbox_instance_ids=torch.arange(count),
         bbox_center_coordinate_type=Box3DCenterCoordinateType.GRAVITY_CENTER,
     )
 
@@ -117,6 +118,41 @@ class TestComputePointsInBBoxes(unittest.TestCase):
 
         self.assertEqual((without_boxes.shape, without_boxes.dtype), ((0, 3), torch.bool))
         self.assertEqual((without_points.shape, without_points.dtype), ((1, 0), torch.bool))
+
+    def test_counts_as_many_points_as_the_mask_marks(self) -> None:
+        generator = torch.Generator().manual_seed(1)
+        params = torch.zeros((20, 7))
+        params[:, :2] = torch.randn((20, 2), generator=generator) * 10
+        params[:, 3:6] = torch.rand((20, 3), generator=generator) * 6 + 0.5
+        params[:, 6] = (torch.rand(20, generator=generator) - 0.5) * 2 * math.pi
+        points = torch.randn((5_000, 3), generator=generator) * torch.tensor([10.0, 10.0, 1.5])
+        box = boxes(params.tolist())
+
+        counts = box.count_points_in_bboxes(points)
+
+        self.assertEqual(counts.dtype, torch.int32)
+        self.assertEqual(counts.tolist(), box.compute_points_in_bboxes(points).sum(dim=1).tolist())
+        self.assertGreater(int(counts.sum()), 0)
+
+
+class TestBoxIdentity(unittest.TestCase):
+    """The object identity every box carries."""
+
+    def test_moves_with_the_boxes(self) -> None:
+        box = boxes([[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]])
+
+        box.to(torch.device("meta"))
+
+        tensors = (box.bbox_params, box.bbox_labels, box.bbox_num_lidar_points)
+        self.assertEqual({t.device.type for t in (*tensors, box.bbox_instance_ids)}, {"meta"})
+
+    def test_tells_boxes_of_other_objects_apart(self) -> None:
+        first = boxes([[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]])
+        second = boxes([[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]])
+        second.bbox_instance_ids.add_(7)
+
+        self.assertEqual(first, boxes([[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]]))
+        self.assertNotEqual(first, second)
 
 
 if __name__ == "__main__":
