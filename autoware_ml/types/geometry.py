@@ -134,3 +134,7 @@ class ImageChannel(StrEnum):
     """
 
     RGB = "RGB"
+
+
+# Channels of a box anchor: center, log size, sine and cosine of the heading, velocity
+ANCHOR_DIM = 10

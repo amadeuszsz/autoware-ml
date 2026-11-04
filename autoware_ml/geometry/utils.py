@@ -119,3 +119,19 @@ def points_in_rotated_box(coord: np.ndarray, box: np.ndarray) -> np.ndarray:
         & (np.abs(local_y) <= half[1])
         & (np.abs(offset[:, 2]) <= half[2])
     )
+
+
+def transform_points(points: Tensor, matrix: Tensor) -> Tensor:
+    """Apply 4x4 transforms to 3D points, as a sum of elementwise products.
+
+    A float32 matmul follows the global matmul precision, TF32 on CUDA under the CLI runtime.
+    Products and their sum stay exact IEEE float32 and export as Mul and ReduceSum.
+
+    Args:
+        points: Points ``(..., 3)``.
+        matrix: Transforms ``(..., 4, 4)``, their leading dims broadcast against the points.
+
+    Returns:
+        The transformed points ``(..., 3)``.
+    """
+    return (matrix[..., :3, :3] * points.unsqueeze(-2)).sum(-1) + matrix[..., :3, 3]

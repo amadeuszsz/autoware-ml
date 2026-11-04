@@ -78,6 +78,14 @@ class TestGaussianFocalLoss(unittest.TestCase):
         # second application of the weights would halve it.
         self.assertTrue(torch.isclose(weighted, unweighted))
 
+    def test_avg_factor_replaces_the_peak_count(self) -> None:
+        """A given avg_factor divides the summed loss instead of the peak count."""
+        by_peaks = self.loss_fn(self.prediction, self.target)
+        by_factor = self.loss_fn(self.prediction, self.target, avg_factor=8.0)
+
+        # The two samples hold two peaks in total.
+        self.assertTrue(torch.isclose(by_factor, by_peaks * 2.0 / 8.0))
+
     def test_input_tensors_are_not_mutated(self) -> None:
         """The loss works on copies of the heatmaps."""
         prediction = self.prediction.clone()

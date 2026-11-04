@@ -18,7 +18,7 @@ from autoware_ml.models.detection3d.ptv3 import (
     PTv3BEVProjection,
     PTv3Det3DBEVNeck,
     PTv3Detection3DModel,
-    PTv3Det3DFeatureFusion,
+    PTv3Det3DFeaturePyramid,
 )
 from autoware_ml.models.detection3d.task_modules.assigners import HungarianAssigner3D
 from autoware_ml.models.detection3d.task_modules.bbox_coders import (
@@ -132,7 +132,7 @@ def build_bev_encoder() -> PTv3BEVEncoder:
 def build_bev_neck() -> PTv3Det3DBEVNeck:
     """Return a lightweight detection BEV neck matching the test encoder."""
     return PTv3Det3DBEVNeck(
-        fusion=PTv3Det3DFeatureFusion(in_channels=16, skip_channels=8, out_channels=16),
+        fusion=PTv3Det3DFeaturePyramid(stage_channels=(8, 16), out_channels=16),
         bev_projector=PTv3BEVProjection(
             in_channels=16,
             out_channels=16,

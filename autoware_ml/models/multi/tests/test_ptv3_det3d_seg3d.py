@@ -14,7 +14,7 @@ from autoware_ml.dataclasses.models.model_predictions import ModelPredictions
 from autoware_ml.dataclasses.models.model_batch_inputs import ModelBatchInputs
 from autoware_ml.dataclasses.models.model_outputs import ModelOutputs
 from autoware_ml.dataclasses.models.segmentation3d.head_outputs import Segmentation3DHeadOutputs
-from autoware_ml.models.detection3d.ptv3 import PTv3Det3DFeatureFusion
+from autoware_ml.models.detection3d.ptv3 import PTv3Det3DFeaturePyramid
 from autoware_ml.models.detection3d.tests.head_output_fixtures import build_transfusion_outputs
 from autoware_ml.models.detection3d.tests.ptv3_detection3d_fixtures import build_seg3d_head
 from autoware_ml.models.multi.ptv3_det3d_seg3d import PTv3Det3DSeg3DModel
@@ -47,9 +47,6 @@ def _make_masking_model(recorded_calls: list) -> SimpleNamespace:
         partial_annotations=None,
         segmentation3d_loss_weight=1.0,
         detection3d_loss_weight=1.0,
-        _detection3d_gt_batch=PTv3Det3DSeg3DModel._detection3d_gt_batch,
-        _detection3d_frame_mask=PTv3Det3DSeg3DModel._detection3d_frame_mask,
-        _mask_list=PTv3Det3DSeg3DModel._mask_list,
     )
 
 
@@ -181,8 +178,6 @@ def _make_eval_model() -> SimpleNamespace:
 
     return SimpleNamespace(
         bbox_head=SimpleNamespace(decode_outputs=decode_outputs),
-        _detection3d_gt_batch=PTv3Det3DSeg3DModel._detection3d_gt_batch,
-        _detection3d_frame_mask=PTv3Det3DSeg3DModel._detection3d_frame_mask,
     )
 
 
@@ -239,7 +234,7 @@ def test_seg3d_head_loss_returns_connected_zero_when_all_targets_ignored() -> No
 
 def test_det3d_feature_fusion_reads_pooling_chain_non_destructively() -> None:
     torch.manual_seed(0)
-    fusion = PTv3Det3DFeatureFusion(in_channels=16, skip_channels=8, out_channels=16).eval()
+    fusion = PTv3Det3DFeaturePyramid(stage_channels=(8, 16), out_channels=16).eval()
     parent_feat = torch.randn(6, 8)
     parent = Point(
         feat=parent_feat.clone(),
@@ -252,7 +247,7 @@ def test_det3d_feature_fusion_reads_pooling_chain_non_destructively() -> None:
         pooling_inverse=torch.tensor([0, 0, 1, 1, 2, 2], dtype=torch.long),
     )
 
-    fused, grid_coord, offset = fusion(deepest)
+    ((fused, grid_coord, offset),) = fusion(deepest)
 
     assert fused.shape == (6, 16)
     assert torch.equal(grid_coord, parent.grid_coord)

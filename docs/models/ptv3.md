@@ -11,7 +11,7 @@ PointTransformerV3 is a LiDAR encoder for LiDAR 3D semantic segmentation and
 - Segmentation: `PTv3Seg3DDecoderHead` unpools the deepest encoder stage back to
   full resolution through the encoder skip chain and classifies each point.
 - Detection: `PTv3Det3DBEVNeck` fuses the two coarsest encoder stages
-  (`PTv3Det3DFeatureFusion`), scatters them onto a dense BEV canvas at the
+  (`PTv3Det3DFeaturePyramid`), scatters them onto a dense BEV canvas at the
   detection-head resolution, and feeds a `TransFusionHead`.
 
 The models read single lidar frames, every point as `(x, y, z, intensity)`. The voxel feature

@@ -33,6 +33,7 @@ class GaussianFocalLoss(nn.Module):
         prediction: torch.Tensor,
         target: torch.Tensor,
         weights: torch.Tensor | None = None,
+        avg_factor: float | None = None,
     ) -> torch.Tensor:
         """Compute Gaussian focal loss on dense heatmaps.
 
@@ -42,6 +43,7 @@ class GaussianFocalLoss(nn.Module):
             weights: Optional weights broadcastable to ``prediction``, for example one weight
                 per sample and class. A zero drops the cell from the loss and, if it is a peak,
                 from the positive count normalizing the loss.
+            avg_factor: Normalization factor of the summed loss, the weighted peak count if None.
 
         Returns:
             Scalar heatmap loss value.
@@ -58,4 +60,6 @@ class GaussianFocalLoss(nn.Module):
         # leaves the positive count normalizing the loss.
         pos_loss = -torch.log(prediction) * (1 - prediction).pow(self.alpha) * pos_mask
         neg_loss = -torch.log(1 - prediction) * prediction.pow(self.alpha) * neg_weights * neg_mask
-        return (pos_loss.sum() + neg_loss.sum()) / pos_mask.sum().clamp_min(1)
+        if avg_factor is None:
+            avg_factor = pos_mask.sum().clamp_min(1)
+        return (pos_loss.sum() + neg_loss.sum()) / avg_factor
