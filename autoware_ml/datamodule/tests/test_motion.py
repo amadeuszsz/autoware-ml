@@ -341,3 +341,36 @@ class TestMotionTask(unittest.TestCase):
                 max_speed=50.0,
                 sparse_key_frames=False,
             )
+
+    def test_the_online_map_targets_ride_on_the_motion_sample(self) -> None:
+        """
+        Input: a motion task with an online map builder that records its arguments.
+        Expected: the builder gets the root, the records and their poses, and its sample of a record
+          lands in the motion sample of that record, none without a builder.
+        """
+        calls = {}
+
+        class Targets:
+            def __init__(self, root: str, dataframe: pl.DataFrame, poses: np.ndarray) -> None:
+                calls.update(root=root, num_records=len(dataframe), poses=poses)
+
+            def get_gt_sample(self, idx: int) -> str:
+                return f"map {idx}"
+
+        motion_task = MotionTask(
+            "/maps",
+            records(),
+            taxonomy=TAXONOMY,
+            agent_steps=2,
+            step_seconds=0.5,
+            time_tolerance_seconds=0.03,
+            max_speed=50.0,
+            sparse_key_frames=False,
+            online_map=Targets,
+        )
+
+        self.assertEqual(calls["root"], "/maps")
+        self.assertEqual(calls["num_records"], FRAMES)
+        np.testing.assert_allclose(calls["poses"][3][0, 3], MAP_X + 3.0)
+        self.assertEqual(motion_task.get_data_sample(3).online_map_gt_sample, "map 3")
+        self.assertIsNone(task(records()).get_data_sample(3).online_map_gt_sample)

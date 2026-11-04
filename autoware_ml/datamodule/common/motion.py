@@ -15,7 +15,7 @@
 """Dataset task reading the agent tracks of a record from the boxes of the later records."""
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from jaxtyping import Bool, Float, Float32, Float64, Int64
@@ -30,6 +30,7 @@ from autoware_ml.dataclasses.batch.motion import AgentTracksSample, MotionGTSamp
 from autoware_ml.dataclasses.batch.sample_batch import ModelGTSample
 from autoware_ml.datamodule.base_dataset_task import BaseDatasetTask
 from autoware_ml.datamodule.common.detection3d import box_instance_ids, flatten_box_fields
+from autoware_ml.datamodule.common.online_map import OnlineMapTargets
 from autoware_ml.types.geometry import Box3DFieldIndex
 from autoware_ml.types.motion import AgentRole
 
@@ -77,6 +78,7 @@ class MotionTask(BaseDatasetTask):
         time_tolerance_seconds: float,
         max_speed: float,
         sparse_key_frames: bool,
+        online_map: Callable[..., OnlineMapTargets] | None = None,
     ) -> None:
         """
         Initialize the task and index the future records of every record.
@@ -95,6 +97,8 @@ class MotionTask(BaseDatasetTask):
             such as human labelled 1 Hz scenes read with 0.5 s steps for an evaluation. A step
             without a key frame stays invalid. Without it such scenarios are refused, so a
             training never meets futures with regular holes.
+          online_map: Builder of the map elements around every record, called with the root, the
+            records and their poses. None reads no map.
 
         Raises:
           ValueError: If a setting is out of range, or the key frames come less often than the
@@ -147,6 +151,9 @@ class MotionTask(BaseDatasetTask):
         self.box_offsets: Int64[np.ndarray, " num_records_plus_1"] = box_offsets
         self.box_instance_ids: Int64[np.ndarray, " num_boxes"] = box_instance_ids
         self.box_states: Float32[np.ndarray, "num_boxes 6"] = box_states
+        self.online_map = (
+            None if online_map is None else online_map(database_root_path, records, self.poses)
+        )
 
     def select_columns(self, dataset_records_dataframe: pl.DataFrame) -> pl.DataFrame:
         """
@@ -176,7 +183,7 @@ class MotionTask(BaseDatasetTask):
           idx: Index of the record.
 
         Returns:
-          ModelGTSample: Sample holding the agent tracks of the record.
+          ModelGTSample: Sample holding the agent tracks and the map elements of the record.
         """
         begin, end = self.box_offsets[idx], self.box_offsets[idx + 1]
         agent_ids = self.box_instance_ids[begin:end]
@@ -231,6 +238,9 @@ class MotionTask(BaseDatasetTask):
             detection3d_gt_bboxes_3d=None,
             segmentation3d_gt_sample=None,
             motion_gt_sample=MotionGTSample(agents=agents),
+            online_map_gt_sample=(
+                None if self.online_map is None else self.online_map.get_gt_sample(idx)
+            ),
         )
 
     def current_boxes(

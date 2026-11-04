@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The typed motion part of the eval output a model hands to its metric suites."""
+"""The typed motion and online map parts of the eval output a model hands its suites."""
 
 from __future__ import annotations
 
@@ -87,3 +87,53 @@ class MotionEvalOutput(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True)
 
     frames: Sequence[MotionEvalFrame]
+
+
+class OnlineMapEvalFrame(BaseModel):
+    """
+    The predicted and the ground truth map polylines of one frame, points in the frame.
+
+    Attributes:
+      pred_points: Points of every predicted polyline.
+      pred_scores: Score of every predicted polyline.
+      pred_labels: Class of every predicted polyline.
+      gt_points: Points of every ground truth polyline.
+      gt_labels: Class of every ground truth polyline.
+      scored: Whether the metrics score the frame. A frame padding a streaming lane or lying
+        between key frames is kept so every rank gathers as many frames, and left out.
+    """
+
+    model_config = ConfigDict(frozen=True, strict=True, arbitrary_types_allowed=True)
+
+    pred_points: Float[torch.Tensor, "num_preds num_points 2"]
+    pred_scores: Float[torch.Tensor, " num_preds"]
+    pred_labels: Int[torch.Tensor, " num_preds"]
+    gt_points: Float[torch.Tensor, "num_gts num_points 2"]
+    gt_labels: Int[torch.Tensor, " num_gts"]
+    scored: bool = True
+
+    @model_validator(mode="after")
+    def _check_rows(self) -> OnlineMapEvalFrame:
+        """Check that every prediction and every ground truth column describes the same lines."""
+        rows = {"pred_": self.pred_points.shape[0], "gt_": self.gt_points.shape[0]}
+        for name in type(self).model_fields:
+            prefix = next((key for key in rows if name.startswith(key)), None)
+            value = getattr(self, name)
+            if prefix is not None and value.shape[0] != rows[prefix]:
+                raise ValueError(
+                    f"{name} describes {value.shape[0]} polylines, {prefix}points {rows[prefix]}."
+                )
+        return self
+
+
+class OnlineMapEvalOutput(BaseModel):
+    """
+    The online map frames of one batch.
+
+    Attributes:
+      frames: One entry per sample of the batch, padding samples included.
+    """
+
+    model_config = ConfigDict(frozen=True, strict=True)
+
+    frames: Sequence[OnlineMapEvalFrame]

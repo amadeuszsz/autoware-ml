@@ -33,6 +33,7 @@ from autoware_ml.dataclasses.batch.motion import (
     MotionSourceSample,
 )
 from autoware_ml.dataclasses.batch.frame_meta import FrameMetaBatch, FrameMetaSample
+from autoware_ml.dataclasses.batch.online_map import OnlineMapGTBatch, OnlineMapGTSample
 from autoware_ml.dataclasses.batch.segmentation3d import (
     Segmentation3DGTBatch,
     Segmentation3DGTSample,
@@ -100,6 +101,9 @@ class ModelGTSample(NamedTuple):
     # scenario. None when the sample carries none.
     motion_gt_sample: MotionGTSample | None = None
 
+    # Map elements near the frame in the raw frame, None without map GT.
+    online_map_gt_sample: OnlineMapGTSample | None = None
+
     def keep_points(self, keep_mask: Bool[Tensor, " num_points"]) -> ModelGTSample:
         """
         Keep the masked points and, when the sample carries them, their semantic labels. The
@@ -158,6 +162,9 @@ class ModelGTBatch(NamedTuple):
     # Agent tracks and vector maps of every scenario, None when the samples carry none.
     motion_gt_batch: MotionGTBatch | None = None
 
+    # Map elements in the augmented frames, resampled and padded. None without map GT.
+    online_map_gt_batch: OnlineMapGTBatch | None = None
+
     def to_device(self, device: torch.device) -> ModelGTBatch:
         """
         Move the ModelGTBatch to the specified device.
@@ -191,6 +198,9 @@ class ModelGTBatch(NamedTuple):
             padding_mask=self.padding_mask.to(device),
             motion_gt_batch=self.motion_gt_batch.to_device(device)
             if self.motion_gt_batch is not None
+            else None,
+            online_map_gt_batch=self.online_map_gt_batch.to_device(device)
+            if self.online_map_gt_batch is not None
             else None,
         )
 
@@ -505,6 +515,38 @@ class ModelGTBatch(NamedTuple):
         )
 
     @staticmethod
+    def collate_online_map_gt_samples(
+        gt_samples: Sequence[ModelGTSample],
+    ) -> OnlineMapGTBatch | None:
+        """
+        Collate the map elements of a batch into the augmented frames.
+
+        Args:
+          gt_samples: Sequence of ModelGTSample to be collated.
+
+        Returns:
+          OnlineMapGTBatch | None: Collated map elements, None when no sample carries them.
+
+        Raises:
+          ValueError: If only some samples carry map elements.
+        """
+        online_map_gt_samples = [
+            sample.online_map_gt_sample
+            for sample in gt_samples
+            if sample.online_map_gt_sample is not None
+        ]
+        if not len(online_map_gt_samples):
+            return None
+        if len(online_map_gt_samples) != len(gt_samples):
+            raise ValueError("All samples must have online_map_gt_sample for collating.")
+        return OnlineMapGTBatch.collate_gt_samples(
+            online_map_gt_samples=online_map_gt_samples,
+            lidar_transformation_samples=[
+                sample.lidar_transformation_sample for sample in gt_samples
+            ],
+        )
+
+    @staticmethod
     def collate_gt_samples(
         gt_samples: Sequence[ModelGTSample],
         max_num_3d_gt_bboxes: int | None,
@@ -551,6 +593,9 @@ class ModelGTBatch(NamedTuple):
         # Collate the scenarios of the motion task
         motion_gt_batch = ModelGTBatch.collate_motion_gt_samples(gt_samples=gt_samples)
 
+        # Collate the map elements into the augmented frames
+        online_map_gt_batch = ModelGTBatch.collate_online_map_gt_samples(gt_samples=gt_samples)
+
         return ModelGTBatch(
             point_cloud_gt_batch=point_cloud_gt_batch,
             detection3d_gt_batch=detection3d_gt_batch,
@@ -563,4 +608,5 @@ class ModelGTBatch(NamedTuple):
                 [sample.is_padding for sample in gt_samples], dtype=torch.bool
             ),
             motion_gt_batch=motion_gt_batch,
+            online_map_gt_batch=online_map_gt_batch,
         )

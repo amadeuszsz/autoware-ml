@@ -100,13 +100,14 @@ sequenceDiagram
 Each piece of state is registered with `add_state(name, default, dist_reduce_fx)`, the reduce
 function torchmetrics uses to combine that state across GPUs.
 
-| Suite                                      | `prefix`   | Reads                                   | State (`dist_reduce_fx`)                                  |
-| ------------------------------------------ | ---------- | --------------------------------------- | --------------------------------------------------------- |
-| `Detection3DMetricSuite`                   | `det3d`    | `EvalOutput.detection3d` frames         | per-frame box tensors as list states (`None`)             |
-| `Segmentation3DConfusionMatrixMetricSuite` | `seg3d`    | `EvalOutput.segmentation3d` frames      | one confusion tensor over (filter, range) buckets (`sum`) |
-| `Segmentation3DPointCloudMetricSuite`      | `seg3d_pt` | `EvalOutput.segmentation3d` with scores | per-frame point tensors (`None`)                          |
-| `TrackingMetricSuite`                      | `track`    | `EvalOutput.detection3d` with track ids | per-frame box and track id tensors (`None`)               |
-| `MotionMetricSuite`                        | `motion`   | `EvalOutput.motion` frames              | per-frame trajectory tensors (`None`)                     |
+| Suite                                      | `prefix`     | Reads                                   | State (`dist_reduce_fx`)                                  |
+| ------------------------------------------ | ------------ | --------------------------------------- | --------------------------------------------------------- |
+| `Detection3DMetricSuite`                   | `det3d`      | `EvalOutput.detection3d` frames         | per-frame box tensors as list states (`None`)             |
+| `Segmentation3DConfusionMatrixMetricSuite` | `seg3d`      | `EvalOutput.segmentation3d` frames      | one confusion tensor over (filter, range) buckets (`sum`) |
+| `Segmentation3DPointCloudMetricSuite`      | `seg3d_pt`   | `EvalOutput.segmentation3d` with scores | per-frame point tensors (`None`)                          |
+| `TrackingMetricSuite`                      | `track`      | `EvalOutput.detection3d` with track ids | per-frame box and track id tensors (`None`)               |
+| `MotionMetricSuite`                        | `motion`     | `EvalOutput.motion` frames              | per-frame trajectory tensors (`None`)                     |
+| `OnlineMapMetricSuite`                     | `online_map` | `EvalOutput.online_map` frames          | per-frame polyline tensors (`None`)                       |
 
 - **Confusion counts `sum`.** A confusion matrix is a bounded sufficient statistic, so adding the
   per-rank tensors is exact.

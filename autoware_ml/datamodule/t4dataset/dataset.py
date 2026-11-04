@@ -253,6 +253,12 @@ class T4Dataset(BaseDataset):
             if TaskType.MOTION in data_samples
             else None
         )
+        # The motion task carries the map elements of the record when it trains the online map
+        online_map_gt_sample = (
+            data_samples[TaskType.MOTION].online_map_gt_sample
+            if TaskType.MOTION in data_samples
+            else None
+        )
         # The mask of a merged cloud labels the points of every source in file order
         if segmentation3d_gt_sample is not None and source_view is not None:
             end = source_view.point_index_begin + source_view.num_points
@@ -286,6 +292,7 @@ class T4Dataset(BaseDataset):
                 detection3d_traffic_cone_barrier_bbox_status
             ),
             motion_gt_sample=motion_gt_sample,
+            online_map_gt_sample=online_map_gt_sample,
         )
 
     def get_lidar_source_view(self, idx: int, channel_name: str) -> LidarSourceView:

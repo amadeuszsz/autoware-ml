@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, InstanceOf, model_validator
 
 from autoware_ml.dataclasses.batch.frame_meta import FrameMetaSample
 from autoware_ml.dataclasses.models.detection3d.predictions import Detection3DSamplePredictions
-from autoware_ml.metrics.motion.eval_output import MotionEvalOutput
+from autoware_ml.metrics.motion.eval_output import MotionEvalOutput, OnlineMapEvalOutput
 
 MIN_BOX_PARAMS = 7
 
@@ -249,6 +249,7 @@ class EvalOutput(BaseModel):
       detection3d: The detection frames, when the model detects.
       segmentation3d: The segmentation frames, when the model segments.
       motion: The motion frames, when the model predicts the motion of the agents.
+      online_map: The online map frames, when the model predicts the map elements.
     """
 
     model_config = ConfigDict(frozen=True, strict=True)
@@ -256,6 +257,7 @@ class EvalOutput(BaseModel):
     detection3d: Detection3DEvalOutput | None = None
     segmentation3d: Segmentation3DEvalOutput | None = None
     motion: MotionEvalOutput | None = None
+    online_map: OnlineMapEvalOutput | None = None
 
 
 class MetricRequirements(BaseModel):
@@ -266,6 +268,7 @@ class MetricRequirements(BaseModel):
       detection3d: The suite reads the detection frames.
       segmentation3d: The suite reads the segmentation frames.
       motion: The suite reads the motion frames.
+      online_map: The suite reads the online map frames.
       frame_meta: A filter or a collision provider reads the pose and lanelet map of the frames.
       gt_num_points: A ground truth point filter reads the lidar point count of every box.
       gt_observed: A suite counts only the boxes a temporal model observed in its stream.
@@ -279,6 +282,7 @@ class MetricRequirements(BaseModel):
     detection3d: bool = False
     segmentation3d: bool = False
     motion: bool = False
+    online_map: bool = False
     frame_meta: bool = False
     gt_num_points: bool = False
     gt_observed: bool = False
@@ -305,6 +309,8 @@ class MetricRequirements(BaseModel):
             missing.append("segmentation3d frames")
         if self.motion and eval_output.motion is None:
             missing.append("motion frames")
+        if self.online_map and eval_output.online_map is None:
+            missing.append("online map frames")
         # The metadata counts as present when every part the output holds carries it.
         has_frame_meta = (
             (detection is not None or segmentation is not None)

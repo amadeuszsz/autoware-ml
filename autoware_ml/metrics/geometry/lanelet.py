@@ -89,7 +89,7 @@ KNOWN_REGION_TOKENS = (
 )
 
 
-def _load_osm_map(osm_path: str) -> lanelet2.core.LaneletMap:
+def load_osm_map(osm_path: str) -> lanelet2.core.LaneletMap:
     """Read one OSM file into a lanelet2 map.
 
     T4 maps are excerpts whose regulatory elements reference primitives left
@@ -120,7 +120,7 @@ def _load_osm_map(osm_path: str) -> lanelet2.core.LaneletMap:
     return lanelet_map
 
 
-def _local_xy(point: lanelet2.core.Point3d) -> tuple[float, float]:
+def local_xy(point: lanelet2.core.Point3d) -> tuple[float, float]:
     """Position of a map point in the local frame the ego poses use.
 
     The loader projects the geographic node coordinates, which land in a
@@ -137,8 +137,8 @@ def _local_xy(point: lanelet2.core.Point3d) -> tuple[float, float]:
 
 def _lanelet_ring(lanelet: lanelet2.core.Lanelet) -> list[tuple[float, float]]:
     """Closed ring of a lanelet: its left bound followed by its reversed right bound."""
-    return [_local_xy(point) for point in lanelet.leftBound] + [
-        _local_xy(point) for point in reversed(list(lanelet.rightBound))
+    return [local_xy(point) for point in lanelet.leftBound] + [
+        local_xy(point) for point in reversed(list(lanelet.rightBound))
     ]
 
 
@@ -161,7 +161,7 @@ def _area_way_rings(
         if way_type not in AREA_WAY_TYPES:
             continue
         rings[way_type].append(
-            [_local_xy(lanelet_map.pointLayer[int(nd.get("ref"))]) for nd in way.findall("nd")]
+            [local_xy(lanelet_map.pointLayer[int(nd.get("ref"))]) for nd in way.findall("nd")]
         )
     return dict(rings)
 
@@ -178,12 +178,21 @@ def load_region_polygons(osm_path: str) -> dict[str, list[Polygon]]:
     Returns:
         Region token to polygons mapping.
     """
-    return _region_polygons(osm_path, _load_osm_map(osm_path))
+    return region_polygons(osm_path, load_osm_map(osm_path))
 
 
-def _region_polygons(
+def region_polygons(
     osm_path: str, lanelet_map: lanelet2.core.LaneletMap
 ) -> dict[str, list[Polygon]]:
+    """Region polygons of a parsed map, see :func:`load_region_polygons`.
+
+    Args:
+        osm_path: Path of the OSM the map was parsed from, for the area ways.
+        lanelet_map: The parsed map.
+
+    Returns:
+        Region token to polygons mapping.
+    """
     regions: dict[str, list[Polygon]] = defaultdict(list)
     for lanelet in lanelet_map.laneletLayer:
         subtype = lanelet.attributes["subtype"] if "subtype" in lanelet.attributes else "unknown"
@@ -247,7 +256,7 @@ def load_lanelet_speeds(osm_path: str) -> list[tuple[Polygon, float]]:
     Raises:
         ValueError: If a ``speed_limit`` tag is not a positive number.
     """
-    return _lanelet_speeds(_load_osm_map(osm_path))
+    return _lanelet_speeds(load_osm_map(osm_path))
 
 
 def _lanelet_speeds(lanelet_map: lanelet2.core.LaneletMap) -> list[tuple[Polygon, float]]:
@@ -280,8 +289,8 @@ def _load_lanelet_map(osm_path: str) -> "LaneletMap":
     read, unioned and eroded once per instance. One lanelet2 load feeds both the
     region polygons and the speed lanelets.
     """
-    parsed = _load_osm_map(osm_path)
-    return LaneletMap(_region_polygons(osm_path, parsed), _lanelet_speeds(parsed))
+    parsed = load_osm_map(osm_path)
+    return LaneletMap(region_polygons(osm_path, parsed), _lanelet_speeds(parsed))
 
 
 class LaneletMap:

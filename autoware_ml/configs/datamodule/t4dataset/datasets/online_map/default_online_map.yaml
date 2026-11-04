@@ -1,0 +1,21 @@
+# Lane markings, road borders and crosswalks of the lanelet2 map within 50 m ahead and behind and
+# 25 m to the sides, as 20-point polylines
+_target_: autoware_ml.datamodule.common.online_map.OnlineMapTargets
+_convert_: all
+_partial_: true
+
+classes:
+  divider:
+    line_types: [line_thin, line_thick]
+  boundary:
+    line_types: [road_border]
+  ped_crossing:
+    regions: [crosswalk]
+roi: [-50.0, -25.0, 50.0, 25.0]
+num_points: 20
+# Corner cuts shorter than this carry no shape to learn
+min_length: 1.0
+# Covers the 5% scale-up of the corners and the translation jitter of the lidar augmentation
+augmentation_margin: 5.0
+# Root of the scene directories holding the maps, null reads them next to the point clouds
+map_root_path: null
