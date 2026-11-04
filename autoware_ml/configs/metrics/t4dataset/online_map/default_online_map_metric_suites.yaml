@@ -1,0 +1,6 @@
+# Online map suites of the motion models with a map branch: the polylines, test only.
+- _target_: autoware_ml.metrics.motion.online_map.OnlineMapMetricSuite
+  components:
+    - _target_: autoware_ml.metrics.motion.online_map.MapVectorAP
+      stages: [test]
+  class_names: ${online_map_class_names}

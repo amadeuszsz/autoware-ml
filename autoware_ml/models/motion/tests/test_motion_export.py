@@ -38,10 +38,16 @@ from autoware_ml.models.detection3d.tests.sparse4d_fixtures import (
 from autoware_ml.models.module_base_model import LogDictConfigs
 from autoware_ml.models.motion.instance_queue import QueueState
 from autoware_ml.models.motion.tests.motion_fixtures import build_motion_head
+from autoware_ml.models.motion.tests.online_map_fixtures import build_head as build_online_map_head
 from autoware_ml.models.multi.ptv3_sparsedrive_motion import (
     MOTION_EXPORT_INPUT_NAMES,
     MOTION_EXPORT_OUTPUT_NAMES,
+    MOTION_MAP_INPUT_NAMES,
+    ONLINE_MAP_CONTEXT_OUTPUT_NAMES,
+    ONLINE_MAP_POLYLINE_OUTPUT_NAMES,
+    ONLINE_MAP_STATE_OUTPUT_NAMES,
     PTv3SparseDriveMotionModel,
+    online_map_context,
 )
 from autoware_ml.models.segmentation3d.encoders.voxel import SweepSplitVoxelFeatureEncoder
 from autoware_ml.ops.spconv.availability import IS_SPCONV_AVAILABLE
@@ -55,10 +61,18 @@ requires_cuda_spconv = unittest.skipUnless(
 )
 
 
-def build_model(tmp_path: Path) -> PTv3SparseDriveMotionModel:
-    """A small model with the agent motion head."""
+def build_model(
+    tmp_path: Path,
+    with_map: bool = False,
+    export_online_map: bool = False,
+    online_map_supervised: bool = True,
+) -> PTv3SparseDriveMotionModel:
+    """A small model with the agent motion head and optionally the online map branch."""
     return PTv3SparseDriveMotionModel(
-        motion_head=build_motion_head(CLASSES),
+        motion_head=build_motion_head(CLASSES, num_map_keys=3 if with_map else 0),
+        online_map_head=build_online_map_head(tmp_path, num_temp_instances=2) if with_map else None,
+        export_online_map=export_online_map,
+        online_map_supervised=online_map_supervised,
         encoder=build_ptv3_encoder(),
         voxel_encoder=SweepSplitVoxelFeatureEncoder(),
         seg3d_head=build_seg3d_head(),
@@ -174,3 +188,47 @@ class TestMotionExport(unittest.TestCase):
                     torch.from_numpy(got), want.cpu(), rtol=1e-4, atol=1e-4, msg=name
                 )
             state = list(expected[2:])
+
+    @requires_cuda_spconv
+    def test_the_map_graph_hands_the_motion_graph_its_context(self) -> None:
+        """
+        Input: a motion model with the online map branch, with and without export_online_map.
+        Expected: the map graph returns the context the motion graph takes, the polylines first
+          only with export_online_map, the context matches the one built from the polylines and
+          the motion graph runs on it.
+        """
+        device = torch.device("cuda")
+        for export_online_map in (False, True):
+            with self.subTest(export_online_map=export_online_map):
+                model = build_model(
+                    self.tmp_path, with_map=True, export_online_map=export_online_map
+                )
+                specs = model.to(device).eval().build_export_specs(build_inputs(device=device))
+                map_spec, motion_spec = specs["ptv3_online_map_head"], specs["ptv3_motion_head"]
+                polylines = list(ONLINE_MAP_POLYLINE_OUTPUT_NAMES) if export_online_map else []
+                self.assertEqual(
+                    map_spec.output_names,
+                    [*polylines, *ONLINE_MAP_CONTEXT_OUTPUT_NAMES, *ONLINE_MAP_STATE_OUTPUT_NAMES],
+                )
+                self.assertEqual(
+                    motion_spec.input_names, [*MOTION_EXPORT_INPUT_NAMES, *MOTION_MAP_INPUT_NAMES]
+                )
+
+                with torch.no_grad():
+                    named = dict(
+                        zip(map_spec.output_names, map_spec.module(*map_spec.args), strict=True)
+                    )
+                    frame = map_spec.module.frame_outputs(*map_spec.args)
+                    expected = online_map_context(
+                        map_spec.module.bbox_head.anchor_encoder,
+                        frame.instance_feature,
+                        frame.prediction,
+                        frame.classification,
+                    )
+                    motion_outputs = motion_spec.module(
+                        *motion_spec.args[: len(MOTION_EXPORT_INPUT_NAMES)],
+                        *(named[name] for name in ONLINE_MAP_CONTEXT_OUTPUT_NAMES),
+                    )
+                torch.testing.assert_close(named["anchor_embed"], expected.anchor_embed)
+                torch.testing.assert_close(named["score"], expected.scores)
+                self.assertEqual(len(motion_outputs), len(MOTION_EXPORT_OUTPUT_NAMES))

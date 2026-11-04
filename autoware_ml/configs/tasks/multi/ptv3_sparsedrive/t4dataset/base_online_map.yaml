@@ -1,0 +1,71 @@
+# @package _global_
+# Online map branch of the motion model: polyline queries over the fused stages predict the lane
+# markings, road borders and crosswalks from the lidar, and the motion queries attend to the most
+# confident of them after the agents. The lanelet2 map of every scene only gives the training
+# targets. An experiment composes it after base_motion and adds the map targets to the motion task
+# of its extra sources.
+defaults:
+  - /datamodule/t4dataset/datasets/online_map@datasets.train.dataset_tasks.motion.online_map: default_online_map
+  - /datamodule/t4dataset/datasets/online_map@datasets.test.dataset_tasks.motion.online_map: default_online_map
+  - /metrics/t4dataset/online_map@online_map_metrics: default_online_map_metric_suites
+  - _self_
+
+online_map_class_names: ${oc.dict.keys:datasets.train.dataset_tasks.motion.online_map.classes}
+
+metrics: ${merge_lists:${detection3d_metrics},${segmentation3d_metrics},${det3d_seg3d_metrics},${tracking_metrics},${motion_metrics},${online_map_metrics}}
+
+model:
+  online_map_loss_weight: 1.0
+  # The map graph hands the motion graph its context only, true adds the polylines to its outputs
+  export_online_map: false
+  online_map_head:
+    _target_: autoware_ml.models.motion.online_map_head.OnlineMapHead
+    num_classes: ${class_count:${online_map_class_names}}
+    embed_dims: ${model.bbox_head.embed_dims}
+    # Polyline anchors from the element centroids of every fifth training record, 8 m segments,
+    # built into the cache before the first training
+    anchor_recipe:
+      _target_: autoware_ml.anchors.polylines.PolylineAnchorRecipe
+      cache_path: ${cache_root_path}/anchors
+      num_anchors: ${model.online_map_head.num_anchor}
+      num_points: ${model.online_map_head.num_points}
+      record_stride: 5
+      segment_length: 8.0
+      iterations: 100
+      seed: 0
+    num_anchor: 100
+    num_points: ${datasets.train.dataset_tasks.motion.online_map.num_points}
+    roi: ${datasets.train.dataset_tasks.motion.online_map.roi}
+    point_cloud_range: ${point_cloud_range}
+    grid_size: ${grid_size}
+    feature_strides: ${det_feature_strides}
+    # Ground level and half a meter above it, two learned keypoints around every point
+    fix_heights: [0.0, 0.5]
+    num_learnable_pts: 2
+    # A third of the queries carry the map of the last frame, as SparseDrive stage 2, with the
+    # memory timing of the det head
+    num_temp_instances: 33
+    default_time_interval: ${model.bbox_head.default_time_interval}
+    min_time_interval: ${model.bbox_head.min_time_interval}
+    max_time_interval: ${model.bbox_head.max_time_interval}
+    confidence_decay: ${model.bbox_head.confidence_decay}
+  motion_head:
+    num_map_keys: 10
+
+# The map graph samples the same encoder stages as the det head and carries its own state. With
+# export_online_map a polyline lists x and y of every point, in the lidar frame.
+deploy:
+  onnx:
+    modules:
+      ptv3_online_map_head:
+        metainfo:
+          exports_polylines: ${model.export_online_map}
+          class_names: ${online_map_class_names}
+          num_points: ${model.online_map_head.num_points}
+          roi: ${model.online_map_head.roi}
+          num_anchor: ${model.online_map_head.num_anchor}
+          num_temp_instances: ${model.online_map_head.num_temp_instances}
+          default_time_interval: ${model.online_map_head.default_time_interval}
+          min_time_interval: ${model.online_map_head.min_time_interval}
+          max_time_interval: ${model.online_map_head.max_time_interval}
+          confidence_decay: ${model.online_map_head.confidence_decay}

@@ -34,7 +34,7 @@ from autoware_ml.models.detection3d.heads.sparse4d import (
     SparseBox3DEncoder,
 )
 from autoware_ml.models.detection3d.task_modules.streaming import pos2posemb2d
-from autoware_ml.models.motion.motion_head import MotionHead
+from autoware_ml.models.motion.motion_head import MapContext, MotionHead
 from autoware_ml.models.motion.tests.motion_fixtures import build_motion_head
 from autoware_ml.models.multi.ptv3_sparsedrive_motion import PTv3SparseDriveMotionModel
 
@@ -51,6 +51,7 @@ def random_anchor(batch_size: int) -> torch.Tensor:
 def run(
     head: MotionHead,
     batch_size: int = 2,
+    map_context: MapContext | None = None,
     feature: torch.Tensor | None = None,
     encoder: SparseBox3DEncoder | None = None,
 ) -> MotionHeadOutputs:
@@ -63,6 +64,17 @@ def run(
         torch.zeros(batch_size, dtype=torch.bool),
         None,
         torch.eye(4).repeat(batch_size, 1, 1),
+        map_context,
+    )
+
+
+def map_context(seed: int) -> MapContext:
+    """Six random map queries of one frame."""
+    generator = torch.Generator().manual_seed(seed)
+    return MapContext(
+        feature=torch.randn(1, 6, DIMS, generator=generator),
+        anchor_embed=torch.randn(1, 6, DIMS, generator=generator),
+        scores=torch.rand(1, 6, generator=generator),
     )
 
 
@@ -201,6 +213,29 @@ class TestMotionHead(unittest.TestCase):
         )
         self.assertTrue(all(value.item() == 0.0 for value in losses.values()))
         losses["loss"].backward()
+
+    def test_a_head_with_a_map_reads_the_map_queries(self) -> None:
+        """
+        Input: a head attending to 3 map queries run on one frame with two different maps, and
+          heads given a map context they do not take.
+        Expected: the trajectories differ between the maps, the mismatched calls raise.
+        """
+        head = build_motion_head(CLASSES, num_map_keys=3).eval()
+        trajectories = []
+        for seed in range(2):
+            head.reset()
+            torch.manual_seed(0)
+            with torch.no_grad():
+                trajectories.append(
+                    run(head, batch_size=1, map_context=map_context(seed)).agent_trajectories
+                )
+
+        self.assertFalse(torch.allclose(trajectories[0], trajectories[1]))
+        with self.assertRaisesRegex(ValueError, "exactly to a head with a map"):
+            head.reset()
+            run(head, batch_size=1)
+        with self.assertRaisesRegex(ValueError, "exactly to a head with a map"):
+            run(build_motion_head(CLASSES), batch_size=1, map_context=map_context(0))
 
     def test_a_detached_head_trains_without_touching_the_detection(self) -> None:
         """

@@ -51,6 +51,7 @@ from autoware_ml.models.detection3d.heads.sparse4d import (
     Sparse4DFrameOutputs,
     Sparse4DHead,
     Sparse4DTargets,
+    SparseQueryHead,
     TemporalStateInputs,
 )
 from autoware_ml.models.detection3d.ptv3 import (
@@ -99,10 +100,12 @@ class ForwardBranches(NamedTuple):
     """Outputs of the shared encoder pass and the two heads.
 
     Attributes:
+        stages: Fused stages the detection head sampled, for the heads that sample them too.
         det3d_outputs: Outputs of the Sparse4D head.
         seg3d_logits: Segmentation logits of every voxel.
     """
 
+    stages: list[SparseStage]
     det3d_outputs: Sparse4DHeadOutputs
     seg3d_logits: Float[torch.Tensor, "num_voxels num_classes"]
 
@@ -276,7 +279,7 @@ class PTv3Det3DSeg3DSparse4DModel(PTv3BaseModel):
                 train or evaluate, the detection ground truth.
 
         Returns:
-            The detection outputs and the segmentation logits.
+            The fused stages, the detection outputs and the segmentation logits.
 
         Raises:
             ValueError: If the batch carries no frame metadata.
@@ -295,7 +298,9 @@ class PTv3Det3DSeg3DSparse4DModel(PTv3BaseModel):
             scene_tokens=frame_meta.scene_tokens,
             gt_detections=multi_task_batch_inputs.multi_task_gt_batch.detection3d_gt_batch,
         )
-        return ForwardBranches(det3d_outputs=det3d_outputs, seg3d_logits=seg3d_logits)
+        return ForwardBranches(
+            stages=det3d_stages, det3d_outputs=det3d_outputs, seg3d_logits=seg3d_logits
+        )
 
     def compute_metrics(
         self,
@@ -590,30 +595,33 @@ def fuse_export_stages(
 
 
 class PTv3Sparse4DHeadExportModule(nn.Module):
-    """Export-only temporal Sparse4D head consuming the encoder stages the pyramid fuses.
+    """Export-only temporal query head consuming the encoder stages the pyramid fuses.
 
     The graph inputs are the stage features from the finest to the deepest stage, the pooling
     clusters and the voxel coordinates of every stage but the deepest, then the bank state.
     """
 
+    # Outputs the graph can return
+    frame_output_names: ClassVar[tuple[str, ...]] = Sparse4DFrameOutputs._fields
+
     def __init__(
         self,
         det_fusion: PTv3Det3DFeaturePyramid,
-        bbox_head: Sparse4DHead,
+        bbox_head: SparseQueryHead,
         output_names: Sequence[str],
     ) -> None:
         """Initialize the export-only head module.
 
         Args:
             det_fusion: Detection feature pyramid (copied internally).
-            bbox_head: Export-ready temporal head.
+            bbox_head: Export-ready temporal query head.
             output_names: Frame outputs the graph returns, in order.
 
         Raises:
             ValueError: If an output name is no frame output of the head.
         """
         super().__init__()
-        unknown = sorted(set(output_names) - set(Sparse4DFrameOutputs._fields))
+        unknown = sorted(set(output_names) - set(self.frame_output_names))
         if unknown:
             raise ValueError(f"The head graph has no outputs {unknown}.")
         self.det_fusion = deepcopy(det_fusion).eval()

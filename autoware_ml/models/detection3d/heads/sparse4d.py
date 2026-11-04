@@ -18,11 +18,12 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import NamedTuple
+from typing import NamedTuple, Protocol, Self
 
 import numpy as np
 import torch
@@ -120,7 +121,7 @@ class Sparse4DFrameOutputs(NamedTuple):
     Attributes:
         classification: Class logits of every query.
         prediction: Anchor state of every query.
-        quality: Centerness and yawness logits of every query.
+        quality: Centerness and yawness logits of every query, None for a head without quality.
         instance_feature: Instance feature of every query.
         temp_instance_feature_out: Instance features of the state slots of the next frame.
         temp_anchor_out: Anchors of the state slots.
@@ -131,7 +132,7 @@ class Sparse4DFrameOutputs(NamedTuple):
 
     classification: Float[torch.Tensor, "batch_size num_queries num_classes"]
     prediction: Float[torch.Tensor, "batch_size num_queries anchor_dim"]
-    quality: Float[torch.Tensor, "batch_size num_queries 2"]
+    quality: Float[torch.Tensor, "batch_size num_queries 2"] | None
     instance_feature: Float[torch.Tensor, "batch_size num_queries embed_dims"]
     temp_instance_feature_out: Float[torch.Tensor, "batch_size num_temp_instances embed_dims"]
     temp_anchor_out: Float[torch.Tensor, "batch_size num_temp_instances anchor_dim"]
@@ -314,13 +315,14 @@ class InstanceBank(DataAnchored):
         min_time_interval: float = 0.05,
         max_time_interval: float = 2.0,
         confidence_decay: float = 0.36,
+        anchor_dim: int = ANCHOR_DIM,
     ) -> None:
         """Initialize the instance bank.
 
         Args:
             num_anchor: Total number of instances per frame.
             embed_dims: Instance feature dimension.
-            anchor_recipe: Recipe of the initial anchors ``(num_anchor, 10)``.
+            anchor_recipe: Recipe of the initial anchors ``(num_anchor, anchor_dim)``.
             num_temp_instances: Number of instances propagated across frames.
             default_time_interval: Time interval in seconds used without
                 temporal history.
@@ -332,6 +334,7 @@ class InstanceBank(DataAnchored):
             confidence_decay: Decay of the cached instance confidence per
                 second, applied as ``confidence_decay ** dt``, so the memory
                 horizon does not depend on the frame rate.
+            anchor_dim: Width of an anchor, the 3D box layout by default.
 
         Raises:
             ValueError: If the temporal instances do not fit the anchors or the time gate is
@@ -349,6 +352,7 @@ class InstanceBank(DataAnchored):
                 f"{min_time_interval} and {max_time_interval}."
             )
         self.num_anchor = num_anchor
+        self.anchor_dim = anchor_dim
         self.embed_dims = embed_dims
         self.num_temp_instances = num_temp_instances
         self.default_time_interval = default_time_interval
@@ -359,7 +363,7 @@ class InstanceBank(DataAnchored):
             max_stream_gap=max_time_interval, min_stream_gap=min_time_interval
         )
         # Filled from the anchor recipe before training, see DataAnchored
-        self.anchor = nn.Parameter(torch.zeros(num_anchor, ANCHOR_DIM))
+        self.anchor = nn.Parameter(torch.zeros(num_anchor, anchor_dim))
         self.instance_feature = nn.Parameter(
             torch.zeros(num_anchor, embed_dims), requires_grad=False
         )
@@ -369,9 +373,9 @@ class InstanceBank(DataAnchored):
         """Copy the k-means anchors of the recipe into the bank.
 
         Args:
-            arrays: Anchor arrays of the recipe, ``anchors`` ``(num_anchor, 10)``.
+            arrays: Anchor arrays of the recipe, ``anchors`` ``(num_anchor, anchor_dim)``.
         """
-        self.anchor.copy_(anchor_tensor(arrays, "anchors", (self.num_anchor, ANCHOR_DIM)))
+        self.anchor.copy_(anchor_tensor(arrays, "anchors", (self.num_anchor, self.anchor_dim)))
 
     def reset(self) -> None:
         """Drop the cached temporal state of every slot."""
@@ -514,7 +518,7 @@ class InstanceBank(DataAnchored):
                 (batch_size, self.num_temp_instances, self.embed_dims)
             )
             self._cached_anchor = self.anchor.new_zeros(
-                (batch_size, self.num_temp_instances, ANCHOR_DIM)
+                (batch_size, self.num_temp_instances, self.anchor_dim)
             )
             self._cached_confidence = self.anchor.new_zeros((batch_size, self.num_temp_instances))
             self._cached_pose = lidar2global.clone()
@@ -614,6 +618,7 @@ class InstanceBank(DataAnchored):
         confidence_decay: float,
         time_interval: Float[torch.Tensor, " batch_size"],
         num_temp_instances: int,
+        anchor_dim: int,
     ) -> TemporalSelection:
         """Select the most confident instances as the state of the next frame.
 
@@ -621,13 +626,14 @@ class InstanceBank(DataAnchored):
 
         Args:
             instance_feature: Instance features of the last layer ``(B, N, C)``.
-            anchor: Anchors refined by the last layer ``(B, N, 10)``.
+            anchor: Anchors refined by the last layer ``(B, N, D)``.
             cls_logits: Class logits of the last layer ``(B, N, num_classes)``.
             prev_confidence: Previous confidence of the temporal block
                 ``(B, K)``, zeros for reset slots.
             confidence_decay: Decay per second.
             time_interval: Frame gaps ``(B,)`` in seconds.
             num_temp_instances: Size ``K`` of the temporal state.
+            anchor_dim: Width ``D`` of an anchor, a constant of the exported graph.
 
         Returns:
             The state of the next frame and the query every state slot was selected from.
@@ -647,10 +653,9 @@ class InstanceBank(DataAnchored):
 
         top_confidence, top_index = confidence.topk(num_temp_instances, dim=1)
         index = top_index[..., None]
-        # The anchor width is a constant of the exported graph
         return TemporalSelection(
             feature=instance_feature.gather(1, index.expand(-1, -1, instance_feature.shape[-1])),
-            anchor=anchor.gather(1, index.expand(-1, -1, ANCHOR_DIM)),
+            anchor=anchor.gather(1, index.expand(-1, -1, anchor_dim)),
             confidence=top_confidence,
             query_index=top_index,
         )
@@ -678,6 +683,7 @@ class InstanceBank(DataAnchored):
             self.confidence_decay,
             self._temp_time_interval,
             self.num_temp_instances,
+            self.anchor_dim,
         )
         self._cached_feature = selection.feature.detach()
         self._cached_anchor = selection.anchor.detach()
@@ -908,6 +914,20 @@ class SparseBox3DEncoder(nn.Module):
         return self.output_fc(pos_feat + size_feat + yaw_feat + vel_feat)
 
 
+class KeyPointsGenerator(Protocol):
+    """Keypoints a decoder block samples around the anchors of its queries."""
+
+    num_pts: int
+
+    def __call__(
+        self,
+        anchor: Float[torch.Tensor, "batch_size num_queries anchor_dim"],
+        instance_feature: Float[torch.Tensor, "batch_size num_queries embed_dims"],
+    ) -> Float[torch.Tensor, "batch_size num_queries num_points 3"]:
+        """Metric keypoints of every query."""
+        ...
+
+
 class SparseBox3DKeyPointsGenerator(nn.Module):
     """Generate 3D keypoints from anchors in the shared metric frame."""
 
@@ -1064,7 +1084,7 @@ class SparseDeformableAggregation(nn.Module):
         embed_dims: int,
         num_groups: int,
         num_levels: int,
-        kps_generator: SparseBox3DKeyPointsGenerator,
+        kps_generator: KeyPointsGenerator,
         proj_drop: float = 0.0,
         attn_drop: float = 0.0,
         bev_aggregation: BEVDeformableAggregation | None = None,
@@ -1328,12 +1348,12 @@ class Refinement(NamedTuple):
     Attributes:
         anchor: Refined anchors.
         cls_logits: Class logits.
-        quality: Centerness and yawness logits.
+        quality: Centerness and yawness logits, None for a head without quality.
     """
 
     anchor: Float[torch.Tensor, "batch_size num_queries anchor_dim"]
     cls_logits: Float[torch.Tensor, "batch_size num_queries num_classes"]
-    quality: Float[torch.Tensor, "batch_size num_queries 2"]
+    quality: Float[torch.Tensor, "batch_size num_queries 2"] | None
 
 
 class SparseBox3DRefinementModule(nn.Module):
@@ -1626,7 +1646,8 @@ class _DecoderOutputs(NamedTuple):
     Attributes:
         classification: Class logits of every layer over the regular and the denoising queries.
         prediction: Anchor states of every layer over the same queries.
-        quality: Quality logits of every layer over the same queries.
+        quality: Quality logits of every layer over the same queries, none for a head without
+            quality.
         instance_feature: Final instance features of the regular queries.
         anchor: Final anchors of the regular queries.
         cls_logits: Final class logits of the regular queries.
@@ -1652,12 +1673,323 @@ class QualityLosses(NamedTuple):
     yawness: Float[torch.Tensor, ""]
 
 
-class Sparse4DHead(nn.Module):
-    """Temporal Sparse4D query head sampling the sparse PTv3 encoder stages.
+class SparseQueryHead(nn.Module, ABC):
+    """Decoder of temporal instance queries over sparse encoder stages, as in Sparse4D.
 
     Every block attends to the temporal memory and to the other queries, samples the stages at
-    keypoints of its anchors, runs an FFN and refines the anchors. Training needs scene continuous
-    batch slots, a ``StreamingDataModule`` composed with
+    keypoints of its anchors, runs an FFN and refines the anchors. A subclass sets the instance
+    bank, the anchor encoding, the keypoints and the refinement of its anchor kind.
+    """
+
+    instance_bank: InstanceBank
+    embed_dims: int
+
+    def _build_decoder(
+        self,
+        *,
+        embed_dims: int,
+        num_decoder: int,
+        num_heads: int,
+        num_groups: int,
+        feedforward_channels: int,
+        dropout: float,
+        attn_drop: float,
+        point_cloud_range: Sequence[float],
+        grid_size: float,
+        feature_strides: Sequence[int],
+        anchor_encoder: nn.Module,
+        kps_generator: Callable[[], KeyPointsGenerator],
+        refine: Callable[[], nn.Module],
+        bev: PTv3StageBEVPyramid | None = None,
+        bev_aggregation: Callable[[], BEVDeformableAggregation | None] = lambda: None,
+        sample_sparse: bool = True,
+    ) -> None:
+        """Create the decoder blocks.
+
+        Args:
+            embed_dims: Instance feature dimension.
+            num_decoder: Number of decoder blocks.
+            num_heads: Attention heads of the instance attention.
+            num_groups: Feature groups of the deformable aggregation.
+            feedforward_channels: Hidden width of the FFN blocks.
+            dropout: Dropout probability in the attention and FFN blocks.
+            attn_drop: Keypoint dropout of the aggregation in training.
+            point_cloud_range: Metric range of the voxel grid.
+            grid_size: Metric size of the input voxel grid.
+            feature_strides: Total pooling strides of the sampled stages.
+            anchor_encoder: Embedding of the anchors.
+            kps_generator: Builds the keypoint generator of one block.
+            refine: Builds the refinement of one block.
+            bev: Builds the BEV levels of a frame from the stages, None without BEV maps.
+            bev_aggregation: Builds the BEV sampling of one block, None without BEV maps.
+            sample_sparse: Whether the blocks sample the sparse voxels.
+        """
+        self.num_decoder = num_decoder
+        self.bev = bev
+        self.sample_sparse = sample_sparse
+        self.anchor_encoder = anchor_encoder
+        self.gnn = nn.ModuleList(
+            [
+                DecoupledInstanceAttention(embed_dims, num_heads, dropout)
+                for _ in range(num_decoder - 1)
+            ]
+        )
+        self.gnn_norm = nn.ModuleList([nn.LayerNorm(embed_dims) for _ in range(num_decoder - 1)])
+        self.temp_gnn = nn.ModuleList(
+            [
+                DecoupledInstanceAttention(embed_dims, num_heads, dropout)
+                for _ in range(num_decoder - 1)
+            ]
+        )
+        self.temp_gnn_norm = nn.ModuleList(
+            [nn.LayerNorm(embed_dims) for _ in range(num_decoder - 1)]
+        )
+        self.level_grids = nn.ModuleList(
+            [SparseLevelGrid(point_cloud_range, grid_size, stride) for stride in feature_strides]
+        )
+        self.deformable = nn.ModuleList(
+            [
+                SparseDeformableAggregation(
+                    embed_dims=embed_dims,
+                    num_groups=num_groups,
+                    num_levels=len(feature_strides),
+                    kps_generator=kps_generator(),
+                    proj_drop=dropout,
+                    attn_drop=attn_drop,
+                    bev_aggregation=bev_aggregation(),
+                    sample_sparse=sample_sparse,
+                )
+                for _ in range(num_decoder)
+            ]
+        )
+        self.deformable_norm = nn.ModuleList([nn.LayerNorm(embed_dims) for _ in range(num_decoder)])
+        self.ffn = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(embed_dims, feedforward_channels),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout(dropout),
+                    nn.Linear(feedforward_channels, embed_dims),
+                    nn.Dropout(dropout),
+                )
+                for _ in range(num_decoder)
+            ]
+        )
+        self.ffn_norm = nn.ModuleList([nn.LayerNorm(embed_dims) for _ in range(num_decoder)])
+        self.refine = nn.ModuleList([refine() for _ in range(num_decoder)])
+
+    @abstractmethod
+    def _refine(
+        self,
+        block_index: int,
+        instance_feature: Float[torch.Tensor, "batch_size num_queries embed_dims"],
+        anchor: Float[torch.Tensor, "batch_size num_queries anchor_dim"],
+        anchor_embed: Float[torch.Tensor, "batch_size num_queries embed_dims"],
+        time_interval: Float[torch.Tensor, " batch_size"],
+    ) -> Refinement:
+        """Refine the anchors of one block and classify the queries.
+
+        Args:
+            block_index: Index of the decoder block.
+            instance_feature: Instance features ``(B, N, C)``.
+            anchor: Anchors ``(B, N, D)``.
+            anchor_embed: Anchor embeddings ``(B, N, C)``.
+            time_interval: Frame gaps ``(B,)`` in seconds.
+
+        Returns:
+            The refined anchors, the class logits and the quality logits of a head with quality.
+        """
+
+    def levels(self, stages: Sequence[SparseStage]) -> list[SparseLevel]:
+        """Look up the voxels of every sampled stage once per frame, none for a BEV only head."""
+        if not self.sample_sparse:
+            return []
+        return [
+            grid(stage.feat, stage.grid_coord, stage.offset)
+            for grid, stage in zip(self.level_grids, stages, strict=True)
+        ]
+
+    def bev_levels(self, stages: Sequence[SparseStage]) -> list[BEVLevel]:
+        """Build the BEV maps of the stages once per frame, none for a head without them."""
+        return [] if self.bev is None else self.bev(stages)
+
+    def _decode(
+        self,
+        levels: Sequence[SparseLevel],
+        state: BankState,
+        denoising: DenoisingQueries | None,
+        bev_levels: Sequence[BEVLevel],
+    ) -> _DecoderOutputs:
+        """Run the decoder blocks over the sampled sparse encoder stages.
+
+        The temporal instances join the working set after block 0. Denoising queries ride at the
+        tail and never reach the merge or the final state.
+
+        Args:
+            levels: Sampled stages with their voxel lookup.
+            state: Fresh instances of the frame and the cached ones warped into it.
+            denoising: Optional denoising queries appended at the tail with
+                zero features and the isolation mask on the instance attention.
+            bev_levels: BEV maps of a head with a BEV branch.
+
+        Returns:
+            The per layer outputs over the regular and the denoising queries
+            and the final state of the regular queries.
+        """
+        instance_feature, anchor = state.instance_feature, state.anchor
+        num_query = instance_feature.shape[1]
+        attn_mask = None
+        if denoising is not None:
+            dn_feature = instance_feature.new_zeros(
+                (instance_feature.shape[0], denoising.anchor.shape[1], instance_feature.shape[-1])
+            )
+            instance_feature = torch.cat([instance_feature, dn_feature], dim=1)
+            anchor = torch.cat([anchor, denoising.anchor], dim=1)
+            attn_mask = denoising.attn_mask
+        anchor_embed = self.anchor_encoder(anchor)
+        temp_anchor_embed = self.anchor_encoder(state.temp_anchor)
+        classification: list[Float[torch.Tensor, "batch_size num_all_queries num_classes"]] = []
+        prediction: list[Float[torch.Tensor, "batch_size num_all_queries anchor_dim"]] = []
+        quality: list[Float[torch.Tensor, "batch_size num_all_queries 2"]] = []
+        for block_index in range(self.num_decoder):
+            if block_index > 0:
+                instance_feature = self.temp_gnn[block_index - 1](
+                    instance_feature, anchor_embed, state.temp_feature, temp_anchor_embed
+                )
+                instance_feature = self.temp_gnn_norm[block_index - 1](instance_feature)
+                instance_feature = self.gnn[block_index - 1](
+                    instance_feature, anchor_embed, attn_mask=attn_mask
+                )
+                instance_feature = self.gnn_norm[block_index - 1](instance_feature)
+            instance_feature = self.deformable[block_index](
+                instance_feature, anchor, anchor_embed, levels, bev_levels
+            )
+            instance_feature = self.deformable_norm[block_index](instance_feature)
+            instance_feature = self.ffn_norm[block_index](
+                instance_feature + self.ffn[block_index](instance_feature)
+            )
+            refined = self._refine(
+                block_index, instance_feature, anchor, anchor_embed, state.time_interval
+            )
+            anchor = refined.anchor
+            classification.append(refined.cls_logits)
+            prediction.append(anchor)
+            if refined.quality is not None:
+                quality.append(refined.quality)
+            if block_index == 0:
+                merged = InstanceBank.merge_temporal(
+                    instance_feature[:, :num_query],
+                    anchor[:, :num_query],
+                    refined.cls_logits[:, :num_query],
+                    state.temp_feature,
+                    state.temp_anchor,
+                    state.temp_valid,
+                    self.instance_bank.num_temp_instances,
+                )
+                instance_feature = torch.cat(
+                    [merged.instance_feature, instance_feature[:, num_query:]], dim=1
+                )
+                anchor = torch.cat([merged.anchor, anchor[:, num_query:]], dim=1)
+            if block_index != self.num_decoder - 1:
+                anchor_embed = self.anchor_encoder(anchor)
+                # Read the temporal memory at the refined anchors
+                if block_index > 0:
+                    temp_anchor_embed = anchor_embed[:, : temp_anchor_embed.shape[1]]
+        return _DecoderOutputs(
+            classification=classification,
+            prediction=prediction,
+            quality=quality,
+            instance_feature=instance_feature[:, :num_query],
+            anchor=anchor[:, :num_query],
+            cls_logits=classification[-1][:, :num_query],
+        )
+
+    def forward_temporal_export(
+        self, stages: Sequence[SparseStage], state: TemporalStateInputs
+    ) -> Sparse4DFrameOutputs:
+        """Run the decoder with the bank state at the graph boundary.
+
+        A frame's ``*_out`` state feeds the next one. The query index of every state slot lets
+        the runtime carry its track ids into the slots.
+
+        Args:
+            stages: Fused stages from the finest to the coarsest.
+            state: Bank state of the last frame.
+
+        Returns:
+            The last layer outputs and the state of the next frame.
+        """
+        bank = self.instance_bank
+        fresh = bank.fresh_instances(stages[0].offset.shape[0])
+        gated = bank.gate_temporal_state(
+            state.temp_instance_feature,
+            state.temp_anchor,
+            state.temp_confidence,
+            state.temp_valid,
+            state.time_interval,
+            state.prev2current,
+        )
+        decoded = self._decode(
+            self.levels(stages),
+            BankState(
+                instance_feature=fresh.instance_feature,
+                anchor=fresh.anchor,
+                time_interval=state.time_interval,
+                temp_feature=gated.feature,
+                temp_anchor=gated.anchor,
+                temp_valid=state.temp_valid,
+            ),
+            None,
+            self.bev_levels(stages),
+        )
+        selection = bank.select_temporal_state(
+            decoded.instance_feature,
+            decoded.anchor,
+            decoded.cls_logits,
+            gated.confidence,
+            bank.confidence_decay,
+            state.time_interval,
+            bank.num_temp_instances,
+            bank.anchor_dim,
+        )
+        return Sparse4DFrameOutputs(
+            classification=decoded.classification[-1],
+            prediction=decoded.prediction[-1],
+            quality=decoded.quality[-1] if decoded.quality else None,
+            instance_feature=decoded.instance_feature,
+            temp_instance_feature_out=selection.feature,
+            temp_anchor_out=selection.anchor,
+            temp_confidence_out=selection.confidence,
+            temp_query_index_out=selection.query_index,
+        )
+
+    def temporal_state_export_inputs(self, device: torch.device) -> TemporalStateInputs:
+        """Return the reset state of one lane, the sample inputs of the temporal export."""
+        bank = self.instance_bank
+        num_temp = bank.num_temp_instances
+        return TemporalStateInputs(
+            temp_instance_feature=torch.zeros(1, num_temp, self.embed_dims, device=device),
+            temp_anchor=torch.zeros(1, num_temp, bank.anchor_dim, device=device),
+            temp_confidence=torch.zeros(1, num_temp, device=device),
+            temp_valid=torch.zeros(1, device=device),
+            time_interval=torch.full((1,), bank.default_time_interval, device=device),
+            prev2current=torch.eye(4, device=device).unsqueeze(0),
+        )
+
+    def prepare_for_export(self) -> Self:
+        """Return an export ready copy in the fp16 range for :meth:`forward_temporal_export`."""
+        head = deepcopy(self)
+        attention = (*zip(head.gnn, head.gnn_norm), *zip(head.temp_gnn, head.temp_gnn_norm))
+        for attention_block, norm in attention:
+            attention_block.fold_output_scale(norm)
+            attention_block.attn = ExportableMultiheadAttention(attention_block.attn)
+        return head.eval()
+
+
+class Sparse4DHead(SparseQueryHead):
+    """Temporal Sparse4D query head sampling the sparse PTv3 encoder stages.
+
+    Training needs scene continuous batch slots, a ``StreamingDataModule`` composed with
     ``/datamodule/streaming@datamodule: default_streaming_datamodule``.
     """
 
@@ -1792,9 +2124,6 @@ class Sparse4DHead(nn.Module):
             raise ValueError("Denoising noise half ranges must be non-negative.")
         self.num_classes = num_classes
         self.embed_dims = embed_dims
-        self.num_decoder = num_decoder
-        self.bev = bev
-        self.sample_sparse = lidar_sampling != LidarSampling.BEV
         self.cls_cost = ClassificationCost(weight=cls_cost_weight)
         self.box_cost_weight = box_cost_weight
         self.loss_cls_weight = loss_cls_weight
@@ -1831,73 +2160,36 @@ class Sparse4DHead(nn.Module):
             confidence_decay=confidence_decay,
         )
         self.tracker = InstanceTracker(num_temp_instances, min_observed_points, track_birth_score)
-        self.anchor_encoder = SparseBox3DEncoder(embed_dims)
-        self.gnn = nn.ModuleList(
-            [
-                DecoupledInstanceAttention(embed_dims, num_heads, dropout)
-                for _ in range(num_decoder - 1)
-            ]
-        )
-        self.gnn_norm = nn.ModuleList([nn.LayerNorm(embed_dims) for _ in range(num_decoder - 1)])
-        self.temp_gnn = nn.ModuleList(
-            [
-                DecoupledInstanceAttention(embed_dims, num_heads, dropout)
-                for _ in range(num_decoder - 1)
-            ]
-        )
-        self.temp_gnn_norm = nn.ModuleList(
-            [nn.LayerNorm(embed_dims) for _ in range(num_decoder - 1)]
-        )
-        self.level_grids = nn.ModuleList(
-            [SparseLevelGrid(point_cloud_range, grid_size, stride) for stride in feature_strides]
-        )
-        self.deformable = nn.ModuleList(
-            [
-                SparseDeformableAggregation(
-                    embed_dims=embed_dims,
-                    num_groups=num_groups,
-                    num_levels=len(feature_strides),
-                    kps_generator=SparseBox3DKeyPointsGenerator(
-                        embed_dims=embed_dims,
-                        fix_scale=fix_scale,
-                        num_learnable_pts=num_learnable_pts,
-                    ),
-                    proj_drop=dropout,
-                    attn_drop=attn_drop,
-                    bev_aggregation=None
-                    if bev is None
-                    else BEVDeformableAggregation(
-                        embed_dims=embed_dims,
-                        bev_channels=bev.channels,
-                        num_groups=num_groups,
-                        num_levels=bev.num_levels,
-                        num_points=len(fix_scale) + num_learnable_pts,
-                        attn_drop=attn_drop,
-                    ),
-                    sample_sparse=self.sample_sparse,
-                )
-                for _ in range(num_decoder)
-            ]
-        )
-        self.deformable_norm = nn.ModuleList([nn.LayerNorm(embed_dims) for _ in range(num_decoder)])
-        self.ffn = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Linear(embed_dims, feedforward_channels),
-                    nn.ReLU(inplace=True),
-                    nn.Dropout(dropout),
-                    nn.Linear(feedforward_channels, embed_dims),
-                    nn.Dropout(dropout),
-                )
-                for _ in range(num_decoder)
-            ]
-        )
-        self.ffn_norm = nn.ModuleList([nn.LayerNorm(embed_dims) for _ in range(num_decoder)])
-        self.refine = nn.ModuleList(
-            [
-                SparseBox3DRefinementModule(embed_dims=embed_dims, num_classes=num_classes)
-                for _ in range(num_decoder)
-            ]
+        self._build_decoder(
+            embed_dims=embed_dims,
+            num_decoder=num_decoder,
+            num_heads=num_heads,
+            num_groups=num_groups,
+            feedforward_channels=feedforward_channels,
+            dropout=dropout,
+            attn_drop=attn_drop,
+            point_cloud_range=point_cloud_range,
+            grid_size=grid_size,
+            feature_strides=feature_strides,
+            anchor_encoder=SparseBox3DEncoder(embed_dims),
+            kps_generator=lambda: SparseBox3DKeyPointsGenerator(
+                embed_dims=embed_dims, fix_scale=fix_scale, num_learnable_pts=num_learnable_pts
+            ),
+            refine=lambda: SparseBox3DRefinementModule(
+                embed_dims=embed_dims, num_classes=num_classes
+            ),
+            bev=bev,
+            bev_aggregation=lambda: None
+            if bev is None
+            else BEVDeformableAggregation(
+                embed_dims=embed_dims,
+                bev_channels=bev.channels,
+                num_groups=num_groups,
+                num_levels=bev.num_levels,
+                num_points=len(fix_scale) + num_learnable_pts,
+                attn_drop=attn_drop,
+            ),
+            sample_sparse=lidar_sampling != LidarSampling.BEV,
         )
         self.loss_cls = SigmoidFocalLoss()
         self.loss_yns = GaussianFocalLoss()
@@ -1907,108 +2199,16 @@ class Sparse4DHead(nn.Module):
         self.instance_bank.reset()
         self.tracker.reset()
 
-    def levels(self, stages: Sequence[SparseStage]) -> list[SparseLevel]:
-        """Look up the voxels of every sampled stage once per frame, none for a BEV only head."""
-        if not self.sample_sparse:
-            return []
-        return [
-            grid(stage.feat, stage.grid_coord, stage.offset)
-            for grid, stage in zip(self.level_grids, stages, strict=True)
-        ]
-
-    def bev_levels(self, stages: Sequence[SparseStage]) -> list[BEVLevel]:
-        """Build the BEV maps of the stages once per frame, none for a head without them."""
-        return [] if self.bev is None else self.bev(stages)
-
-    def _decode(
+    def _refine(
         self,
-        levels: Sequence[SparseLevel],
-        state: BankState,
-        denoising: DenoisingQueries | None,
-        bev_levels: Sequence[BEVLevel],
-    ) -> _DecoderOutputs:
-        """Run the decoder blocks over the sampled sparse encoder stages.
-
-        The temporal instances join the working set after block 0. Denoising queries ride at the
-        tail and never reach the merge or the final state.
-
-        Args:
-            levels: Sampled stages with their voxel lookup.
-            state: Fresh instances of the frame and the cached ones warped into it.
-            denoising: Optional denoising queries appended at the tail with
-                zero features and the isolation mask on the instance attention.
-            bev_levels: BEV maps of a head with a BEV branch.
-
-        Returns:
-            The per layer outputs over the regular and the denoising queries
-            and the final state of the regular queries.
-        """
-        instance_feature, anchor = state.instance_feature, state.anchor
-        num_query = instance_feature.shape[1]
-        attn_mask = None
-        if denoising is not None:
-            dn_feature = instance_feature.new_zeros(
-                (instance_feature.shape[0], denoising.anchor.shape[1], instance_feature.shape[-1])
-            )
-            instance_feature = torch.cat([instance_feature, dn_feature], dim=1)
-            anchor = torch.cat([anchor, denoising.anchor], dim=1)
-            attn_mask = denoising.attn_mask
-        anchor_embed = self.anchor_encoder(anchor)
-        temp_anchor_embed = self.anchor_encoder(state.temp_anchor)
-        classification: list[Float[torch.Tensor, "batch_size num_all_queries num_classes"]] = []
-        prediction: list[Float[torch.Tensor, "batch_size num_all_queries anchor_dim"]] = []
-        quality: list[Float[torch.Tensor, "batch_size num_all_queries 2"]] = []
-        for block_index in range(self.num_decoder):
-            if block_index > 0:
-                instance_feature = self.temp_gnn[block_index - 1](
-                    instance_feature, anchor_embed, state.temp_feature, temp_anchor_embed
-                )
-                instance_feature = self.temp_gnn_norm[block_index - 1](instance_feature)
-                instance_feature = self.gnn[block_index - 1](
-                    instance_feature, anchor_embed, attn_mask=attn_mask
-                )
-                instance_feature = self.gnn_norm[block_index - 1](instance_feature)
-            instance_feature = self.deformable[block_index](
-                instance_feature, anchor, anchor_embed, levels, bev_levels
-            )
-            instance_feature = self.deformable_norm[block_index](instance_feature)
-            instance_feature = self.ffn_norm[block_index](
-                instance_feature + self.ffn[block_index](instance_feature)
-            )
-            refined = self.refine[block_index](
-                instance_feature, anchor, anchor_embed, state.time_interval
-            )
-            anchor = refined.anchor
-            classification.append(refined.cls_logits)
-            prediction.append(anchor)
-            quality.append(refined.quality)
-            if block_index == 0:
-                merged = InstanceBank.merge_temporal(
-                    instance_feature[:, :num_query],
-                    anchor[:, :num_query],
-                    refined.cls_logits[:, :num_query],
-                    state.temp_feature,
-                    state.temp_anchor,
-                    state.temp_valid,
-                    self.instance_bank.num_temp_instances,
-                )
-                instance_feature = torch.cat(
-                    [merged.instance_feature, instance_feature[:, num_query:]], dim=1
-                )
-                anchor = torch.cat([merged.anchor, anchor[:, num_query:]], dim=1)
-            if block_index != self.num_decoder - 1:
-                anchor_embed = self.anchor_encoder(anchor)
-                # Read the temporal memory at the refined anchors
-                if block_index > 0:
-                    temp_anchor_embed = anchor_embed[:, : temp_anchor_embed.shape[1]]
-        return _DecoderOutputs(
-            classification=classification,
-            prediction=prediction,
-            quality=quality,
-            instance_feature=instance_feature[:, :num_query],
-            anchor=anchor[:, :num_query],
-            cls_logits=classification[-1][:, :num_query],
-        )
+        block_index: int,
+        instance_feature: Float[torch.Tensor, "batch_size num_queries embed_dims"],
+        anchor: Float[torch.Tensor, "batch_size num_queries anchor_dim"],
+        anchor_embed: Float[torch.Tensor, "batch_size num_queries embed_dims"],
+        time_interval: Float[torch.Tensor, " batch_size"],
+    ) -> Refinement:
+        """Refine the boxes of one block, see :meth:`SparseQueryHead._refine`."""
+        return self.refine[block_index](instance_feature, anchor, anchor_embed, time_interval)
 
     def forward(
         self,
@@ -2102,86 +2302,6 @@ class Sparse4DHead(nn.Module):
                 cls_weights=denoising.cls_weights,
             ),
         )
-
-    def forward_temporal_export(
-        self, stages: Sequence[SparseStage], state: TemporalStateInputs
-    ) -> Sparse4DFrameOutputs:
-        """Run the decoder with the bank state at the graph boundary.
-
-        A frame's ``*_out`` state feeds the next one. The query index of every state slot lets
-        the runtime carry its track ids into the slots.
-
-        Args:
-            stages: Fused stages from the finest to the coarsest.
-            state: Bank state of the last frame.
-
-        Returns:
-            The last layer outputs and the state of the next frame.
-        """
-        bank = self.instance_bank
-        fresh = bank.fresh_instances(stages[0].offset.shape[0])
-        gated = bank.gate_temporal_state(
-            state.temp_instance_feature,
-            state.temp_anchor,
-            state.temp_confidence,
-            state.temp_valid,
-            state.time_interval,
-            state.prev2current,
-        )
-        decoded = self._decode(
-            self.levels(stages),
-            BankState(
-                instance_feature=fresh.instance_feature,
-                anchor=fresh.anchor,
-                time_interval=state.time_interval,
-                temp_feature=gated.feature,
-                temp_anchor=gated.anchor,
-                temp_valid=state.temp_valid,
-            ),
-            None,
-            self.bev_levels(stages),
-        )
-        selection = bank.select_temporal_state(
-            decoded.instance_feature,
-            decoded.anchor,
-            decoded.cls_logits,
-            gated.confidence,
-            bank.confidence_decay,
-            state.time_interval,
-            bank.num_temp_instances,
-        )
-        return Sparse4DFrameOutputs(
-            classification=decoded.classification[-1],
-            prediction=decoded.prediction[-1],
-            quality=decoded.quality[-1],
-            instance_feature=decoded.instance_feature,
-            temp_instance_feature_out=selection.feature,
-            temp_anchor_out=selection.anchor,
-            temp_confidence_out=selection.confidence,
-            temp_query_index_out=selection.query_index,
-        )
-
-    def temporal_state_export_inputs(self, device: torch.device) -> TemporalStateInputs:
-        """Return the reset state of one lane, the sample inputs of the temporal export."""
-        bank = self.instance_bank
-        num_temp = bank.num_temp_instances
-        return TemporalStateInputs(
-            temp_instance_feature=torch.zeros(1, num_temp, self.embed_dims, device=device),
-            temp_anchor=torch.zeros(1, num_temp, ANCHOR_DIM, device=device),
-            temp_confidence=torch.zeros(1, num_temp, device=device),
-            temp_valid=torch.zeros(1, device=device),
-            time_interval=torch.full((1,), bank.default_time_interval, device=device),
-            prev2current=torch.eye(4, device=device).unsqueeze(0),
-        )
-
-    def prepare_for_export(self) -> Sparse4DHead:
-        """Return an export ready copy in the fp16 range for :meth:`forward_temporal_export`."""
-        head = deepcopy(self)
-        attention = (*zip(head.gnn, head.gnn_norm), *zip(head.temp_gnn, head.temp_gnn_norm))
-        for attention_block, norm in attention:
-            attention_block.fold_output_scale(norm)
-            attention_block.attn = ExportableMultiheadAttention(attention_block.attn)
-        return head.eval()
 
     @torch.no_grad()
     def _assign_targets(

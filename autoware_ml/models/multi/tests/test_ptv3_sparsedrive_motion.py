@@ -246,3 +246,44 @@ class TestPTv3SparseDriveMotion(unittest.TestCase):
                 if parameter.requires_grad and parameter.grad is None
             ]
             self.assertEqual(missing, [])
+
+    @requires_cuda_spconv
+    def test_an_unsupervised_map_head_feeds_the_motion_head_without_map_elements(self) -> None:
+        """
+        Input: a frame without map elements, run by a model whose online map head is not
+          supervised.
+        Expected: the map head runs and feeds the motion head, the loss and the eval output
+          leave the map out.
+        """
+        device = torch.device("cuda")
+        model = build_model(self.tmp_path, with_map=True, online_map_supervised=False).to(device)
+        batch = _frame_with_tracks(device, 100.0)
+        outputs = model(batch)
+
+        metrics = model.compute_metrics(batch, outputs)
+        eval_output = model.build_eval_output(batch, outputs)
+
+        self.assertTrue(torch.isfinite(outputs.online_map().prediction).all())
+        self.assertTrue(torch.isfinite(metrics["loss"]))
+        self.assertIn("weighted_motion_loss", metrics)
+        self.assertFalse(
+            any(name.startswith(("online_map_", "weighted_online_map")) for name in metrics)
+        )
+        self.assertIsNotNone(eval_output.motion)
+        self.assertIsNone(eval_output.online_map)
+
+    @requires_cuda_spconv
+    def test_a_supervised_map_head_needs_the_map_elements(self) -> None:
+        """
+        Input: a frame without map elements, run by a model whose online map head is supervised.
+        Expected: the loss and the eval output raise.
+        """
+        device = torch.device("cuda")
+        model = build_model(self.tmp_path, with_map=True).to(device)
+        batch = _frame_with_tracks(device, 100.0)
+        outputs = model(batch)
+
+        with self.assertRaisesRegex(ValueError, "map elements"):
+            model.compute_metrics(batch, outputs)
+        with self.assertRaisesRegex(ValueError, "map elements"):
+            model.build_eval_output(batch, outputs)

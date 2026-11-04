@@ -24,6 +24,7 @@ from autoware_ml.dataclasses.models.calibration_status.head_outputs import (
     CalibrationStatusHeadOutputs,
 )
 from autoware_ml.dataclasses.models.detection3d.head_outputs import Detection3DHeadOutputs
+from autoware_ml.dataclasses.models.motion.online_map_outputs import OnlineMapHeadOutputs
 from autoware_ml.dataclasses.models.motion.head_outputs import MotionHeadOutputs
 from autoware_ml.dataclasses.models.segmentation3d.head_outputs import Segmentation3DHeadOutputs
 
@@ -39,6 +40,7 @@ class ModelOutputs(BaseModel):
         segmentation3d_head_outputs: Raw outputs from a 3D segmentation head.
         calibration_status_head_outputs: Raw outputs from a calibration status head.
         motion_head_outputs: Raw outputs from a motion head.
+        online_map_head_outputs: Raw outputs from a polyline map head.
     """
 
     model_config = ConfigDict(frozen=True, strict=True, arbitrary_types_allowed=True)
@@ -47,6 +49,7 @@ class ModelOutputs(BaseModel):
     segmentation3d_head_outputs: Segmentation3DHeadOutputs | None = None
     calibration_status_head_outputs: CalibrationStatusHeadOutputs | None = None
     motion_head_outputs: MotionHeadOutputs | None = None
+    online_map_head_outputs: OnlineMapHeadOutputs | None = None
 
     def detection3d(self) -> Detection3DHeadOutputs:
         """
@@ -91,3 +94,14 @@ class ModelOutputs(BaseModel):
         if self.motion_head_outputs is None:
             raise ValueError("The model outputs carry no motion head outputs.")
         return self.motion_head_outputs
+
+    def online_map(self) -> OnlineMapHeadOutputs:
+        """
+        Read the map head outputs.
+
+        Raises:
+            ValueError: If the model predicts no map.
+        """
+        if self.online_map_head_outputs is None:
+            raise ValueError("The model outputs carry no map head outputs.")
+        return self.online_map_head_outputs

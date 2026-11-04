@@ -15,7 +15,8 @@
 """PTv3 segmentation and Sparse4D detection with the SparseDrive agent motion head.
 
 The motion head predicts the trajectory of every detection query from the queries of the temporal
-detection head and their history, so the model trains on scenario streams.
+detection head and their history, so the model trains on scenario streams. An online map head
+over the fused stages adds the map queries the motion queries attend to.
 """
 
 from __future__ import annotations
@@ -31,22 +32,38 @@ from autoware_ml.dataclasses.models.detection3d.head_outputs import (
     Detection3DHeadOutputs,
     Sparse4DHeadOutputs,
 )
+from autoware_ml.dataclasses.models.motion.online_map_outputs import OnlineMapHeadOutputs
 from autoware_ml.dataclasses.models.model_batch_inputs import ModelBatchInputs
 from autoware_ml.dataclasses.models.model_outputs import ModelOutputs
 from autoware_ml.dataclasses.models.motion.head_outputs import MotionHeadOutputs
 from autoware_ml.dataclasses.models.motion.targets import AgentFutureTargets
 from autoware_ml.dataclasses.models.segmentation3d.head_outputs import Segmentation3DHeadOutputs
 from autoware_ml.metrics.eval_output import Detection3DEvalOutput, EvalOutput
-from autoware_ml.metrics.motion.eval_output import MotionEvalFrame, MotionEvalOutput
-from autoware_ml.models.detection3d.heads.sparse4d import Sparse4DHead, Sparse4DTargets
+from autoware_ml.metrics.motion.eval_output import (
+    MotionEvalFrame,
+    MotionEvalOutput,
+    OnlineMapEvalFrame,
+    OnlineMapEvalOutput,
+)
+from autoware_ml.models.detection3d.heads.sparse4d import (
+    Sparse4DFrameOutputs,
+    Sparse4DHead,
+    Sparse4DTargets,
+)
+from autoware_ml.models.motion.online_map_head import OnlineMapHead
 from autoware_ml.models.motion.instance_queue import QueueState
 from autoware_ml.models.motion.motion_head import (
     MOTION_STATE_INPUT_NAMES,
     MOTION_STATE_OUTPUT_NAMES,
+    MapContext,
     MotionHead,
 )
 from autoware_ml.models.multi.detection3d_frames import detection3d_frame_mask, detection3d_gt_batch
-from autoware_ml.models.multi.ptv3_det3d_seg3d_sparse4d import PTv3Det3DSeg3DSparse4DModel
+from autoware_ml.models.multi.ptv3_det3d_seg3d_sparse4d import (
+    PTv3Det3DSeg3DSparse4DModel,
+    PTv3Sparse4DHeadExportModule,
+    build_sparse4d_head_export_spec,
+)
 from autoware_ml.models.segmentation3d.ptv3_base import PTv3BaseModel, PTv3ExportContext
 from autoware_ml.types.geometry import AnchorFieldIndex
 from autoware_ml.utils.deploy import ExportSpec
@@ -70,6 +87,17 @@ MOTION_EXPORT_OUTPUT_NAMES = (
     "agent_trajectories",
     *MOTION_STATE_OUTPUT_NAMES,
 )
+# The map graph returns the context the motion graph attends to and the map state of the next
+# frame, with export_online_map the polylines of its queries first
+ONLINE_MAP_POLYLINE_OUTPUT_NAMES = ("classification", "prediction")
+ONLINE_MAP_CONTEXT_OUTPUT_NAMES = ("instance_feature", "anchor_embed", "score")
+ONLINE_MAP_STATE_OUTPUT_NAMES = (
+    "temp_instance_feature_out",
+    "temp_anchor_out",
+    "temp_confidence_out",
+)
+# A motion head with a map also takes the context outputs of the map graph
+MOTION_MAP_INPUT_NAMES = ("map_instance_feature", "map_anchor_embed", "map_score")
 
 
 class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
@@ -81,6 +109,10 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
         motion_head: MotionHead,
         motion_loss_weight: float = 1.0,
         motion_eval_queries: int = 300,
+        online_map_head: OnlineMapHead | None = None,
+        online_map_loss_weight: float = 1.0,
+        export_online_map: bool = False,
+        online_map_supervised: bool = True,
         **kwargs: Any,
     ) -> None:
         """Initialize the model.
@@ -90,10 +122,17 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
             motion_loss_weight: Weight of the motion loss term.
             motion_eval_queries: Most confident detection queries whose trajectories the motion
                 metrics read per frame.
+            online_map_head: Online mapping head over the fused stages, exactly for a motion head
+                with map keys.
+            online_map_loss_weight: Weight of the mapping loss term.
+            export_online_map: Whether the map graph also returns the polylines and their class
+                scores. Without them it hands the motion graph its context only.
+            online_map_supervised: Whether the batches carry the map elements of the map loss.
             **kwargs: Arguments of :class:`PTv3Det3DSeg3DSparse4DModel`.
 
         Raises:
-            ValueError: If the motion head has anchors of other classes.
+            ValueError: If the motion head has anchors of other classes, or the motion head and
+                the map head disagree on the map.
         """
         super().__init__(**kwargs)
         if motion_head.num_classes != self.bbox_head.num_classes:
@@ -101,35 +140,65 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
                 f"The motion head has anchors for {motion_head.num_classes} classes, the detection "
                 f"head predicts {self.bbox_head.num_classes}."
             )
+        if (online_map_head is None) != (motion_head.num_map_keys == 0):
+            raise ValueError(
+                "A map head needs a motion head with map keys and a motion head with map keys a "
+                "map head."
+            )
+        if online_map_head is not None and online_map_head.embed_dims != self.bbox_head.embed_dims:
+            raise ValueError(
+                f"The map head is {online_map_head.embed_dims} wide, the fused stages it samples "
+                f"{self.bbox_head.embed_dims}."
+            )
         self.motion_head = motion_head
         self.motion_loss_weight = float(motion_loss_weight)
         self.motion_eval_queries = motion_eval_queries
+        self.online_map_head = online_map_head
+        self.online_map_loss_weight = float(online_map_loss_weight)
+        self.export_online_map = export_online_map
+        self.online_map_supervised = online_map_supervised
 
     def reset_streams(self) -> None:
-        """Forget the temporal state of every lane, the motion history too."""
+        """Forget the temporal state of every lane, the motion history and the map too."""
         super().reset_streams()
         self.motion_head.reset()
+        if self.online_map_head is not None:
+            self.online_map_head.reset()
 
     def build_optimizer_groups(self) -> Mapping[str, Sequence[torch.nn.Parameter]]:
-        """Group the parameters of the base model and the motion head."""
+        """Group the parameters of the base model, the motion head and the map head."""
         groups = dict(super().build_optimizer_groups())
         groups["motion_head"] = [p for p in self.motion_head.parameters() if p.requires_grad]
+        if self.online_map_head is not None:
+            groups["online_map_head"] = [
+                p for p in self.online_map_head.parameters() if p.requires_grad
+            ]
         return groups
 
     def forward(self, multi_task_batch_inputs: ModelBatchInputs) -> ModelOutputs:
-        """Run the encoder, the detection and segmentation heads and the motion head.
+        """Run the encoder, the detection, segmentation and map heads and the motion head.
 
         Args:
             multi_task_batch_inputs: Model inputs with the voxels, the frame metadata and the
                 detection ground truth.
 
         Returns:
-            The detection, segmentation and motion outputs.
+            The detection, segmentation, map and motion outputs.
         """
         branches = self.forward_branches(multi_task_batch_inputs)
         carried_index = self.bbox_head.instance_bank.carried_query_index
+        frame_meta = multi_task_batch_inputs.multi_task_gt_batch.frame_meta_batch
+        online_map_outputs, map_context = None, None
+        if self.online_map_head is not None:
+            online_map_outputs = self.online_map_head(
+                branches.stages,
+                timestamps_seconds=frame_meta.timestamps,
+                lidar2global=frame_meta.ego2globals,
+                scene_tokens=frame_meta.scene_tokens,
+            )
+            map_context = self.map_context(online_map_outputs)
         motion_outputs = self.forward_motion(
-            multi_task_batch_inputs, branches.det3d_outputs, carried_index
+            multi_task_batch_inputs, branches.det3d_outputs, carried_index, map_context
         )
         return ModelOutputs(
             detection3d_head_outputs=Detection3DHeadOutputs(
@@ -139,6 +208,7 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
             ),
             segmentation3d_head_outputs=Segmentation3DHeadOutputs(logits=branches.seg3d_logits),
             motion_head_outputs=motion_outputs,
+            online_map_head_outputs=online_map_outputs,
         )
 
     def forward_motion(
@@ -146,6 +216,7 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
         multi_task_batch_inputs: ModelBatchInputs,
         det3d_outputs: Sparse4DHeadOutputs,
         carried_index: Int64[torch.Tensor, "batch_size num_temp_instances"] | None,
+        map_context: MapContext | None,
     ) -> MotionHeadOutputs:
         """Run the motion head on the last layer detection queries.
 
@@ -153,6 +224,7 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
             multi_task_batch_inputs: Model inputs with the frame metadata.
             det3d_outputs: Outputs of the detection head.
             carried_index: Slot index of the previous frame, None at the first frame.
+            map_context: Map queries of a model with a map head.
 
         Returns:
             The motion outputs.
@@ -166,6 +238,23 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
             self.bbox_head.instance_bank.lane_continues,
             carried_index,
             frame_meta.ego2globals,
+            map_context,
+        )
+
+    def map_context(self, online_map_outputs: OnlineMapHeadOutputs) -> MapContext:
+        """Map queries of the last layer the motion queries attend to.
+
+        Args:
+            online_map_outputs: Raw outputs of the map head.
+
+        Returns:
+            Their features, polyline embeddings and best class scores.
+        """
+        return online_map_context(
+            self.online_map_head.anchor_encoder,
+            online_map_outputs.instance_feature,
+            online_map_outputs.prediction[:, -1],
+            online_map_outputs.classification[:, -1],
         )
 
     def compute_metrics(
@@ -173,13 +262,13 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
         multi_task_batch_inputs: ModelBatchInputs,
         multi_task_outputs: ModelOutputs,
     ) -> dict[str, Float[torch.Tensor, ""]]:
-        """Compute the segmentation, detection and motion losses.
+        """Compute the segmentation, detection, mapping and motion losses.
 
         The motion targets follow the detection matches, so frames without boxes skip the motion
         loss as they skip the detection loss.
 
         Raises:
-            ValueError: If the batch carries no futures.
+            ValueError: If the batch carries no futures, or no map elements for a map head.
         """
         losses = self.detection_segmentation_metrics(multi_task_batch_inputs, multi_task_outputs)
         metrics = losses.metrics
@@ -193,6 +282,24 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
         metrics["weighted_motion_loss"] = weighted_motion_loss
         metrics["loss"] = metrics["loss"] + weighted_motion_loss
         metrics.update({f"motion_{name}": value for name, value in motion_metrics.items()})
+        if self.online_map_head is not None and self.online_map_supervised:
+            map_gt = multi_task_batch_inputs.multi_task_gt_batch.online_map_gt_batch
+            if map_gt is None:
+                raise ValueError("The map head needs the map elements of every sample.")
+            # Samples that pad a streaming lane or lie between key frames take no part in the loss
+            supervised = multi_task_batch_inputs.multi_task_gt_batch.supervised_mask().to(
+                multi_task_outputs.online_map().classification.device
+            )
+            online_map_metrics = self.online_map_head.loss(
+                multi_task_outputs.online_map().select_samples(supervised),
+                map_gt.select_samples(supervised),
+            )
+            weighted_online_map_loss = self.online_map_loss_weight * online_map_metrics["loss"]
+            metrics["weighted_online_map_loss"] = weighted_online_map_loss
+            metrics["loss"] = metrics["loss"] + weighted_online_map_loss
+            metrics.update(
+                {f"online_map_{name}": value for name, value in online_map_metrics.items()}
+            )
         self.log_step_metrics(metrics, multi_task_batch_inputs)
         return metrics
 
@@ -255,23 +362,67 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
         )
 
     def build_eval_output(self, batch: ModelBatchInputs, outputs: ModelOutputs) -> EvalOutput:
-        """Produce the detection, segmentation and motion eval data.
+        """Produce the detection, segmentation, motion and online map eval data.
 
         Args:
             batch: Model inputs of the evaluation step.
             outputs: Raw outputs from :meth:`forward`.
 
         Returns:
-            The eval output of the detection, segmentation and motion suites.
+            The eval output of the detection, segmentation, motion and online map suites, the
+            online map frames when the map branch is supervised.
         """
         eval_output = super().build_eval_output(batch, outputs)
-        return eval_output.model_copy(
-            update={
-                "motion": MotionEvalOutput(
-                    frames=self.motion_eval_frames(batch, outputs, eval_output.detection3d)
+        detection = eval_output.detection3d
+        update = {
+            "motion": MotionEvalOutput(frames=self.motion_eval_frames(batch, outputs, detection))
+        }
+        if self.online_map_head is not None and self.online_map_supervised:
+            update["online_map"] = OnlineMapEvalOutput(
+                frames=self.map_eval_frames(batch, outputs, detection)
+            )
+        return eval_output.model_copy(update=update)
+
+    def map_eval_frames(
+        self,
+        batch: ModelBatchInputs,
+        outputs: ModelOutputs,
+        detection: Detection3DEvalOutput | None,
+    ) -> list[OnlineMapEvalFrame]:
+        """Pair the decoded map elements with the ground truth elements of every frame.
+
+        Args:
+            batch: Model inputs with the map elements.
+            outputs: Raw outputs from :meth:`forward`.
+            detection: Detection frames of the batch, which carry whether the metrics score the
+                frame.
+
+        Returns:
+            One online map frame per sample of the batch.
+
+        Raises:
+            ValueError: If the batch carries no map elements or no detection frames.
+        """
+        map_gt = batch.multi_task_gt_batch.online_map_gt_batch
+        if map_gt is None:
+            raise ValueError("The map metrics need the map elements of every sample.")
+        if detection is None:
+            raise ValueError("The map metrics score the frames the detection frames score.")
+        decoded = self.online_map_head.decode_outputs(outputs.online_map())
+        frames = []
+        for index, predictions in enumerate(decoded):
+            valid = map_gt.labels[index] >= 0
+            frames.append(
+                OnlineMapEvalFrame(
+                    pred_points=predictions.points.detach(),
+                    pred_scores=predictions.scores.detach(),
+                    pred_labels=predictions.labels,
+                    gt_points=map_gt.points[index, valid],
+                    gt_labels=map_gt.labels[index, valid],
+                    scored=detection.frames[index].scored,
                 )
-            }
-        )
+            )
+        return frames
 
     def motion_eval_frames(
         self,
@@ -348,26 +499,50 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
 
         Returns:
             The specs of the base model, the detection graph with the instance features as an
-            extra output and the motion graph.
+            extra output, the map graph of a model with a map head and the motion graph.
         """
         specs = super().build_context_export_specs(context)
         det_module = specs["ptv3_det3d_head"].module
-        specs["ptv3_motion_head"] = self.build_motion_export_spec(context, det_module.bbox_head)
+        online_map_head = None
+        if self.online_map_head is not None:
+            online_map_head = self.online_map_head.prepare_for_export()
+            polylines = ONLINE_MAP_POLYLINE_OUTPUT_NAMES if self.export_online_map else ()
+            specs["ptv3_online_map_head"] = build_sparse4d_head_export_spec(
+                context,
+                _OnlineMapExportModule(
+                    self.det_fusion,
+                    online_map_head,
+                    (
+                        *polylines,
+                        *ONLINE_MAP_CONTEXT_OUTPUT_NAMES,
+                        *ONLINE_MAP_STATE_OUTPUT_NAMES,
+                    ),
+                ),
+            )
+        specs["ptv3_motion_head"] = self.build_motion_export_spec(
+            context, det_module.bbox_head, online_map_head
+        )
         return specs
 
     def build_motion_export_spec(
-        self, context: PTv3ExportContext, bbox_head: Sparse4DHead
+        self,
+        context: PTv3ExportContext,
+        bbox_head: Sparse4DHead,
+        online_map_head: OnlineMapHead | None,
     ) -> ExportSpec:
         """Build the motion export spec, one frame with the history at the graph boundary.
 
         Args:
             context: Shared export context.
             bbox_head: Export-prepared detection head of the detection graph.
+            online_map_head: Export-prepared map head copy sizing the map context, exactly for a
+                motion head with a map.
 
         Returns:
             Export spec whose graph takes the detection outputs of the frame, the history of the
             last frame, the slot index the detection graph returned for the last frame, the
-            stream continuity and the frame to frame transform.
+            stream continuity, the frame to frame transform and, with a map, the outputs of the
+            map graph.
         """
         motion_head = self.motion_head.prepare_for_export()
         device = context.stage_feats[0].device
@@ -382,20 +557,95 @@ class PTv3SparseDriveMotionModel(PTv3Det3DSeg3DSparse4DModel):
             torch.zeros(1, device=device),
             torch.eye(4, device=device)[None],
         )
+        map_args, map_names = map_export_inputs(online_map_head, device)
         return ExportSpec(
             module=_MotionExportModule(motion_head, bbox_head).eval(),
-            args=args,
-            input_names=list(MOTION_EXPORT_INPUT_NAMES),
+            args=(*args, *map_args),
+            input_names=[*MOTION_EXPORT_INPUT_NAMES, *map_names],
             output_names=list(MOTION_EXPORT_OUTPUT_NAMES),
             dynamic_axes=None,
             supported_stages=PTv3BaseModel.EXPORT_SUPPORTED_STAGES,
         )
 
 
+def map_export_inputs(
+    online_map_head: OnlineMapHead | None, device: torch.device
+) -> tuple[tuple[torch.Tensor, ...], tuple[str, ...]]:
+    """Example context outputs of the map graph a motion graph with a map takes, none without."""
+    if online_map_head is None:
+        return (), ()
+    num_queries = online_map_head.instance_bank.num_anchor
+    args = (
+        torch.zeros(1, num_queries, online_map_head.embed_dims, device=device),
+        torch.zeros(1, num_queries, online_map_head.embed_dims, device=device),
+        torch.zeros(1, num_queries, device=device),
+    )
+    return args, MOTION_MAP_INPUT_NAMES
+
+
+def online_map_context(
+    anchor_encoder: nn.Module,
+    feature: torch.Tensor,
+    prediction: torch.Tensor,
+    classification: torch.Tensor,
+) -> MapContext:
+    """Map context of the last layer map queries.
+
+    Args:
+        anchor_encoder: Anchor encoder of the map head.
+        feature: Features of the map queries ``(B, Q, C)``.
+        prediction: Their polylines ``(B, Q, 2 * P)``.
+        classification: Their class logits ``(B, Q, K)``.
+
+    Returns:
+        Their features, polyline embeddings and best class scores.
+    """
+    return MapContext(
+        feature=feature,
+        anchor_embed=anchor_encoder(prediction),
+        scores=classification.sigmoid().max(dim=-1).values,
+    )
+
+
+def export_map_context(map_inputs: Sequence[torch.Tensor]) -> MapContext | None:
+    """Map context from the map graph outputs a motion graph takes, None without a map."""
+    if not map_inputs:
+        return None
+    return MapContext(*map_inputs)
+
+
+class _OnlineMapExportModule(PTv3Sparse4DHeadExportModule):
+    """Export-only online map head returning the context the motion graph attends to."""
+
+    frame_output_names = (*Sparse4DFrameOutputs._fields, "anchor_embed", "score")
+
+    def forward(
+        self, *inputs: Shaped[torch.Tensor, "..."]
+    ) -> tuple[Shaped[torch.Tensor, "..."], ...]:
+        """Decode one frame of map queries and return the configured outputs."""
+        outputs = self.frame_outputs(*inputs)
+        context = online_map_context(
+            self.bbox_head.anchor_encoder,
+            outputs.instance_feature,
+            outputs.prediction,
+            outputs.classification,
+        )
+        named = {
+            **outputs._asdict(),
+            "anchor_embed": context.anchor_embed,
+            "score": context.scores,
+        }
+        return tuple(named[name] for name in self.output_names)
+
+
 class _MotionExportModule(nn.Module):
     """Export-only motion head, one frame with its history at the graph boundary."""
 
-    def __init__(self, motion_head: MotionHead, bbox_head: Sparse4DHead) -> None:
+    def __init__(
+        self,
+        motion_head: MotionHead,
+        bbox_head: Sparse4DHead,
+    ) -> None:
         """Initialize the export module.
 
         Args:
@@ -419,8 +669,13 @@ class _MotionExportModule(nn.Module):
         carried_index: Int64[torch.Tensor, "batch_size num_temp_instances"],
         temp_valid: Float[torch.Tensor, " batch_size"],
         prev2current: Float[torch.Tensor, "batch_size 4 4"],
+        *map_inputs: Float[torch.Tensor, "..."],
     ) -> tuple[Shaped[torch.Tensor, "..."], ...]:
-        """Predict the trajectories of one frame, see the input names."""
+        """Predict the trajectories of one frame, see the input names.
+
+        The map context outputs of the map graph follow the history inputs exactly for a motion
+        head with a map.
+        """
         outputs, state = self.motion_head.step(
             instance_feature,
             prediction,
@@ -430,5 +685,6 @@ class _MotionExportModule(nn.Module):
             temp_valid > 0.5,
             carried_index,
             prev2current,
+            export_map_context(map_inputs),
         )
         return (outputs.agent_mode_logits, outputs.agent_trajectories, *state)

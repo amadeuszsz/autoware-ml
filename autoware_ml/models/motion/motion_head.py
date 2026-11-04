@@ -15,8 +15,9 @@
 
 """SparseDrive agent motion head on top of the Sparse4D detection queries.
 
-The detection queries attend to their own history and to the most confident detections, then
-predict the multi-modal trajectory of every agent (Sun et al., SparseDrive, 2024).
+The detection queries attend to their own history, to the most confident detections and, with a
+map, to the most confident map queries, then predict the multi-modal trajectory of every agent
+(Sun et al., SparseDrive, 2024).
 """
 
 from __future__ import annotations
@@ -62,6 +63,20 @@ MOTION_STATE_INPUT_NAMES = (
     "queue_age",
 )
 MOTION_STATE_OUTPUT_NAMES = tuple(f"{name}_out" for name in MOTION_STATE_INPUT_NAMES)
+
+
+class MapContext(NamedTuple):
+    """Map queries the motion queries attend to.
+
+    Attributes:
+        feature: Last layer features of the map queries ``(B, Q, C)``.
+        anchor_embed: Embeddings of their polylines ``(B, Q, C)``.
+        scores: Best class score of every map query ``(B, Q)``.
+    """
+
+    feature: torch.Tensor
+    anchor_embed: torch.Tensor
+    scores: torch.Tensor
 
 
 class AttendedQueries(NamedTuple):
@@ -116,6 +131,7 @@ class MotionHead(DataAnchored):
         queue_stride: int = 5,
         loss_motion_cls_weight: float = 0.2,
         loss_motion_reg_weight: float = 0.2,
+        num_map_keys: int = 0,
         detach_detection: bool = False,
     ) -> None:
         """Initialize the head.
@@ -138,6 +154,8 @@ class MotionHead(DataAnchored):
                 them follows the frame rate.
             loss_motion_cls_weight: Weight of the agent mode classification loss.
             loss_motion_reg_weight: Weight of the agent trajectory loss.
+            num_map_keys: Most confident map queries every query attends to after the agents,
+                0 for a head without a map.
             detach_detection: Train the head on the detection outputs without passing its
                 gradients back into them and the anchor encoder.
 
@@ -197,7 +215,18 @@ class MotionHead(DataAnchored):
         )
         nn.init.constant_(self.motion_cls[-1].bias, -math.log((1.0 - 0.01) / 0.01))
         self.loss_cls = SigmoidFocalLoss()
+        self.num_map_keys = num_map_keys
         self.detach_detection = detach_detection
+        if num_map_keys > 0:
+            self.map_attention = nn.ModuleList(
+                [
+                    DecoupledInstanceAttention(embed_dims, num_heads, dropout)
+                    for _ in range(num_layers)
+                ]
+            )
+            self.map_attention_norm = nn.ModuleList(
+                [nn.LayerNorm(embed_dims) for _ in range(num_layers)]
+            )
 
     def load_anchors(self, arrays: Mapping[str, Float32[np.ndarray, "..."]]) -> None:
         """Copy the motion anchors of the recipe into the head.
@@ -266,6 +295,7 @@ class MotionHead(DataAnchored):
         lane_continues: Bool[torch.Tensor, " batch_size"],
         carried_index: Int64[torch.Tensor, "batch_size num_temp_instances"] | None,
         lidar2global: Float[torch.Tensor, "batch_size 4 4"],
+        map_context: MapContext | None = None,
     ) -> MotionHeadOutputs:
         """Predict the agent trajectories of one frame.
 
@@ -278,6 +308,7 @@ class MotionHead(DataAnchored):
             carried_index: Previous frame query every leading temporal slot comes from
                 ``(B, K)``, None at the first frame.
             lidar2global: Poses of the frames with the augmentations folded in ``(B, 4, 4)``.
+            map_context: Map queries of every frame, exactly for a head with a map.
 
         Returns:
             The agent trajectories of every frame.
@@ -294,6 +325,7 @@ class MotionHead(DataAnchored):
             lane_continues,
             carried_index,
             prev2current,
+            map_context,
         )
         return outputs
 
@@ -307,6 +339,7 @@ class MotionHead(DataAnchored):
         lane_continues: Bool[torch.Tensor, " batch_size"],
         carried_index: Int64[torch.Tensor, "batch_size num_temp_instances"],
         prev2current: Float[torch.Tensor, "batch_size 4 4"],
+        map_context: MapContext | None = None,
     ) -> tuple[MotionHeadOutputs, QueueState]:
         """Predict one frame from the history of the last one, the training and export path.
 
@@ -320,6 +353,7 @@ class MotionHead(DataAnchored):
             carried_index: Previous frame query every leading temporal slot comes from
                 ``(B, K)``.
             prev2current: Transform from the previous to the current frame ``(B, 4, 4)``.
+            map_context: Map queries of every frame, exactly for a head with a map.
 
         Returns:
             The outputs and the history after this frame.
@@ -333,6 +367,7 @@ class MotionHead(DataAnchored):
             lane_continues,
             carried_index,
             prev2current,
+            map_context,
         )
         agent_mode_logits, agent_trajectories = self._predict_agents(
             attended.feature + attended.anchor_embed, anchor, cls_logits
@@ -352,8 +387,9 @@ class MotionHead(DataAnchored):
         lane_continues: Bool[torch.Tensor, " batch_size"],
         carried_index: Int64[torch.Tensor, "batch_size num_temp_instances"],
         prev2current: Float[torch.Tensor, "batch_size 4 4"],
+        map_context: MapContext | None,
     ) -> AttendedQueries:
-        """Refine the detection queries over their history and the agents.
+        """Refine the detection queries over their history, the agents and the map.
 
         Args:
             instance_feature: Last layer features of the detection queries ``(B, N, C)``.
@@ -365,10 +401,17 @@ class MotionHead(DataAnchored):
             carried_index: Previous frame query every leading temporal slot comes from
                 ``(B, K)``.
             prev2current: Transform from the previous to the current frame ``(B, 4, 4)``.
+            map_context: Map queries of every frame, exactly for a head with a map.
 
         Returns:
             The refined queries and the history of the frame.
+
+        Raises:
+            ValueError: If the map context is given to a head without a map or missing for one
+                with a map.
         """
+        if (map_context is None) != (self.num_map_keys == 0):
+            raise ValueError("The map context must be given exactly to a head with a map.")
         if self.detach_detection:
             instance_feature, anchor = instance_feature.detach(), anchor.detach()
             cls_logits, anchor_encoder = cls_logits.detach(), _without_grad(anchor_encoder)
@@ -388,6 +431,15 @@ class MotionHead(DataAnchored):
 
         confidence = cls_logits.detach().max(dim=-1).values
         agent_keys = confidence.topk(min(self.num_agent_keys, num_queries), dim=1).indices
+        if map_context is not None:
+            map_top = (
+                map_context.scores.detach()
+                .topk(min(self.num_map_keys, map_context.scores.shape[1]), dim=1)
+                .indices[..., None]
+                .expand(-1, -1, self.embed_dims)
+            )
+            map_feature = map_context.feature.gather(1, map_top)
+            map_embed = map_context.anchor_embed.gather(1, map_top)
 
         for layer in range(self.num_layers):
             flat = self.temporal_attention[layer](
@@ -403,6 +455,9 @@ class MotionHead(DataAnchored):
                 feature, anchor_embed, feature.gather(1, keys), anchor_embed.gather(1, keys)
             )
             feature = self.attention_norm[layer](feature)
+            if map_context is not None:
+                feature = self.map_attention[layer](feature, anchor_embed, map_feature, map_embed)
+                feature = self.map_attention_norm[layer](feature)
             feature = self.ffn_norm[layer](feature + self.ffn[layer](feature))
         return AttendedQueries(
             feature=feature,
@@ -425,6 +480,8 @@ class MotionHead(DataAnchored):
             *zip(head.temporal_attention, head.temporal_norm, strict=True),
             *zip(head.agent_attention, head.attention_norm, strict=True),
         ]
+        if head.num_map_keys > 0:
+            blocks += zip(head.map_attention, head.map_attention_norm, strict=True)
         for attention_block, norm in blocks:
             attention_block.fold_output_scale(norm)
             attention_block.attn = ExportableMultiheadAttention(attention_block.attn)
