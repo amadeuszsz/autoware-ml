@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import hydra
+import numpy as np
 import pytest
 from hydra import compose, initialize_config_module
 from hydra.core.global_hydra import GlobalHydra
@@ -45,19 +46,30 @@ EXPERIMENT_CONFIGS = sorted(
 )
 
 
-def compose_experiment(config_name: str):
+def compose_experiment(config_name: str, overrides: list[str] | None = None):
     """Compose one experiment config with the run context the training entrypoint provides."""
     register_config_resolvers()
     GlobalHydra.instance().clear()
     with initialize_config_module(version_base=None, config_module="autoware_ml.configs"):
-        cfg = compose(config_name=config_name, return_hydra_config=True)
+        cfg = compose(config_name=config_name, overrides=overrides or [], return_hydra_config=True)
     HydraConfig.instance().set_config(cfg)
     return cfg
 
 
+def write_placeholder_artifacts(cfg) -> None:
+    """Write the files a run prepares beforehand: the anchors."""
+    anchor_file = OmegaConf.select(cfg, "model.bbox_head.anchor_file")
+    if anchor_file is not None:
+        Path(anchor_file).parent.mkdir(parents=True, exist_ok=True)
+        np.save(anchor_file, np.zeros((cfg.model.bbox_head.num_anchor, 10), dtype=np.float32))
+
+
 @pytest.mark.parametrize("config_name", EXPERIMENT_CONFIGS)
-def test_every_experiment_instantiates_its_model_and_pipelines(config_name: str) -> None:
-    cfg = compose_experiment(config_name)
+def test_every_experiment_instantiates_its_model_and_pipelines(
+    config_name: str, tmp_path: Path
+) -> None:
+    cfg = compose_experiment(config_name, overrides=[f"cache_root_path={tmp_path}"])
+    write_placeholder_artifacts(cfg)
 
     data_preprocessor = hydra.utils.instantiate(cfg.data_preprocessor)
     hydra.utils.instantiate(cfg.datasets.train.transforms)

@@ -1,0 +1,68 @@
+# @package _global_
+# Temporal Sparse4D detection and segmentation on the 10 Hz J6 gen2 and JPN taxi streams.
+defaults:
+  - base_voxel012_122m
+  - /datamodule/t4dataset/datasets/det3d_seg3d@datasets.jpntaxi_train: default_det3d_seg3d_train_dataset
+  - /database@database: t4dataset/t4dataset_pseudo_10hz_j6gen2
+  - /database@jpntaxi_database: t4dataset/t4dataset_pseudo_10hz_jpntaxi
+  - _self_
+
+batch_size: 8
+num_workers: 8
+experiment_group_name: ptv3_sparse4d_det3d_seg3d/${database.version}/pseudo_10hz
+experiment_name: voxel012_tiny_b8_24e_t4dataset_122m_pseudo_10hz
+
+datasets:
+  jpntaxi_train:
+    database_root_path: ${jpntaxi_database.root_path}
+    lidar_intensity_scale: ${jpntaxi_database.lidar_intensity_scale}
+    transforms: ${datasets.train.transforms}
+
+# 20 s train streams, 4 s val streams to fill 16 GPUs x 8 lanes, whole test scenarios.
+datamodule:
+  sources:
+    jpntaxi:
+      _target_: autoware_ml.datamodule.sources.DatasetSource
+      database: ${jpntaxi_database}
+      train_dataset: ${datasets.jpntaxi_train}
+  train_dataloader:
+    stream_max_frames: 200
+  validation_dataloader:
+    stream_max_frames: 40
+
+model:
+  bbox_head:
+    anchor_file: ${cache_root_path}/sparse4d_anchors/t4dataset_pseudo_10hz_j6gen2_jpntaxigen2_${num_anchor}.npy
+    num_temp_instances: 1200
+    default_time_interval: 0.1
+    # A gap below half the 10 Hz period is not a frame interval (one 0.1 ms gap in the corpora)
+    min_time_interval: 0.05
+    max_time_interval: 2.0
+    # Sparse4D decays by 0.6 per frame at 2 Hz, about 0.36 per second
+    confidence_decay: 0.36
+    dn_query_budget: 400
+    # An instance becomes a target once it holds 2 points in a frame of the stream
+    min_observed_points: 2
+    track_birth_score: 0.2
+  optimizer_group_overrides:
+    encoder_block:
+      lr: 0.000008
+    encoder_default:
+      lr: 0.00002
+    seg3d_head:
+      lr: 0.00002
+  # Peaks of 2e-4 for the head and 1e-4 for the encoder, sized for 8 GPUs x 8 lanes
+  scheduler:
+    warmup_epochs: 2
+    decay_epochs: 22
+    max_lr_factor: 5.0
+
+optimizer:
+  lr: 0.00004
+
+trainer:
+  max_epochs: 24
+
+callbacks:
+  dynamic_validation:
+    epoch_intervals: [[0, 1]]
