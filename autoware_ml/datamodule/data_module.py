@@ -49,6 +49,8 @@ class DataLoaderConfig:
         persistent_workers: Whether worker processes stay alive across epochs.
         shuffle: Whether the dataloader shuffles samples.
         drop_last: Whether to drop the final incomplete batch.
+        scene_split_num: Number of consecutive streams, their lengths differing by at most one,
+            a streaming datamodule splits every scene into, 1 streams whole scenes.
     """
 
     batch_size: int = 1
@@ -57,6 +59,7 @@ class DataLoaderConfig:
     persistent_workers: bool = False
     shuffle: bool = False
     drop_last: bool = False
+    scene_split_num: int = 1
 
     def to_dataloader_kwargs(self) -> dict[str, Any]:
         """Convert to keyword arguments accepted by ``DataLoader``.
@@ -274,8 +277,9 @@ class DataModule(L.LightningDataModule):
           DataLoader: Dataloader over the concatenated sources of the split.
 
         Raises:
-          ValueError: If the split has no dataset or no dataloader settings, or if frame
-            sampling is on while the training dataloader shuffles.
+          ValueError: If the split has no dataset or no dataloader settings, if frame
+            sampling is on while the training dataloader shuffles, or if the settings split
+            scenes, which only the streaming datamodule does.
         """
         dataset = self.datasets.get(split)
         if dataset is None:
@@ -284,6 +288,11 @@ class DataModule(L.LightningDataModule):
             )
         if config is None:
             raise ValueError(f"Split {split} has no dataloader settings.")
+        if config.scene_split_num != 1:
+            raise ValueError(
+                f"Split {split} sets scene_split_num, which only the streaming datamodule "
+                "reads. Compose /datamodule/streaming@datamodule: default_streaming_datamodule."
+            )
 
         kwargs = config.to_dataloader_kwargs()
         if split == SplitType.TRAIN and self.train_frame_sampling is not None:

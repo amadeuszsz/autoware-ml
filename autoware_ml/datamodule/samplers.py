@@ -305,6 +305,13 @@ class DistributedWeightedRandomSampler(DistributedSampler):
         return iter(indices)
 
 
+def split_scene(group: Sequence[int], num_parts: int) -> list[Sequence[int]]:
+    """Cut a scene into ``num_parts`` consecutive parts whose lengths differ by at most one."""
+    # Part p ends at ceil(len * (p + 1) / num_parts), a scene shorter than that gives single frames
+    bounds = [-(-len(group) * part // num_parts) for part in range(num_parts + 1)]
+    return [group[begin:end] for begin, end in zip(bounds[:-1], bounds[1:]) if end > begin]
+
+
 class GroupStreamingSampler(DistributedSampler):
     """Feed every batch position the frames of one scene after another, in time order.
 
@@ -312,6 +319,11 @@ class GroupStreamingSampler(DistributedSampler):
     one after another, so a temporal model can keep one memory per lane; it tells from
     the frame metadata of the batch where a lane starts a new stream and resets that
     lane's memory there.
+
+    Every scene is first split into ``scene_split_num`` consecutive parts whose lengths differ by
+    at most one, a scene shorter than that into single frames, and every part is a scene of its
+    own from then on. Adjacent parts of a scene in one lane continue one stream, since a model
+    resets its memory only on a scene change or a time gap.
 
     Every epoch the scenes are joined, in order or shuffled by ``seed + epoch``, and their
     frames are cut into ``num_lanes`` (``num_replicas * batch_size``) lanes whose lengths
@@ -340,6 +352,7 @@ class GroupStreamingSampler(DistributedSampler):
         *,
         shuffle: bool,
         seed: int,
+        scene_split_num: int = 1,
     ) -> None:
         """Initialize the streaming sampler.
 
@@ -350,12 +363,23 @@ class GroupStreamingSampler(DistributedSampler):
                 the dataloader batch size.
             shuffle: Whether to shuffle the scene order every epoch.
             seed: Base seed for the per-epoch scene shuffle, the experiment seed.
+            scene_split_num: Number of consecutive parts every scene is split into, 1 streams
+                whole scenes.
+
+        Raises:
+            ValueError: If ``scene_split_num`` is below 1.
         """
+        if scene_split_num < 1:
+            raise ValueError(f"scene_split_num must be at least 1, got {scene_split_num}.")
         num_replicas, rank = _world_size_and_rank()
         # The parent's num_samples and total_size count the dataset, not the lanes; __len__ and
         # __iter__ below replace them.
         super().__init__(dataset, num_replicas=num_replicas, rank=rank, shuffle=shuffle, seed=seed)
-        self.scene_groups = dataset.scene_index_groups()
+        self.scene_groups = [
+            part
+            for group in dataset.scene_index_groups()
+            for part in split_scene(group, scene_split_num)
+        ]
         if not self.scene_groups:
             raise ValueError("GroupStreamingSampler requires at least one scene group.")
         self.batch_size = batch_size

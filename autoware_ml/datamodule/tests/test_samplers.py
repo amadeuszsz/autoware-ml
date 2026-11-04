@@ -361,6 +361,18 @@ def test_set_epoch_reshuffles_deterministically() -> None:
     assert epoch_indices(0) != epoch_indices(1)
 
 
+def test_shuffled_epochs_have_the_same_length() -> None:
+    sampler = GroupStreamingSampler(
+        _FakeScenesDataset([9, 2, 7, 3, 8, 1, 6, 4, 5, 5]), batch_size=2, shuffle=True, seed=0
+    )
+    lengths = set()
+    for epoch in range(20):
+        sampler.set_epoch(epoch)
+        lengths.add(len(list(sampler)))
+
+    assert lengths == {len(sampler)}
+
+
 def test_raises_when_lanes_cannot_be_filled() -> None:
     """
     Input: one single-frame scene for two lanes.
@@ -370,6 +382,45 @@ def test_raises_when_lanes_cannot_be_filled() -> None:
     """
     with pytest.raises(ValueError, match="cannot fill"):
         GroupStreamingSampler(_FakeScenesDataset([1]), batch_size=2, shuffle=False, seed=0)
+
+
+def test_every_scene_is_split_into_the_set_number_of_streams() -> None:
+    """
+    Input: scenes of 7 and 3 frames split into two streams each, served through two lanes.
+    Expected: every scene is cut into two consecutive parts whose lengths differ by at most one,
+    and the joined frames are cut in half, lane 0 holding frames 0 to 4 and lane 1 frames 5 to 9.
+    Check: the scene groups and the indices of the two lanes.
+    """
+    sampler = GroupStreamingSampler(
+        _FakeScenesDataset([7, 3]), batch_size=2, shuffle=False, seed=0, scene_split_num=2
+    )
+    assert sampler.scene_groups == [[0, 1, 2, 3], [4, 5, 6], [7, 8], [9]]
+    assert list(sampler) == [0, 5, 1, 6, 2, 7, 3, 8, 4, 9]
+
+
+def test_a_scene_gives_as_many_streams_as_set_or_one_per_frame() -> None:
+    """
+    Input: scenes of 9 and 3 frames split into four streams each.
+    Expected: four parts of near-equal length for the long scene, one part per frame for the
+    scene shorter than the number of streams.
+    Check: the scene groups.
+    """
+    sampler = GroupStreamingSampler(
+        _FakeScenesDataset([9, 3]), batch_size=1, shuffle=False, seed=0, scene_split_num=4
+    )
+    assert sampler.scene_groups == [[0, 1, 2], [3, 4], [5, 6], [7, 8], [9], [10], [11]]
+
+
+def test_rejects_a_scene_split_into_no_stream() -> None:
+    """
+    Input: a scene split into zero streams.
+    Expected: no stream could hold a frame.
+    Check: a ValueError naming scene_split_num is raised.
+    """
+    with pytest.raises(ValueError, match="scene_split_num"):
+        GroupStreamingSampler(
+            _FakeScenesDataset([4]), batch_size=1, shuffle=False, seed=0, scene_split_num=0
+        )
 
 
 def test_is_a_distributed_sampler_so_lightning_does_not_wrap_it() -> None:

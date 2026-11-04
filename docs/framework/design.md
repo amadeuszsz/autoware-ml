@@ -133,7 +133,9 @@ joins the scenes, the training split reshuffling them every epoch from `seed`, a
 frames, each scene in time order, into one lane per batch position of every rank. The lanes differ
 by at most one frame, and a shorter lane ends with a padding slot that repeats its last frame, so
 every rank runs the same number of batches and every split serves every frame exactly once as a real
-sample. The batch flags the padding slots in `ModelGTBatch.padding_mask`: a model leaves them out of
+sample. The `scene_split_num` of a dataloader first splits every scene into that many consecutive
+streams whose lengths differ by at most one.
+The batch flags the padding slots in `ModelGTBatch.padding_mask`: a model leaves them out of
 its loss, and the logged batch size (`num_supervised_samples()`) and every metric suite leave them
 out. The eval output still lists them under its `scored` flags, so every GPU gathers as many frames.
 A prediction writer drops them by the mask it gets with the batch. Anything that would reorder the
