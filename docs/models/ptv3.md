@@ -18,6 +18,8 @@ PointTransformerV3 is a LiDAR encoder for LiDAR 3D semantic segmentation and
   feeds a `Sparse4DHead`. Its queries sample the sparse voxels and one dense BEV
   level at keypoints around their anchors, predict velocity, and carry the most
   confident instances from one frame of a scenario to the next.
+- Agent motion (experimental): `PTv3SparseDriveMotionModel` adds the SparseDrive
+  `MotionHead`, which predicts the trajectories of the tracked agents.
 
 The models read single lidar frames, every point as `(x, y, z, intensity)`. The voxel feature
 encoder turns each voxel into the mean x, y, z and intensity of its points, 4 features per voxel,
@@ -55,15 +57,16 @@ weights without the scales initialize a fine-tune, which starts every scale at 1
 
 ## Available Configurations
 
-| Config Name                                                  | Task                         | Dataset   | Head        | Range | Purpose                                 |
-| ------------------------------------------------------------ | ---------------------------- | --------- | ----------- | ----- | --------------------------------------- |
-| `segmentation3d/ptv3/nuscenes/voxel005_b16_50e_nuscenes_51m` | segmentation3d               | nuScenes  | Seg decoder | 51 m  | nuScenes segmentation                   |
-| `segmentation3d/ptv3/t4dataset/base_voxel012_122m`           | segmentation3d               | T4Dataset | Seg decoder | 122 m | T4Dataset segmentation                  |
-| `detection3d/ptv3/nuscenes/voxel005_b16_30e_nuscenes_51m`    | detection3d                  | nuScenes  | TransFusion | 51 m  | nuScenes detection                      |
-| `detection3d/ptv3/t4dataset/base_voxel012_122m`              | detection3d                  | T4Dataset | TransFusion | 122 m | T4Dataset detection                     |
-| `multi/ptv3/nuscenes/voxel005_b16_100e_nuscenes_51m`         | segmentation3d + detection3d | nuScenes  | TransFusion | 51 m  | Joint segmentation + detection          |
-| `multi/ptv3/t4dataset/base_voxel012_122m`                    | segmentation3d + detection3d | T4Dataset | TransFusion | 122 m | Joint segmentation + detection          |
-| `multi/ptv3_sparse4d/t4dataset/base_voxel012_122m`           | segmentation3d + detection3d | T4Dataset | Sparse4D    | 122 m | Joint segmentation + temporal detection |
+| Config Name                                                  | Task                                  | Dataset   | Head              | Range | Purpose                                      |
+| ------------------------------------------------------------ | ------------------------------------- | --------- | ----------------- | ----- | -------------------------------------------- |
+| `segmentation3d/ptv3/nuscenes/voxel005_b16_50e_nuscenes_51m` | segmentation3d                        | nuScenes  | Seg decoder       | 51 m  | nuScenes segmentation                        |
+| `segmentation3d/ptv3/t4dataset/base_voxel012_122m`           | segmentation3d                        | T4Dataset | Seg decoder       | 122 m | T4Dataset segmentation                       |
+| `detection3d/ptv3/nuscenes/voxel005_b16_30e_nuscenes_51m`    | detection3d                           | nuScenes  | TransFusion       | 51 m  | nuScenes detection                           |
+| `detection3d/ptv3/t4dataset/base_voxel012_122m`              | detection3d                           | T4Dataset | TransFusion       | 122 m | T4Dataset detection                          |
+| `multi/ptv3/nuscenes/voxel005_b16_100e_nuscenes_51m`         | segmentation3d + detection3d          | nuScenes  | TransFusion       | 51 m  | Joint segmentation + detection               |
+| `multi/ptv3/t4dataset/base_voxel012_122m`                    | segmentation3d + detection3d          | T4Dataset | TransFusion       | 122 m | Joint segmentation + detection               |
+| `multi/ptv3_sparse4d/t4dataset/base_voxel012_122m`           | segmentation3d + detection3d          | T4Dataset | Sparse4D          | 122 m | Joint segmentation + temporal detection      |
+| `multi/ptv3_sparsedrive/t4dataset/base_motion`               | segmentation3d + detection3d + motion | T4Dataset | Sparse4D + motion | 122 m | Agent motion add-on of a Sparse4D experiment |
 
 The T4Dataset rows are bases. They declare the classes the model trains and require the taxonomy
 that folds the labels of the database onto them, so a T4Dataset experiment that binds one lives in
@@ -75,6 +78,9 @@ The Sparse4D base samples the sparse voxels and one coarse encoder stage project
 `model.bbox_head.bev` sets the projected stages. Its experiments stream scenes in order, so they
 need frames at a steady rate, such as 10 Hz scenes.
 
+The `base_motion` add-on composes after a Sparse4D base and adds the agent motion head and the
+`motion` dataset task, the futures of the annotated agents.
+
 ## Training
 
 ```bash
@@ -83,11 +89,11 @@ autoware-ml train --config-name detection3d/ptv3/nuscenes/voxel005_b16_30e_nusce
 autoware-ml train --config-name multi/ptv3/nuscenes/voxel005_b16_100e_nuscenes_51m
 ```
 
-The Sparse4D head starts from k-means anchors of the training boxes. The `anchor_recipe` of every
-head sets how they are derived. Training builds them into `anchors/` of the cache directory before
-it starts, keyed by the recipe and the training data like the record tables, and reuses them in
-later runs. A checkpoint carries the anchors, so test, deployment and training from weights read no
-cache.
+The Sparse4D head starts from k-means anchors of the training boxes and the motion head from anchors
+of the training futures. The `anchor_recipe` of every head sets how they are derived. Training
+builds them into `anchors/` of the cache directory before it starts, keyed by the recipe and the
+training data like the record tables, and reuses them in later runs. A checkpoint carries the
+anchors, so test, deployment and training from weights read no cache.
 
 For a pipeline validation run:
 
@@ -290,7 +296,11 @@ The split export produces one graph per `deploy.onnx.modules` entry:
 | `autoware_ml/models/detection3d/heads/transfusions/transfusion_head.py` | TransFusion detection head                         |
 | `autoware_ml/models/detection3d/heads/sparse4d.py`                      | Sparse4D temporal query detection head             |
 | `autoware_ml/models/multi/ptv3_det3d_seg3d_sparse4d.py`                 | PTv3 segmentation and Sparse4D model wrapper       |
-| `autoware_ml/anchors/`                                                  | Anchor recipes of the Sparse4D head                |
+| `autoware_ml/anchors/`                                                  | Anchor recipes of the Sparse4D and motion heads    |
+| `autoware_ml/models/motion/motion_head.py`                              | Agent motion head on the detection queries         |
+| `autoware_ml/models/multi/ptv3_sparsedrive_motion.py`                   | PTv3 Sparse4D model with the motion head           |
+| `autoware_ml/datamodule/common/motion.py`                               | Agent futures of a record                          |
+| `autoware_ml/metrics/motion/`                                           | Agent motion metrics                               |
 | `autoware_ml/models/segmentation3d/encoders/ptv3.py`                    | Reusable PTv3 encoder components                   |
 | `autoware_ml/models/segmentation3d/encoders/voxel.py`                   | Voxel feature encoders of single frames and sweeps |
 | `autoware_ml/utils/point_cloud/`                                        | Shared point-cloud utilities and serialization     |
@@ -305,6 +315,7 @@ The split export produces one graph per `deploy.onnx.modules` entry:
 | `autoware_ml/configs/tasks/segmentation3d/ptv3/`                        | Segmentation experiment configurations             |
 | `autoware_ml/configs/tasks/detection3d/ptv3/`                           | Detection experiment configurations                |
 | `autoware_ml/configs/tasks/multi/ptv3_sparse4d/`                        | Sparse4D experiment configurations                 |
+| `autoware_ml/configs/tasks/multi/ptv3_sparsedrive/`                     | SparseDrive experiment configurations              |
 
 ## Acknowledgment
 
@@ -323,3 +334,11 @@ The Sparse4D head was ported from the official Sparse4D project by Horizon Robot
 - License: MIT
 - Paper: Lin, Xuewu, et al. "Sparse4D v3: Advancing End-to-End 3D Detection and Tracking."
   arXiv, 2023.
+
+The motion head was ported from the official SparseDrive project.
+
+<!-- cspell:ignore Wenchao -->
+- Repository: <https://github.com/swc-17/SparseDrive>
+- License: MIT
+- Paper: Sun, Wenchao, et al. "SparseDrive: End-to-End Autonomous Driving via Sparse Scene
+  Representation." ICRA, 2025.

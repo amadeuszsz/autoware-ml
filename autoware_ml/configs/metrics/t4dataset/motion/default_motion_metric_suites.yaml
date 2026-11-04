@@ -1,0 +1,7 @@
+# Motion suites of the agent motion models: the trajectories of the tracked agents.
+- _target_: autoware_ml.metrics.motion.suite.MotionMetricSuite
+  components:
+    - _target_: autoware_ml.metrics.motion.suite.AgentMotionSummary
+  class_names: ${taxonomy.detection3d.class_names}
+  score_threshold: ${model.bbox_head.track_birth_score}
+  max_distances: ${metric_params.detection3d.max_distances}

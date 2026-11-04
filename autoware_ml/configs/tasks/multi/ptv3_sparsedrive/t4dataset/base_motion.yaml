@@ -1,0 +1,57 @@
+# @package _global_
+# SparseDrive agent motion on the temporal Sparse4D model: the detection queries attend to their
+# history and to the most confident detections and predict the trajectory of every agent. An
+# experiment composes it after its Sparse4D base and adds the motion task to its extra sources.
+defaults:
+  - /datamodule/t4dataset/datasets/motion@datasets.train.dataset_tasks.motion: default_motion
+  - /datamodule/t4dataset/datasets/motion@datasets.test.dataset_tasks.motion: default_motion
+  - /metrics/t4dataset/motion@motion_metrics: default_motion_metric_suites
+  - _self_
+
+# The detection, segmentation, joint and tracking suites, then the trajectories
+metrics: ${merge_lists:${detection3d_metrics},${segmentation3d_metrics},${det3d_seg3d_metrics},${tracking_metrics},${motion_metrics}}
+
+model:
+  _target_: autoware_ml.models.multi.ptv3_sparsedrive_motion.PTv3SparseDriveMotionModel
+  motion_loss_weight: 1.0
+  # The motion metrics see as many queries as the detection decodes
+  motion_eval_queries: ${model.bbox_head.num_output}
+  motion_head:
+    _target_: autoware_ml.models.motion.motion_head.MotionHead
+    num_classes: ${model.bbox_head.num_classes}
+    embed_dims: ${model.bbox_head.embed_dims}
+    # Motion anchors from every fifth key-frame training record, agents within 55 m without the
+    # boxes the training pipeline drops, built into the cache before the first training. A class
+    # without futures in the training split shares the ones of the donor class the experiment
+    # names for it.
+    anchor_recipe:
+      _target_: autoware_ml.anchors.trajectories.TrajectoryAnchorRecipe
+      cache_path: ${cache_root_path}/anchors
+      taxonomy: ${taxonomy.detection3d}
+      num_modes: ${model.motion_head.agent_modes}
+      record_stride: 5
+      max_agent_distance: 55.0
+      iterations: 100
+      seed: 0
+      class_donors: {}
+      filter_attributes: ${filter_attributes}
+    # Six modes over the horizon of the agent futures
+    agent_modes: 6
+    agent_steps: ${datasets.train.dataset_tasks.motion.agent_steps}
+    # History entries 0.5 s apart at 10 Hz, as SparseDrive at 2 Hz
+    queue_stride: 5
+    # The motion head trains on the detection outputs as they are
+    detach_detection: true
+
+# The det head graph also hands the motion graph its last layer queries. The motion graph carries
+# its history at the graph boundary, as the det head its bank state. Agent trajectories are BEV
+# positions relative to the box center of their query.
+deploy:
+  onnx:
+    modules:
+      ptv3_motion_head:
+        metainfo:
+          step_seconds: ${datasets.train.dataset_tasks.motion.step_seconds}
+          agent_steps: ${model.motion_head.agent_steps}
+          agent_modes: ${model.motion_head.agent_modes}
+          queue_stride: ${model.motion_head.queue_stride}

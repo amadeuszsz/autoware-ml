@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 
@@ -71,3 +72,28 @@ def kmeans(
         means, counts = cluster_means(points, assignments, num_clusters)
         centroids = torch.where(counts[:, None] > 0, means, centroids)
     return centroids, assignments
+
+
+def cluster_modes(
+    samples: list[np.ndarray], num_modes: int, iterations: int, seed: int, name: str
+) -> np.ndarray:
+    """Cluster arrays of one shape into modes of the same shape.
+
+    Args:
+        samples: Trajectories, paths or speed profiles of one shape.
+        num_modes: Number of modes.
+        iterations: Number of k-means iterations.
+        seed: Seed of the initial centroid draw.
+        name: What the arrays describe, for the error message.
+
+    Returns:
+        Modes ``(num_modes, *shape)``.
+
+    Raises:
+        ValueError: If there are fewer arrays than modes.
+    """
+    if len(samples) < num_modes:
+        raise ValueError(f"{name} has {len(samples)} samples, {num_modes} modes need more.")
+    points = torch.from_numpy(np.stack(samples).reshape(len(samples), -1)).float()
+    centroids, _ = kmeans(points, num_modes, iterations, seed)
+    return centroids.reshape(num_modes, *samples[0].shape).numpy()
