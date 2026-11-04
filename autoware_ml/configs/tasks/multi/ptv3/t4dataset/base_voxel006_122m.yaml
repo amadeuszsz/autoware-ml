@@ -56,47 +56,47 @@ model:
     # One group per class of the fine detection taxonomy, no score thresholds.
     nms_type: circle
     nms_group_configs:
-      - _target_: autoware_ml.models.detection3d.heads.transfusions.transfusion_head.NMSGroupConfig
+      - _target_: autoware_ml.models.detection3d.task_modules.nms_groups.NMSGroupConfig
         class_names: [car.common, car.emergency, car.special, truck.common, truck.emergency, truck.trailer, truck.construction, bus, train]
         nms_radius: 0.25
         max_size: 300
-      - _target_: autoware_ml.models.detection3d.heads.transfusions.transfusion_head.NMSGroupConfig
+      - _target_: autoware_ml.models.detection3d.task_modules.nms_groups.NMSGroupConfig
         class_names: [motorcycle, bicycle]
         nms_radius: 0.5
         max_size: 100
-      - _target_: autoware_ml.models.detection3d.heads.transfusions.transfusion_head.NMSGroupConfig
+      - _target_: autoware_ml.models.detection3d.task_modules.nms_groups.NMSGroupConfig
         class_names: [pedestrian.common]
         nms_radius: 0.0
         max_size: 100
-      - _target_: autoware_ml.models.detection3d.heads.transfusions.transfusion_head.NMSGroupConfig
+      - _target_: autoware_ml.models.detection3d.task_modules.nms_groups.NMSGroupConfig
         class_names: [pedestrian.personal_mobility]
         nms_radius: 0.0
         max_size: 50
-      - _target_: autoware_ml.models.detection3d.heads.transfusions.transfusion_head.NMSGroupConfig
+      - _target_: autoware_ml.models.detection3d.task_modules.nms_groups.NMSGroupConfig
         class_names: [pedestrian.stroller]
         nms_radius: 0.0
         max_size: 50
-      - _target_: autoware_ml.models.detection3d.heads.transfusions.transfusion_head.NMSGroupConfig
+      - _target_: autoware_ml.models.detection3d.task_modules.nms_groups.NMSGroupConfig
         class_names: [animal]
         nms_radius: 0.0
         max_size: 50
-      - _target_: autoware_ml.models.detection3d.heads.transfusions.transfusion_head.NMSGroupConfig
+      - _target_: autoware_ml.models.detection3d.task_modules.nms_groups.NMSGroupConfig
         class_names: [barrier.movable]
         nms_radius: 0.0
         max_size: 50
-      - _target_: autoware_ml.models.detection3d.heads.transfusions.transfusion_head.NMSGroupConfig
+      - _target_: autoware_ml.models.detection3d.task_modules.nms_groups.NMSGroupConfig
         class_names: [barrier.construction_sign]
         nms_radius: 0.0
         max_size: 50
-      - _target_: autoware_ml.models.detection3d.heads.transfusions.transfusion_head.NMSGroupConfig
+      - _target_: autoware_ml.models.detection3d.task_modules.nms_groups.NMSGroupConfig
         class_names: [traffic_cone]
         nms_radius: 0.0
         max_size: 100
-      - _target_: autoware_ml.models.detection3d.heads.transfusions.transfusion_head.NMSGroupConfig
+      - _target_: autoware_ml.models.detection3d.task_modules.nms_groups.NMSGroupConfig
         class_names: [debris.unclassified]
         nms_radius: 0.0
         max_size: 50
-      - _target_: autoware_ml.models.detection3d.heads.transfusions.transfusion_head.NMSGroupConfig
+      - _target_: autoware_ml.models.detection3d.task_modules.nms_groups.NMSGroupConfig
         class_names: [debris.pushable_pullable]
         nms_radius: 0.0
         max_size: 50
