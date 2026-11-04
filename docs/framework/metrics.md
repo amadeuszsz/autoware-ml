@@ -1016,7 +1016,11 @@ the match cost of the suite up to the largest match distance of its metrics. Onl
 left over claim the dropped boxes in the same cost, up to `ignore_claim_distance`, one prediction
 per box, so a duplicate on an occluded box stays a false positive and a prediction a kept box could
 match is never left out. The per class, grouped and visible T4Dataset suites use it, the nuScenes
-suites keep the devkit behavior.
+suites keep the devkit behavior. A suite with `observed_only: true` and the tracking metrics leave
+out the boxes a temporal model has not observed in its stream yet together with the predictions
+that claim them, the same way. The tracking metrics also leave out the tracked boxes beyond the
+distance of their class. A query decodes into one box of its best class, so a track has at most one
+box per frame, and the tracking metrics refuse a frame that gives a track two.
 
 ## Segmentation metrics
 

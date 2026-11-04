@@ -76,6 +76,7 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
         min_num_points: int = 0,
         ignore_below_min_points: bool = False,
         ignore_claim_distance: float = 2.0,
+        observed_only: bool = False,
         match_cost: str = "center",
         class_groups: dict[str, list[str]] | None = None,
         collision: Any = None,
@@ -99,6 +100,9 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
                 ``match_distance`` of the components.
             ignore_claim_distance: Largest match cost, in the match cost of the suite, at which
                 a prediction claims an ignored GT box.
+            observed_only: Count only the GT boxes the model observed in its stream so far, as
+                a temporal model reports in ``gt_observed``, and leave out the predictions that
+                claim the others.
             match_cost: Matching cost name, ``center`` or ``corner``.
             class_groups: Group name to member class names. When set, labels are folded onto
                 the group taxonomy at state build, so matching happens between grouped classes.
@@ -129,6 +133,7 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
         self.kept_claim_distance = max(
             (component.match_distance for component in self.components), default=0.0
         )
+        self.observed_only = bool(observed_only)
         self.match_cost = str(match_cost)
         resolve_match_cost(self.match_cost)  # a config typo must fail at build, not after the epoch
         if collision is None and any(component.needs_ttc for component in self.components):
@@ -251,24 +256,30 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
             keys = tuple(dict.fromkeys(keys + ("ego2global", "lanelet_map_path")))
         if self.min_num_points > 0:
             keys = tuple(dict.fromkeys(keys + ("gt_num_points",)))
+        if self.observed_only:
+            keys = tuple(dict.fromkeys(keys + ("gt_observed",)))
         return keys
 
     def _claims_ignored_boxes(
         self,
         gt_boxes: torch.Tensor,
         gt_labels: torch.Tensor,
-        gt_num_points: torch.Tensor,
+        gt_num_points: torch.Tensor | None,
+        gt_observed: torch.Tensor | None,
         gt_keep: torch.Tensor,
         pred_boxes: torch.Tensor,
         pred_scores: torch.Tensor,
         pred_labels: torch.Tensor,
     ) -> torch.Tensor:
-        """Mark the predictions that claim a GT box in range but below the point filter.
+        """Mark the predictions that claim an in-range GT box below the point filter or unobserved.
 
         Args:
             gt_boxes: Every GT box of the frame ``(G, 7+)``.
             gt_labels: Their labels ``(G,)``.
-            gt_num_points: Their LiDAR point counts ``(G,)``.
+            gt_num_points: Their LiDAR point counts ``(G,)``, None unless the suite ignores
+                the boxes below the point filter.
+            gt_observed: Whether the stream observed them ``(G,)``, None unless the suite
+                counts the observed boxes only.
             gt_keep: Keep mask of every GT filter ``(G,)``.
             pred_boxes: Prediction boxes ``(P, 7+)``.
             pred_scores: Prediction confidences ``(P,)``.
@@ -280,7 +291,12 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
         in_range = gt_keep_mask(
             gt_boxes, gt_labels, None, self.class_names or (), self.max_distances, 0
         )
-        ignored = in_range & (gt_num_points < self.min_num_points)
+        ignored = torch.zeros_like(in_range)
+        if self.ignore_below_min_points:
+            ignored |= gt_num_points < self.min_num_points
+        if self.observed_only:
+            ignored |= ~gt_observed
+        ignored &= in_range
         # The claims run in the label space the suite matches in
         gt_labels = self._fold(gt_labels)
         return ignored_prediction_mask(
@@ -346,16 +362,22 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
                 self.max_distances,
                 self.min_num_points,
             )
+            observed = (
+                eval_out["gt_observed"][i].to(device=keep.device) if self.observed_only else None
+            )
+            if self.observed_only:
+                keep &= observed
 
             self._note_frame()
             pred_boxes = prediction["bboxes_3d"].detach().to(dtype=torch.float32)
             pred_scores = prediction["scores_3d"].detach().to(dtype=torch.float32)
             pred_labels = prediction["labels_3d"].detach().to(dtype=torch.long)
-            if self.ignore_below_min_points:
+            if self.ignore_below_min_points or self.observed_only:
                 pred_keep = ~self._claims_ignored_boxes(
                     frame_boxes,
                     frame_labels,
                     num_points,
+                    observed,
                     keep,
                     pred_boxes,
                     pred_scores,
