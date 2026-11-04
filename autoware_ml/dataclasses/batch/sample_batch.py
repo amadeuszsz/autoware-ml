@@ -11,6 +11,7 @@ from autoware_ml.dataclasses.batch.detection3d import (
     Detection3DGTBatch,
 )
 from autoware_ml.dataclasses.batch.frame_meta import FrameMetaBatch, FrameMetaSample
+from autoware_ml.dataclasses.batch.motion import MotionGTBatch, MotionGTSample
 from autoware_ml.dataclasses.batch.segmentation3d import (
     Segmentation3DGTBatch,
     Segmentation3DGTSample,
@@ -68,6 +69,8 @@ class ModelGTSample(NamedTuple):
     # Whether the sample only pads a streaming lane, repeating the lane's last frame. Assigned by
     # the dataset, see ModelGTBatch.padding_mask.
     is_padding: bool = False
+    # Futures of the agents in the raw frame, None without motion GT.
+    motion_gt_sample: MotionGTSample | None = None
 
     def keep_points(self, keep_mask: Bool[Tensor, " num_points"]) -> ModelGTSample:
         """
@@ -123,6 +126,9 @@ class ModelGTBatch(NamedTuple):
     # 2D detection ground truth of every camera of every sample, None when the samples carry
     # none.
     detection2d_gt_batch: Detection2DGTBatch | None = None
+    # Futures in the augmented frames, agents aligned with the 3D box slots. None without
+    # motion GT.
+    motion_gt_batch: MotionGTBatch | None = None
 
     def to_device(self, device: torch.device) -> ModelGTBatch:
         """
@@ -155,6 +161,9 @@ class ModelGTBatch(NamedTuple):
             if self.detection2d_gt_batch is not None
             else None,
             padding_mask=self.padding_mask.to(device),
+            motion_gt_batch=self.motion_gt_batch.to_device(device)
+            if self.motion_gt_batch is not None
+            else None,
         )
 
     @property
@@ -430,6 +439,40 @@ class ModelGTBatch(NamedTuple):
         )
 
     @staticmethod
+    def collate_motion_gt_samples(
+        gt_samples: Sequence[ModelGTSample], detection3d_gt_batch: Detection3DGTBatch | None
+    ) -> MotionGTBatch | None:
+        """
+        Collate the futures of a batch, the agents aligned with the collated 3D boxes.
+
+        Args:
+          gt_samples: Sequence of ModelGTSample to be collated.
+          detection3d_gt_batch: The collated 3D boxes the agent futures align with.
+
+        Returns:
+          MotionGTBatch | None: Collated futures, None when no sample carries them.
+
+        Raises:
+          ValueError: If only some samples carry futures, or the batch has no 3D boxes.
+        """
+        motion_gt_samples = [
+            sample.motion_gt_sample for sample in gt_samples if sample.motion_gt_sample is not None
+        ]
+        if not len(motion_gt_samples):
+            return None
+        if len(motion_gt_samples) != len(gt_samples):
+            raise ValueError("All samples must have motion_gt_sample for collating.")
+        if detection3d_gt_batch is None:
+            raise ValueError("Futures align with the 3D boxes, but the batch carries none.")
+        return MotionGTBatch.collate_gt_samples(
+            motion_gt_samples=motion_gt_samples,
+            gt_bboxes_instance_ids=detection3d_gt_batch.gt_bboxes_instance_ids,
+            lidar_transformation_samples=[
+                sample.lidar_transformation_sample for sample in gt_samples
+            ],
+        )
+
+    @staticmethod
     def collate_gt_samples(
         gt_samples: Sequence[ModelGTSample],
         max_num_3d_gt_bboxes: int | None,
@@ -473,6 +516,11 @@ class ModelGTBatch(NamedTuple):
             gt_samples=gt_samples, max_num_2d_gt_bboxes=max_num_2d_gt_bboxes
         )
 
+        # Collate the futures against the collated 3D boxes
+        motion_gt_batch = ModelGTBatch.collate_motion_gt_samples(
+            gt_samples=gt_samples, detection3d_gt_batch=detection3d_gt_batch
+        )
+
         return ModelGTBatch(
             point_cloud_gt_batch=point_cloud_gt_batch,
             detection3d_gt_batch=detection3d_gt_batch,
@@ -484,4 +532,5 @@ class ModelGTBatch(NamedTuple):
             padding_mask=torch.tensor(
                 [sample.is_padding for sample in gt_samples], dtype=torch.bool
             ),
+            motion_gt_batch=motion_gt_batch,
         )
