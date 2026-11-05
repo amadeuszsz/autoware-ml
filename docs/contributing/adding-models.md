@@ -160,6 +160,14 @@ class MyModel(ModuleBaseModel):
    (`on_train_epoch_start`, `on_validation_epoch_start`, `on_test_epoch_start`,
    `on_predict_epoch_start`) call `super()` first; the validation and test hooks of the base
    model reset the metric suites.
+   A head that starts from anchors derived from the training split, such as k-means anchors of
+   the training boxes, keeps them in a `DataAnchored` module (`autoware_ml.models.anchored`)
+   with an `AnchorRecipe` (`autoware_ml.anchors.base`). `ModuleBaseModel.prepare_data()` builds
+   the anchors every such module lacks into `anchors/` of the cache directory, keyed by the
+   recipe and the training data like the record tables, and `configure_model()` fills them on
+   every rank. The anchors are state of the module, so weights and checkpoints carry them. The
+   module names them in `anchor_names`, and weights holding only part of them and their
+   `anchors_ready` flag fail to load.
 
 ## Step 2: Choose the Data
 
