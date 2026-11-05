@@ -1,0 +1,19 @@
+# @package _global_
+# PTv3 on a 12 cm grid with Sparse4D sampling the 0.24, 0.48 and 0.96 m stages.
+defaults:
+  - base_122m
+  - _self_
+
+grid_size: 0.12
+max_voxels: 524288
+
+det_feature_strides: [2, 4, 8]
+
+model:
+  # The sampled stages and the deepest one, which fuses top-down into them.
+  det_fusion:
+    stage_channels:
+      - ${model.encoder.enc_channels[1]}
+      - ${model.encoder.enc_channels[2]}
+      - ${model.encoder.enc_channels[3]}
+      - ${model.encoder.enc_channels[4]}
