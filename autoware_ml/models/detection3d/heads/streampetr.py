@@ -1113,18 +1113,18 @@ class StreamPETRHead(nn.Module):
         outputs: StreamPETRHeadOutputs,
         gt_boxes: list[torch.Tensor],
         gt_labels: list[torch.Tensor],
-        padding_mask: Bool[torch.Tensor, " batch_size"],
+        supervised_mask: Bool[torch.Tensor, " batch_size"],
     ) -> dict[str, torch.Tensor]:
         """Compute multi-layer StreamPETR losses.
 
         ``gt_boxes`` are metric ``[cx, cy, cz, l, w, h, yaw, vx, vy]`` boxes and
         ``gt_labels`` their int64 class indices, one tensor per sample.
-        ``padding_mask`` flags the padding samples of a streaming batch (see
-        ``ModelGTBatch.padding_mask``), which take no part in the loss: every query of such
-        a sample gets a zero classification weight. They come without boxes, so they give no
-        regression target, no positive and no denoising query either. The weights only scale
-        the loss terms, so a batch of padding alone still yields a zero loss over the whole
-        graph.
+        ``supervised_mask`` flags the samples the loss learns from (see
+        ``ModelGTBatch.supervised_mask``). Every query of another sample, a padding slot or a
+        frame between key frames, gets a zero classification weight. Such samples come without
+        boxes, so they give no regression target, no positive and no denoising query either.
+        The weights only scale the loss terms, so a batch without a supervised sample still
+        yields a zero loss over the whole graph.
 
         The losses are sums over the objects divided by the counts of the step. In training the
         counts are averaged over the DDP ranks (see :func:`reduce_mean_count`) in one collective
@@ -1136,7 +1136,7 @@ class StreamPETRHead(nn.Module):
         all_cls_scores = outputs.all_cls_scores
         all_bbox_preds = outputs.all_bbox_preds
         num_queries = all_cls_scores.shape[2]
-        label_weights = (~padding_mask).to(all_cls_scores.dtype).view(-1, 1, 1)
+        label_weights = supervised_mask.to(all_cls_scores.dtype).view(-1, 1, 1)
 
         num_positives = sum(min(boxes.shape[0], num_queries) for boxes in gt_boxes)
         num_targets = 0 if outputs.denoising is None else outputs.denoising.known_labels.numel()

@@ -86,6 +86,7 @@ def _update(
         "predictions": predictions,
         "gt_boxes": gt_boxes,
         "gt_labels": gt_labels,
+        "scored": [True] * len(predictions),
     }
     if gt_num_points is not None:
         eval_out["gt_num_points"] = gt_num_points
@@ -108,6 +109,7 @@ class _DummyDetection3DModel(MetricEvalMixin):
             "predictions": outputs,
             "gt_boxes": batch["gt_boxes"],
             "gt_labels": batch["gt_labels"],
+            "scored": [True] * len(batch["gt_labels"]),
         }
 
     def log_dict(self, values: dict[str, float], **kwargs: object) -> None:

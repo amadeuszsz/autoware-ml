@@ -315,7 +315,8 @@ def test_confusion_suite_region_filter_buckets() -> None:
                     "ego2global": np.eye(4),
                     "lanelet_map_path": STUB_MAP_PATH,
                 }
-            ]
+            ],
+            "scored": [True],
         }
     )
     report = suite.result(EvalStage.TEST)
@@ -355,6 +356,7 @@ def test_detection3d_suite_region_filter_restricts_gt() -> None:
             "gt_labels": [torch.tensor([0, 0])],
             "ego2global": [np.eye(4)],
             "lanelet_map_path": [STUB_MAP_PATH],
+            "scored": [True],
         }
     )
     report = suite.result(EvalStage.TEST)
@@ -440,7 +442,8 @@ def test_confusion_suite_excludes_scene_without_lanelet_map() -> None:
                     "ego2global": np.eye(4),
                     "lanelet_map_path": None,
                 },
-            ]
+            ],
+            "scored": [True, True],
         }
     )
     report = suite.result(EvalStage.TEST)
@@ -480,7 +483,8 @@ def test_confusion_suite_frame_count_follows_filter_coverage() -> None:
                     "ego2global": np.eye(4),
                     "lanelet_map_path": None,
                 },
-            ]
+            ],
+            "scored": [True, True],
         }
     )
     report = suite.result(EvalStage.TEST)
@@ -516,7 +520,8 @@ def test_point_cloud_suite_frame_count_follows_filter_coverage() -> None:
                     "ego2global": np.eye(4),
                     "lanelet_map_path": None,
                 },
-            ]
+            ],
+            "scored": [True, True],
         }
     )
     report = suite.result(EvalStage.TEST)
@@ -555,6 +560,7 @@ def test_detection3d_suite_frame_count_follows_filter_coverage() -> None:
             "gt_labels": [torch.tensor([0]), torch.tensor([0])],
             "ego2global": [np.eye(4), np.eye(4)],
             "lanelet_map_path": [STUB_MAP_PATH, None],
+            "scored": [True, True],
         }
     )
     report = suite.result(EvalStage.TEST)
@@ -591,6 +597,7 @@ def test_detection3d_suite_excludes_scene_without_lanelet_map() -> None:
             "gt_labels": [torch.tensor([0]), torch.tensor([0])],
             "ego2global": [np.eye(4), np.eye(4)],
             "lanelet_map_path": [STUB_MAP_PATH, None],
+            "scored": [True, True],
         }
     )
     report = suite.result(EvalStage.TEST)
@@ -634,7 +641,8 @@ def test_point_cloud_suite_excludes_scene_without_lanelet_map() -> None:
                     "ego2global": np.eye(4),
                     "lanelet_map_path": None,
                 },
-            ]
+            ],
+            "scored": [True, True],
         }
     )
     report = suite.result(EvalStage.TEST)
@@ -673,7 +681,8 @@ def test_point_cloud_suite_region_filter_clips_boxes() -> None:
                     "gt_boxes": torch.tensor([_box(10.0), _box(100.0)]),
                     "gt_box_labels": torch.tensor([0, 0]),
                 }
-            ]
+            ],
+            "scored": [True],
         }
     )
     assert suite.state_for(None, region).frames[0].gt_boxes.shape[0] == 1

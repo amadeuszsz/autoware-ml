@@ -112,7 +112,8 @@ def test_suite_caches_frames_and_runs_components() -> None:
                     "target": torch.tensor(target),
                     "scores": torch.full((10, 2), 0.5),
                 }
-            ]
+            ],
+            "scored": [True],
         }
     )
     report = suite.result(EvalStage.TEST)
@@ -133,8 +134,8 @@ def test_suite_frame_count_reads_the_cache_length() -> None:
         "target": torch.tensor([0]),
         "scores": torch.full((1, 2), 0.5),
     }
-    suite.update({"seg3d_frames": [frame, frame]})
-    suite.update({"seg3d_frames": [frame]})
+    suite.update({"seg3d_frames": [frame, frame], "scored": [True, True]})
+    suite.update({"seg3d_frames": [frame], "scored": [True]})
 
     report = suite.result(EvalStage.TEST)
 
@@ -165,10 +166,10 @@ def test_suite_demands_boxes_for_box_reading_components() -> None:
         "scores": torch.full((1, 2), 0.5),
     }
     with pytest.raises(ValueError, match="gt_boxes and gt_box_labels"):
-        suite.update({"seg3d_frames": [dict(frame)]})
+        suite.update({"seg3d_frames": [dict(frame)], "scored": [True]})
     frame["gt_boxes"] = torch.zeros((0, 7))
     frame["gt_box_labels"] = torch.zeros((0,), dtype=torch.long)
-    suite.update({"seg3d_frames": [frame]})
+    suite.update({"seg3d_frames": [frame], "scored": [True]})
 
 
 def test_calibration_error_zero_when_confidence_matches_accuracy() -> None:

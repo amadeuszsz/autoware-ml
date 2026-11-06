@@ -62,6 +62,7 @@ class TestBoxCounts(unittest.TestCase):
                 "gt_labels": [torch.tensor([0, 1, 0], dtype=torch.long)],
                 # The pedestrian at 30m has too few points and must not be counted
                 "gt_num_points": [torch.tensor([5, 1, 4], dtype=torch.long)],
+                "scored": [True],
             }
         )
 

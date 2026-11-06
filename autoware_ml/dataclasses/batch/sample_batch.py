@@ -109,8 +109,9 @@ class ModelGTBatch(NamedTuple):
 
     # Samples that only pad a streaming lane (see GroupStreamingSampler), all False when no
     # sample pads. A model leaves them out of its loss but still returns one on a batch of
-    # padding only, as DDP needs a loss from every rank. The logged batch size (num_real_samples)
-    # and the detection metrics leave them out; a prediction writer gets this mask with the batch.
+    # padding only, as DDP needs a loss from every rank. The logged batch size
+    # (num_supervised_samples) and the metrics leave them out, a prediction writer gets this
+    # mask with the batch.
     padding_mask: Bool[Tensor, " batch_size"]
 
     # Summed io_processing_time of every sample collated into this batch.
@@ -167,14 +168,31 @@ class ModelGTBatch(NamedTuple):
         """
         return int(self.padding_mask.shape[0])
 
-    def num_real_samples(self) -> int:
+    def supervised_mask(self) -> Bool[Tensor, " batch_size"]:
         """
-        Count the samples that serve frames of the split rather than padding slots.
+        Samples a model learns from and the metrics score: key frames that pad no lane.
 
         Returns:
-          int: The batch size less the padding slots, zero for a batch of padding slots only.
+          Bool[Tensor, " batch_size"]: One flag per collated sample, every real sample
+            when the batch carries no frame metadata. A dataset that serves non-key frames
+            attaches the frame metadata.
         """
-        return int((~self.padding_mask).sum().item())
+        supervised = ~self.padding_mask
+        if self.frame_meta_batch is None:
+            return supervised
+        key_frames = torch.tensor(
+            list(self.frame_meta_batch.key_frames), dtype=torch.bool, device=supervised.device
+        )
+        return supervised & key_frames
+
+    def num_supervised_samples(self) -> int:
+        """
+        Count the samples a model learns from, see :meth:`supervised_mask`.
+
+        Returns:
+          int: The key frames that pad no lane, zero for a batch without any.
+        """
+        return int(self.supervised_mask().sum().item())
 
     @staticmethod
     def collate_pointcloud_gt_samples(

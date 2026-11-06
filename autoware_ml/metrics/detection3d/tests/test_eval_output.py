@@ -196,7 +196,7 @@ class TestTypedDetection3DEvalOutput(unittest.TestCase):
             )
 
     def test_frame_meta_is_passed_through_per_frame(self):
-        """Test that the ego pose, scene token and map path are handed to the metric per frame."""
+        """Test that the ego pose, scene token, map path and key frame flag reach the metric."""
         ego2globals = torch.eye(4, device=self.device).repeat(2, 1, 1)
         ego2globals[1, 0, 3] = 7.0
         gt_batch = self.multi_task_batch_inputs.multi_task_gt_batch._replace(
@@ -205,6 +205,7 @@ class TestTypedDetection3DEvalOutput(unittest.TestCase):
                 scene_tokens=["db/scene_a/0", "db/scene_b/1"],
                 timestamps=torch.tensor([0.0, 0.1], dtype=torch.float64, device=self.device),
                 lanelet_map_paths=["/maps/scene_a.osm", None],
+                key_frames=[True, False],
             )
         )
         multi_task_batch_inputs = ModelBatchInputs(
@@ -220,6 +221,7 @@ class TestTypedDetection3DEvalOutput(unittest.TestCase):
         self.assertTrue(torch.equal(eval_outputs["ego2global"][1], ego2globals[1]))
         self.assertEqual(eval_outputs["scene_token"], ["db/scene_a/0", "db/scene_b/1"])
         self.assertEqual(eval_outputs["lanelet_map_path"], ["/maps/scene_a.osm", None])
+        self.assertEqual(eval_outputs["scored"], [True, False])
 
     def test_frame_meta_keys_absent_without_frame_meta_batch(self):
         """Test that the metadata keys are left out when the batch carries none."""
@@ -254,7 +256,7 @@ class TestTypedDetection3DEvalOutput(unittest.TestCase):
 
         for key in ("predictions", "gt_boxes", "gt_labels", "gt_num_points"):
             self.assertEqual(len(eval_outputs[key]), 2)
-        self.assertEqual(eval_outputs["padding_mask"], [False, True])
+        self.assertEqual(eval_outputs["scored"], [True, False])
 
 
 if __name__ == "__main__":

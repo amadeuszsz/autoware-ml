@@ -28,9 +28,25 @@ import numpy as np
 import torch.distributed
 import torchmetrics
 
+from autoware_ml.dataclasses.batch.sample_batch import ModelGTBatch
 from autoware_ml.metrics.report import MetricReport
 
 logger = logging.getLogger(__name__)
+
+
+def frame_scoring_eval_output(gt_batch: ModelGTBatch) -> dict[str, list[bool]]:
+    """
+    Whether the metrics score every frame of a batch, read by ``MetricSuite.frame_scored``.
+
+    Args:
+        gt_batch: Ground truth batch of the frames.
+
+    Returns:
+        ``scored``, the frames the losses learn from too.
+    """
+    # An unscored frame keeps its entry in every per-frame list, since the metrics gather those
+    # lists across the GPUs entry by entry, and the metric leaves it out.
+    return {"scored": gt_batch.supervised_mask().tolist()}
 
 
 def rank_zero() -> bool:
@@ -301,6 +317,19 @@ class MetricSuite(torchmetrics.Metric, ABC, Generic[StateT]):
         duplicates = sorted(suffix for suffix in set(suffixes) if suffixes.count(suffix) > 1)
         if duplicates:
             raise ValueError(f"Range metric suffixes must be unique: {duplicates}")
+
+    def frame_scored(self, eval_out: dict[str, Any], index: int) -> bool:
+        """
+        Whether the metrics score a frame of the batch.
+
+        Args:
+            eval_out: Flat eval-output dict of the batch.
+            index: Index of the frame in the batch.
+
+        Returns:
+            False for a frame that pads a streaming lane or lies between key frames.
+        """
+        return bool(eval_out["scored"][index])
 
     def bind_stage(self, stage: EvalStage) -> None:
         """Fix the stage this suite instance serves (the mixin clones per stage).

@@ -13,6 +13,7 @@ from shapely.geometry import box
 from autoware_ml.metrics.base import EvalStage
 from autoware_ml.metrics.detection3d.collision import CollisionTTC
 from autoware_ml.metrics.detection3d.collision_weighted_map import CollisionWeightedMeanAP
+from autoware_ml.metrics.detection3d.box_counts import BoxCounts
 from autoware_ml.metrics.detection3d.critical_fp_fn import CriticalFPFN
 from autoware_ml.metrics.detection3d.matching import Detection3DState
 from autoware_ml.metrics.detection3d.structures import Detection3DSample
@@ -90,6 +91,7 @@ def test_suite_computes_ttc_and_criticality_metrics() -> None:
             "gt_labels": [gt_labels],
             "ego2global": [np.eye(4)],
             "lanelet_map_path": [STUB_MAP_PATH],
+            "scored": [True],
         }
     )
 
@@ -114,7 +116,7 @@ def test_suite_computes_ttc_and_criticality_metrics() -> None:
 
 def test_a_padding_frame_takes_no_part_in_the_metrics() -> None:
     """
-    Input: two identical frames, the second flagged in padding_mask as a streaming padding slot.
+    Input: two identical frames, the second unscored as a streaming padding slot.
     Expected: the padding frame is gathered like the other (the ranks must hold as many entries)
     but counts nowhere: not in the frames the metrics see, not in the TTC coverage.
     Check: the per-frame state length, the samples of the state and the TTC frame counters.
@@ -143,7 +145,7 @@ def test_a_padding_frame_takes_no_part_in_the_metrics() -> None:
             "gt_labels": [torch.tensor([0]), torch.tensor([0])],
             "ego2global": [np.eye(4), np.eye(4)],
             "lanelet_map_path": [STUB_MAP_PATH, STUB_MAP_PATH],
-            "padding_mask": [False, True],
+            "scored": [True, False],
         }
     )
 
@@ -204,6 +206,7 @@ def test_the_score_floor_skips_only_what_no_metric_reads() -> None:
         "gt_labels": [torch.tensor([0, 0])],
         "ego2global": [np.eye(4)],
         "lanelet_map_path": [STUB_MAP_PATH],
+        "scored": [True],
     }
     suite = Detection3DMetricSuite(
         components=[CriticalFPFN(confidences=(0.5,))], class_names=CLASS_NAMES, collision=collision
@@ -247,7 +250,7 @@ def test_a_metric_reading_a_skipped_prediction_fails_loud() -> None:
 
 def test_min_num_points_without_counts_raises() -> None:
     suite = Detection3DMetricSuite(
-        components=[CriticalFPFN(confidences=(0.5,))],
+        components=[BoxCounts()],
         class_names=CLASS_NAMES,
         min_num_points=2,
     )
@@ -263,5 +266,17 @@ def test_min_num_points_without_counts_raises() -> None:
                 ],
                 "gt_boxes": [torch.zeros((0, 9))],
                 "gt_labels": [torch.zeros(0, dtype=torch.long)],
+                "scored": [True],
             }
+        )
+
+
+def test_a_ttc_metric_without_a_collision_provider_is_refused() -> None:
+    """
+    Input: a suite whose CriticalFPFN reads per-box TTC, built without a collision provider.
+    Expected: the suite refuses it at construction, not after a whole test run.
+    """
+    with pytest.raises(ValueError, match="collision provider"):
+        Detection3DMetricSuite(
+            components=[CriticalFPFN(confidences=(0.5,))], class_names=CLASS_NAMES
         )

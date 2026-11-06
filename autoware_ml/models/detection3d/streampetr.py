@@ -45,21 +45,21 @@ def _homogeneous_intrinsics(camera_intrinsics: torch.Tensor) -> torch.Tensor:
 
 def _ground_truth(
     gt_detections: Detection3DGTBatch,
-    padding_mask: Bool[torch.Tensor, " batch_size"],
+    supervised_mask: Bool[torch.Tensor, " batch_size"],
 ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
     """Unpad the boxes and labels of every sample into the head's box layout.
 
     The head regresses ``[cx, cy, cz, l, w, h, yaw, vx, vy]``; the vertical
-    velocity of the collated boxes is not a target. A padding sample of a streaming
-    batch (``ModelGTBatch.padding_mask``) repeats a frame only to keep the ranks in step,
-    so it gets no box: none of its boxes seeds a denoising query or becomes a target.
+    velocity of the collated boxes is not a target. A sample outside
+    ``ModelGTBatch.supervised_mask``, a padding slot or a frame between key frames, gets no
+    box: none of its boxes seeds a denoising query or becomes a target.
     """
     gt_boxes = [boxes[:, : Box3DFieldIndex.VELOCITY_Z] for boxes in gt_detections.valid_bboxes_3d()]
     gt_labels = gt_detections.valid_labels_3d()
-    padded = padding_mask.tolist()
+    supervised = supervised_mask.tolist()
     return (
-        [boxes[:0] if is_padding else boxes for boxes, is_padding in zip(gt_boxes, padded)],
-        [labels[:0] if is_padding else labels for labels, is_padding in zip(gt_labels, padded)],
+        [boxes if keep else boxes[:0] for boxes, keep in zip(gt_boxes, supervised)],
+        [labels if keep else labels[:0] for labels, keep in zip(gt_labels, supervised)],
     )
 
 
@@ -189,6 +189,7 @@ class StreamPETRDetection3DModel(ModuleBaseModel):
 
     # The memory bank needs lane-contiguous batches.
     requires_streaming: ClassVar[bool] = True
+    skips_unsupervised_frames: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -291,7 +292,7 @@ class StreamPETRDetection3DModel(ModuleBaseModel):
         gt_detections = multi_task_batch_inputs.multi_task_gt_batch.detection3d_gt_batch
         if gt_detections is not None:
             gt_boxes, gt_labels = _ground_truth(
-                gt_detections, multi_task_batch_inputs.multi_task_gt_batch.padding_mask
+                gt_detections, multi_task_batch_inputs.multi_task_gt_batch.supervised_mask()
             )
 
         img = image_data.images
@@ -308,10 +309,9 @@ class StreamPETRDetection3DModel(ModuleBaseModel):
             prev_exists=self.bbox_head.stream_continuity(
                 frame_meta.scene_tokens, frame_meta.timestamps
             ),
-            ego_pose=frame_meta.ego2globals,
-            # Inverted in float64 so that the inversion adds no rounding to the map-frame pose;
-            # the head composes the poses elementwise (see compose_poses).
-            ego_pose_inv=torch.linalg.inv(frame_meta.ego2globals.double()).float(),
+            # The head runs in float32, the float64 pose is inverted before the cast
+            ego_pose=frame_meta.ego2globals.float(),
+            ego_pose_inv=torch.linalg.inv(frame_meta.ego2globals).float(),
             gt_boxes=gt_boxes,
             gt_labels=gt_labels,
         )
@@ -341,12 +341,13 @@ class StreamPETRDetection3DModel(ModuleBaseModel):
         gt_batch = multi_task_batch_inputs.multi_task_gt_batch
         if gt_batch.detection3d_gt_batch is None:
             raise ValueError("StreamPETR losses need the 3D detection ground truth of the batch.")
-        gt_boxes, gt_labels = _ground_truth(gt_batch.detection3d_gt_batch, gt_batch.padding_mask)
+        supervised_mask = gt_batch.supervised_mask()
+        gt_boxes, gt_labels = _ground_truth(gt_batch.detection3d_gt_batch, supervised_mask)
         return self.bbox_head.loss(
             multi_task_outputs.detection3d().streampetr_head(),
             gt_boxes,
             gt_labels,
-            padding_mask=gt_batch.padding_mask,
+            supervised_mask=supervised_mask,
         )
 
     def decode_outputs(

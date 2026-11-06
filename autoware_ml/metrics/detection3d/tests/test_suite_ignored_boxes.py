@@ -73,6 +73,7 @@ def _score(
             "gt_boxes": [_boxes(*gt_xs)],
             "gt_labels": [torch.zeros(len(gt_xs), dtype=torch.long)],
             "gt_num_points": [torch.tensor(gt_points)],
+            "scored": [True],
         }
     )
     return suite.result(EvalStage.VAL)
@@ -118,6 +119,7 @@ def _grouped_report(
             "gt_boxes": [_boxes(*gt_xs)],
             "gt_labels": [torch.tensor(gt_labels)],
             "gt_num_points": [torch.tensor(gt_points)],
+            "scored": [True],
         }
     )
     return suite.result(EvalStage.VAL)

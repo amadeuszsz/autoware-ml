@@ -66,7 +66,8 @@ def _seg3d_shard(rank: int) -> dict[str, object]:
                 "target": torch.tensor([0, 1, 0]),
                 "coord": torch.tensor([[10.0, 0.0, 0.0], [10.0, 0.0, 0.0], [60.0, 0.0, 0.0]]),
             }
-        ]
+        ],
+        "scored": [True],
     }
 
 
@@ -83,6 +84,7 @@ def _det3d_shard(rank: int) -> dict[str, object]:
         "predictions": [prediction],
         "gt_boxes": [boxes.clone()],
         "gt_labels": [torch.tensor([0])],
+        "scored": [True],
     }
 
 

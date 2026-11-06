@@ -27,7 +27,7 @@ class Segmentation3DConfusionMatrixMetricSuite(MetricSuite[ConfusionState]):
     """Confusion-matrix segmentation suite over (filter, range) buckets."""
 
     prefix = "seg3d"
-    _required_keys = ("seg3d_frames",)
+    _required_keys = ("seg3d_frames", "scored")
 
     def __init__(
         self,
@@ -106,7 +106,9 @@ class Segmentation3DConfusionMatrixMetricSuite(MetricSuite[ConfusionState]):
             eval_out: Flat eval-output dict with the per-frame ``seg3d_frames``.
         """
         active_filter_keys = self._stage_filter_keys()
-        for frame in eval_out["seg3d_frames"]:
+        for frame_index, frame in enumerate(eval_out["seg3d_frames"]):
+            if not self.frame_scored(eval_out, frame_index):
+                continue
             predictions = frame["pred"].detach().reshape(-1)
             targets = frame["target"].detach().reshape(-1)
             coord = frame["coord"].detach().to(dtype=torch.float32)

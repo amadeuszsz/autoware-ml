@@ -95,7 +95,7 @@ class Segmentation3DPointCloudMetricSuite(MetricSuite[PointCloudSeg3DState]):
     """
 
     prefix = "seg3d_pt"
-    _required_keys = ("seg3d_frames",)
+    _required_keys = ("seg3d_frames", "scored")
 
     _FRAME_FIELDS = (
         "coord",
@@ -277,7 +277,9 @@ class Segmentation3DPointCloudMetricSuite(MetricSuite[PointCloudSeg3DState]):
         self._require_single_process()
         active = self._stage_filter_keys()
         needs_boxes = self._needs_boxes()
-        for frame in eval_out["seg3d_frames"]:
+        for index, frame in enumerate(eval_out["seg3d_frames"]):
+            if not self.frame_scored(eval_out, index):
+                continue
             missing = [key for key in ("coord", "pred", "target", "scores") if key not in frame]
             if missing:
                 raise ValueError(

@@ -60,7 +60,7 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
     """
 
     prefix = "det3d"
-    _required_keys = ("predictions", "gt_boxes", "gt_labels")
+    _required_keys = ("predictions", "gt_boxes", "gt_labels", "scored")
 
     def __init__(
         self,
@@ -131,6 +131,10 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
         )
         self.match_cost = str(match_cost)
         resolve_match_cost(self.match_cost)  # a config typo must fail at build, not after the epoch
+        if collision is None and any(component.needs_ttc for component in self.components):
+            raise ValueError(
+                "A metric of the suite reads per-box TTC, give it a collision provider."
+            )
         self.collision = collision
         # When class_groups is set, GT/pred labels are folded onto the behaviour
         # taxonomy at state build (after the per-class GT filters), so matching
@@ -152,9 +156,9 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
         self.add_state("pred_labels", default=[], dist_reduce_fx=None)
         self.add_state("gt_boxes", default=[], dist_reduce_fx=None)
         self.add_state("gt_labels", default=[], dist_reduce_fx=None)
-        # Per-frame flag: does the frame only pad a streaming lane? It is gathered like every
-        # other frame, so the ranks hold as many entries, and left out of every metric.
-        self.add_state("padding", default=[], dist_reduce_fx=None)
+        # Per-frame flag of the frames the metrics skip, gathered like every other frame so the
+        # ranks hold as many entries
+        self.add_state("unscored", default=[], dist_reduce_fx=None)
         if self.collision is not None:
             self.add_state("gt_ttc", default=[], dist_reduce_fx=None)
             self.add_state("pred_ttc", default=[], dist_reduce_fx=None)
@@ -302,7 +306,6 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
         gt_boxes = eval_out["gt_boxes"]
         gt_labels = eval_out["gt_labels"]
         gt_num_points = eval_out.get("gt_num_points")
-        padding_mask = eval_out.get("padding_mask")
         if len(predictions) != len(gt_boxes) or len(predictions) != len(gt_labels):
             raise ValueError(
                 "Detection metric expects equal numbers of predictions, gt_boxes, and gt_labels."
@@ -318,6 +321,11 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
         ):
             frame_boxes = boxes.detach().to(dtype=torch.float32)
             frame_labels = labels.detach().to(dtype=torch.long)
+            scored = self.frame_scored(eval_out, i)
+            self.unscored.append(torch.tensor([not scored], device=frame_boxes.device))
+            if not scored:
+                self._append_unscored_frame(frame_boxes, prediction["bboxes_3d"])
+                continue
             if self.class_names and bool(
                 ((frame_labels < 0) | (frame_labels >= len(self.class_names))).any()
             ):
@@ -361,15 +369,12 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
             self.pred_labels.append(pred_labels)
             self.gt_boxes.append(frame_boxes[keep])
             self.gt_labels.append(frame_labels[keep])
-            is_padding = bool(padding_mask[i]) if padding_mask is not None else False
-            self.padding.append(torch.tensor([is_padding], device=frame_boxes.device))
 
             if self.collision is not None:
                 covered = self._ttc_frame_covered(eval_out, i)
                 self.ttc_covered.append(torch.tensor([covered], device=frame_boxes.device))
-                if not is_padding:
-                    self.ttc_frames_seen += 1
-                    self.ttc_frames_covered += int(covered)
+                self.ttc_frames_seen += 1
+                self.ttc_frames_covered += int(covered)
                 self.gt_ttc.append(
                     self._frame_ttc(frame_boxes[keep], frame_labels[keep], eval_out, i, covered)
                 )
@@ -390,6 +395,33 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
                 self.pred_region_masks.append(
                     self._region_columns(pred_boxes, eval_out, i, available)
                 )
+
+    def _append_unscored_frame(self, frame_boxes: torch.Tensor, pred_boxes: torch.Tensor) -> None:
+        """Give an unscored frame empty entries in every per-frame list, so the ranks gather alike.
+
+        Args:
+            frame_boxes: Ground truth boxes of the frame, for their layout and device.
+            pred_boxes: Predicted boxes of the frame, for their layout and device.
+        """
+        device = frame_boxes.device
+        self.pred_boxes.append(pred_boxes.detach().to(dtype=torch.float32)[:0])
+        self.pred_scores.append(torch.zeros(0, device=pred_boxes.device))
+        self.pred_labels.append(torch.zeros(0, dtype=torch.long, device=pred_boxes.device))
+        self.gt_boxes.append(frame_boxes[:0])
+        self.gt_labels.append(torch.zeros(0, dtype=torch.long, device=device))
+        if self.collision is not None:
+            self.ttc_covered.append(torch.tensor([False], device=device))
+            self.gt_ttc.append(torch.zeros(0, device=device))
+            self.pred_ttc.append(torch.zeros(0, device=pred_boxes.device))
+        if self._component_filters and self._stage_filter_keys():
+            num_filters = len(self._component_filters)
+            self.region_available.append(torch.zeros(num_filters, dtype=torch.bool, device=device))
+            self.gt_region_masks.append(
+                torch.zeros((0, num_filters), dtype=torch.bool, device=device)
+            )
+            self.pred_region_masks.append(
+                torch.zeros((0, num_filters), dtype=torch.bool, device=pred_boxes.device)
+            )
 
     def bind_stage(self, stage: Any) -> None:
         """Drop the collision provider on stages where no metric reads TTC.
@@ -529,7 +561,7 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
 
         samples = []
         for index in range(len(self.gt_boxes)):
-            if bool(self.padding[index].item()):
+            if bool(self.unscored[index].item()):
                 continue
             if column is not None and not bool(self.region_available[index][column]):
                 continue

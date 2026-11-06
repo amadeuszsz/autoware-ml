@@ -62,6 +62,7 @@ class TestFrameCount(unittest.TestCase):
                     torch.tensor([_box(60.0)], dtype=torch.float32),
                 ],
                 "gt_labels": [torch.tensor([0]), torch.tensor([0])],
+                "scored": [True, True],
             }
         )
         # A frame with no boxes on either side is still an evaluated frame
@@ -70,6 +71,7 @@ class TestFrameCount(unittest.TestCase):
                 "predictions": [_prediction([])],
                 "gt_boxes": [torch.zeros((0, 9), dtype=torch.float32)],
                 "gt_labels": [torch.zeros((0,), dtype=torch.long)],
+                "scored": [True],
             }
         )
 
@@ -88,6 +90,7 @@ class TestFrameCount(unittest.TestCase):
                     torch.tensor([_box(60.0)], dtype=torch.float32),
                 ],
                 "gt_labels": [torch.tensor([0]), torch.tensor([0])],
+                "scored": [True, True],
             }
         )
 
@@ -106,6 +109,7 @@ class TestFrameCount(unittest.TestCase):
             "predictions": [_prediction([10.0])],
             "gt_boxes": [torch.tensor([_box(10.0)], dtype=torch.float32)],
             "gt_labels": [torch.tensor([0])],
+            "scored": [True],
         }
         suite.update(batch)
         suite.update(batch)

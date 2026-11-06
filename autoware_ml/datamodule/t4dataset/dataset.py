@@ -5,7 +5,7 @@ import json
 import logging
 from types import MappingProxyType
 
-from jaxtyping import Float32
+from jaxtyping import Float32, Float64
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 import polars as pl
 import numpy as np
@@ -173,6 +173,11 @@ class T4Dataset(BaseDataset):
                 dataset_task.log_dataset_info()
 
     @property
+    def serves_cameras(self) -> bool:
+        """Whether the samples carry the images of named cameras or the transforms load images."""
+        return self.served_cameras is not None or super().serves_cameras
+
+    @property
     def samples_per_record(self) -> int:
         """Number of samples every record serves, one per lidar or camera source."""
         if self.lidar_sources is not None:
@@ -200,12 +205,15 @@ class T4Dataset(BaseDataset):
             else self.get_lidar_source_view(record_index, self.lidar_sources[source_index])
         )
 
-        # A corpus whose masks are not used may have none, so the task is not asked for them.
-        # Every point gets the ignore index after the transforms, see apply_transforms.
+        frame_meta = self.get_frame_meta_sample(record_index, source_view)
+        # A corpus whose masks are not used and a frame between key frames may have none, so the
+        # task is not asked for them. Every point gets the ignore index after the transforms, see
+        # apply_transforms.
         data_samples = {
             task_type: dataset_task.get_data_sample(record_index)
             for task_type, dataset_task in self.dataset_tasks.items()
-            if self.seg3d_supervised or task_type is not TaskType.SEGMENTATION3D
+            if (self.seg3d_supervised and frame_meta.key_frame)
+            or task_type is not TaskType.SEGMENTATION3D
         }
 
         lidar_pointcloud_samples = self.get_lidar_pointcloud_data_samples(record_index, source_view)
@@ -252,7 +260,7 @@ class T4Dataset(BaseDataset):
             camera_image_data=None,
             detection3d_gt_bboxes_3d=detection3d_gt_bboxes_3d,
             segmentation3d_gt_sample=segmentation3d_gt_sample,
-            frame_meta=self.get_frame_meta_sample(record_index, source_view),
+            frame_meta=frame_meta,
             detection3d_traffic_cone_barrier_bbox_status=(
                 detection3d_traffic_cone_barrier_bbox_status
             ),
@@ -316,9 +324,10 @@ class T4Dataset(BaseDataset):
         )
 
     def apply_transforms(self, model_gt_sample: ModelGTSample) -> ModelGTSample:
-        """Run the transform pipeline and label the points of a corpus whose masks are unused.
+        """Run the transform pipeline and label the points of a frame without its mask.
 
-        Every point of such a corpus gets the ignore index. The labels are written after the
+        Every point of a corpus whose masks are unused and of a frame between key frames gets the
+        ignore index. The labels are written after the
         pipeline, when the cloud has its final length.
 
         Args:
@@ -330,7 +339,7 @@ class T4Dataset(BaseDataset):
         model_gt_sample = super().apply_transforms(model_gt_sample)
         if TaskType.SEGMENTATION3D not in self.dataset_tasks:
             return model_gt_sample
-        if self.seg3d_supervised:
+        if self.seg3d_supervised and model_gt_sample.frame_meta.key_frame:
             return model_gt_sample
 
         if model_gt_sample.point_cloud_data is None:
@@ -365,7 +374,7 @@ class T4Dataset(BaseDataset):
         lidar_frame = LidarFrameDataModel.load_from_dictionary(
             self.dataset_records_dataframe.item(idx, DatasetTableSchema.LIDAR_FRAMES.name)[0]
         )
-        sensor_to_ego = lidar_frame.lidar_sensor_to_ego_pose_matrix_fp32
+        sensor_to_ego = lidar_frame.lidar_sensor_to_ego_pose_matrix.astype(np.float64)
         if source_view is not None:
             sensor_to_ego = sensor_to_ego @ source_view.sensor_to_frame_matrix.numpy()
         scene_token = self.scene_token(idx, lidar_frame)
@@ -373,8 +382,8 @@ class T4Dataset(BaseDataset):
             # The boxes and the points live in the lidar sensor frame, so the map transform
             # composes the sensor mounting with the ego pose of the frame
             ego2global=torch.tensor(
-                lidar_frame.lidar_frame_ego_pose_to_global_matrix_fp32 @ sensor_to_ego,
-                dtype=torch.float32,
+                lidar_frame.lidar_frame_ego_pose_to_global_matrix @ sensor_to_ego,
+                dtype=torch.float64,
             ),
             scene_token=scene_token,
             # Resolved here, against this dataset's own root, so a source over another corpus
@@ -385,6 +394,7 @@ class T4Dataset(BaseDataset):
             timestamp=float(
                 self.dataset_records_dataframe.item(idx, DatasetTableSchema.TIMESTAMP_SECONDS.name)
             ),
+            key_frame=lidar_frame.lidar_keyframe,
         )
 
     def scene_token(self, idx: int, lidar_frame: LidarFrameDataModel) -> str:
@@ -498,7 +508,7 @@ class T4Dataset(BaseDataset):
             lidar_sensor_to_ego_pose_matrix: Float32[np.ndarray, "4 4"] = lidar_pointcloud_metadata[
                 LidarFrameDatasetSchema.lidar_sensor_to_ego_pose_matrix.name
             ]
-            lidar_to_ego_pose_to_global_matrix: Float32[np.ndarray, "4 4"] = (
+            lidar_to_ego_pose_to_global_matrix: Float64[np.ndarray, "4 4"] = (
                 lidar_pointcloud_metadata[
                     LidarFrameDatasetSchema.lidar_frame_ego_pose_to_global_matrix.name
                 ]
@@ -534,7 +544,7 @@ class T4Dataset(BaseDataset):
                     ),
                     lidar_to_ego_pose_to_global_matrix=torch.tensor(
                         lidar_to_ego_pose_to_global_matrix,
-                        dtype=torch.float32,
+                        dtype=torch.float64,
                     ),
                     lidar_sensor_to_lidar_sweep_matrix=torch.tensor(
                         lidar_sensor_to_lidar_sweep_matrix,

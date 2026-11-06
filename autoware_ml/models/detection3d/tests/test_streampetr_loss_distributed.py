@@ -126,7 +126,7 @@ def _matching_losses(
         outputs,
         [frame[2] for frame in frames],
         [frame[3] for frame in frames],
-        padding_mask=torch.zeros(len(frames), dtype=torch.bool),
+        supervised_mask=torch.ones(len(frames), dtype=torch.bool),
     )
     return torch.stack([losses["loss_cls"].detach(), losses["loss_bbox"].detach()])
 
@@ -178,7 +178,7 @@ def _dn_mixed_gt_worker(rank: int, world_size: int) -> None:
     )
 
     losses = head.loss(
-        outputs, [gt_boxes], [gt_labels], padding_mask=torch.zeros(1, dtype=torch.bool)
+        outputs, [gt_boxes], [gt_labels], supervised_mask=torch.ones(1, dtype=torch.bool)
     )
 
     # The worker runs in its own process, so it checks with a case of its own.
@@ -251,7 +251,7 @@ def _layer_loss(
         head_outputs,
         [boxes for _, _, boxes, _ in frames],
         [labels for *_, labels in frames],
-        padding_mask=torch.zeros(len(frames), dtype=torch.bool),
+        supervised_mask=torch.ones(len(frames), dtype=torch.bool),
     )["loss"]
 
 

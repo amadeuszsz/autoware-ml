@@ -18,6 +18,7 @@ from typing import Any
 import torch
 
 from autoware_ml.dataclasses.models.model_batch_inputs import ModelBatchInputs
+from autoware_ml.metrics.base import frame_scoring_eval_output
 
 
 def segmentation3d_frames_eval_output(
@@ -44,7 +45,7 @@ def segmentation3d_frames_eval_output(
             them.
 
     Returns:
-        ``{"seg3d_frames": [...]}`` with one entry per frame.
+        ``seg3d_frames`` with one entry per frame and the frame scoring flags.
     """
     frame_meta: dict[str, list[Any]] = {}
     gt_batch = batch_inputs.multi_task_gt_batch
@@ -98,7 +99,7 @@ def segmentation3d_frames_eval_output(
         for key, values in frame_meta.items():
             frame[key] = values[frame_index]
         frames.append(frame)
-    return {"seg3d_frames": frames}
+    return {"seg3d_frames": frames, **frame_scoring_eval_output(gt_batch)}
 
 
 def concat_frame_ids(offset: torch.Tensor, point_to_batch: torch.Tensor) -> torch.Tensor:

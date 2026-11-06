@@ -134,13 +134,22 @@ frames, each scene in time order, into one lane per batch position of every rank
 by at most one frame, and a shorter lane ends with a padding slot that repeats its last frame, so
 every rank runs the same number of batches and every split serves every frame exactly once as a real
 sample. The batch flags the padding slots in `ModelGTBatch.padding_mask`: a model leaves them out of
-its loss, and the logged batch size (`num_real_samples()`) and the detection metrics leave them
-out; the detection eval output still lists them, flagged, so every GPU gathers as many frames. A
-prediction writer drops them by the mask it gets with the batch. Anything that would reorder the
+its loss, and the logged batch size (`num_supervised_samples()`) and every metric suite leave them
+out. The eval output still lists them under its `scored` flags, so every GPU gathers as many frames.
+A prediction writer drops them by the mask it gets with the batch. Anything that would reorder the
 frames is refused: frame sampling, a shuffling dataloader and `trainer.overfit_batches` (shorten a
 run with `limit_train_batches` / `limit_val_batches` instead). A model config switches to it by
 composing `/datamodule/streaming@datamodule: default_streaming_datamodule` after its database
 datamodule.
+
+A scene annotated only at its key frames streams at the full lidar rate when its dataset sets
+`non_key_frames: true`: the records then also hold the frames between the key frames, with their
+sweeps but no camera frames, no boxes and no masks, and `FrameMetaSample.key_frame` tells them
+apart. `ModelGTBatch.supervised_mask()` leaves them out of the loss like the padding slots, and the
+metrics score the key frames only. Only the streaming datamodule serves such a database, since
+shuffled frames without annotations would teach empty scenes, and no dataset naming its cameras
+reads it. Only a model whose losses skip these frames, flagged by `skips_unsupervised_frames`,
+takes such a datamodule.
 
 ### Dataset
 

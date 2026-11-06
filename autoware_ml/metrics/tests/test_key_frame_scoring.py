@@ -1,0 +1,121 @@
+# Copyright 2026 TIER IV, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Unit tests for scoring only the key frames of a stream."""
+
+from __future__ import annotations
+
+import unittest
+
+from typing import Any
+
+import torch
+
+from autoware_ml.metrics.base import EvalStage, MetricRange
+from autoware_ml.metrics.detection3d.box_counts import BoxCounts
+from autoware_ml.metrics.detection3d.frame_count import FrameCount as DetectionFrameCount
+from autoware_ml.metrics.detection3d.suite import Detection3DMetricSuite
+from autoware_ml.metrics.segmentation3d.error_clusters import ErrorClusters
+from autoware_ml.metrics.segmentation3d.frame_count import FrameCount
+from autoware_ml.metrics.segmentation3d.point_cloud import Segmentation3DPointCloudMetricSuite
+from autoware_ml.metrics.report import MetricKey
+
+
+def _car(x: float) -> torch.Tensor:
+    """One unit car box on the x axis."""
+    box = torch.zeros((1, 9), dtype=torch.float32)
+    box[0, 0] = x
+    box[0, 3:6] = 1.0
+    return box
+
+
+def _eval_out(scored: list[bool]) -> dict[str, Any]:
+    """Three frames with one car and one car prediction each."""
+    return {
+        "predictions": [
+            {
+                "bboxes_3d": _car(10.0 * (index + 1)),
+                "scores_3d": torch.tensor([0.9]),
+                "labels_3d": torch.tensor([0]),
+            }
+            for index in range(3)
+        ],
+        "gt_boxes": [_car(10.0 * (index + 1)) for index in range(3)],
+        "gt_labels": [torch.tensor([0]) for _ in range(3)],
+        "scored": scored,
+    }
+
+
+def _seg_frame(pred: list[int], target: list[int]) -> dict[str, torch.Tensor]:
+    """One segmentation frame with points on the x axis and confident scores."""
+    num_points = len(pred)
+    scores = torch.full((num_points, 2), 0.05)
+    scores[torch.arange(num_points), torch.tensor(pred)] = 0.95
+    coord = torch.zeros((num_points, 3))
+    coord[:, 0] = torch.arange(num_points, dtype=torch.float32) * 0.1
+    return {
+        "coord": coord,
+        "pred": torch.tensor(pred),
+        "target": torch.tensor(target),
+        "scores": scores,
+    }
+
+
+class TestKeyFrameScoring(unittest.TestCase):
+    def test_the_unscored_frames_are_left_out(self) -> None:
+        """
+        Input: a key frame, then a frame between key frames and a padding slot, both unscored.
+        Expected: only the key frame counts, the unscored frames neither in the boxes nor the frames.
+        Check: one GT box, one prediction and one frame.
+        """
+        suite = Detection3DMetricSuite(
+            components=[BoxCounts(), DetectionFrameCount()],
+            class_names=("car", "pedestrian"),
+            ranges=(MetricRange("0-100m", 0.0, 100.0),),
+        )
+        suite.update(_eval_out([True, False, False]))
+        report = suite.result(EvalStage.VAL)
+
+        self.assertEqual(report.metric_value(MetricKey(name="num_gts_car")), 1.0)
+        self.assertEqual(report.metric_value(MetricKey(name="num_preds_car")), 1.0)
+        self.assertEqual(report.metric_value(MetricKey(name="num_frames")), 1.0)
+
+    def test_the_point_cloud_suite_scores_the_key_frames_only(self) -> None:
+        """
+        Input: a key frame with one wrong point of four, its padding copy and an unannotated frame.
+        Expected: only the key frame counts, as in the confusion suite.
+        Check: one frame and an error rate of a quarter.
+        """
+        suite = Segmentation3DPointCloudMetricSuite(
+            components=[FrameCount(stages=("test",)), ErrorClusters(stages=("test",))],
+            num_classes=2,
+            ignore_index=-1,
+            class_names=("a", "b"),
+            ranges=(),
+        )
+        suite.bind_stage(EvalStage.TEST)
+        suite.update(
+            {
+                "seg3d_frames": [
+                    _seg_frame([0, 0, 1, 1], [0, 0, 1, 0]),
+                    _seg_frame([0, 0, 1, 1], [0, 0, 1, 0]),
+                    _seg_frame([1, 1, 1, 1], [-1, -1, -1, -1]),
+                ],
+                "scored": [True, False, False],
+            }
+        )
+        report = suite.result(EvalStage.TEST)
+
+        self.assertEqual(report.metric_value(MetricKey(name="num_frames")), 1.0)
+        self.assertEqual(report.metric_value(MetricKey(name="error_rate")), 0.25)

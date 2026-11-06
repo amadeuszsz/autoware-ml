@@ -87,7 +87,8 @@ def test_seg3d_confusion_grouped_folds_intra_group_pairs() -> None:
                     "target": torch.tensor([1, 0, 3, 2]),  # all intra-group swaps
                     "coord": torch.zeros((4, 3)),
                 }
-            ]
+            ],
+            "scored": [True],
         }
     )
     report = suite.result(EvalStage.TEST)

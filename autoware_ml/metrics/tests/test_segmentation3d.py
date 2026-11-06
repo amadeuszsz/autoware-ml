@@ -24,7 +24,7 @@ def _suite(**kwargs):
 
 def _eval_out(pred, target, coord):
     """One-frame seg3d_frames payload (the contract both seg suites consume)."""
-    return {"seg3d_frames": [{"pred": pred, "target": target, "coord": coord}]}
+    return {"seg3d_frames": [{"pred": pred, "target": target, "coord": coord}], "scored": [True]}
 
 
 def _coord(num_points: int) -> torch.Tensor:
@@ -156,7 +156,8 @@ def test_autoware_seg3d_frame_count_sums_frames_across_batches() -> None:
             "seg3d_frames": [
                 {"pred": torch.tensor([0, 1]), "target": torch.tensor([0, 1]), "coord": _coord(2)},
                 {"pred": torch.tensor([1]), "target": torch.tensor([0]), "coord": _coord(1)},
-            ]
+            ],
+            "scored": [True, True],
         }
     )
     # A frame whose points are all ignored adds nothing to the matrix but is still a frame.

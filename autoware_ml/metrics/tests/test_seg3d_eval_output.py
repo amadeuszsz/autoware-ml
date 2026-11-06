@@ -24,7 +24,7 @@ def test_concat_frame_ids_buckets_by_offset() -> None:
     assert concat_frame_ids(offset, inverse).tolist() == [0, 0, 0, 1, 1, 1]
 
 
-def _batch_inputs(num_frames: int):
+def _batch_inputs(num_frames: int, key_frames: tuple[bool, bool] = (True, True)):
     """Build model inputs carrying the frame metadata and the boxes of every frame."""
     batch_inputs = build_batch_inputs(
         detection=build_detection3d_gt_batch(
@@ -37,6 +37,7 @@ def _batch_inputs(num_frames: int):
         scene_tokens=["scene-a", "scene-b"][:num_frames],
         timestamps=torch.zeros(num_frames, dtype=torch.float64),
         lanelet_map_paths=["/maps/a.osm", None][:num_frames],
+        key_frames=list(key_frames[:num_frames]),
     )
     gt_batch = batch_inputs.multi_task_gt_batch._replace(frame_meta_batch=frame_meta)
     return batch_inputs.replace(multi_task_gt_batch=gt_batch)
@@ -60,6 +61,24 @@ def test_segmentation3d_frames_eval_output_splits_and_passes_meta() -> None:
     assert frames[1]["lanelet_map_path"] is None
     assert frames[0]["gt_boxes"].shape == (1, 9)
     assert frames[1]["gt_box_labels"].shape == (0,)
+
+
+def test_segmentation3d_frames_eval_output_flags_the_scored_frames() -> None:
+    """
+    Input: a key frame and a frame between key frames.
+    Expected: the eval output carries the padding and key frame flags the suites score by.
+    """
+    labels = torch.zeros(2, dtype=torch.long)
+    out = segmentation3d_frames_eval_output(
+        torch.zeros((2, 3)),
+        labels,
+        labels,
+        torch.full((2, 2), 0.5),
+        torch.tensor([0, 1]),
+        2,
+        _batch_inputs(num_frames=2, key_frames=(True, False)),
+    )
+    assert out["scored"] == [True, False]
 
 
 def test_segmentation3d_frames_eval_output_rejects_misaligned_meta() -> None:

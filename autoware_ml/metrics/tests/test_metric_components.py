@@ -229,6 +229,7 @@ def test_suite_gates_metrics_by_configured_stages() -> None:
             ],
             "gt_boxes": [box.clone()],
             "gt_labels": [torch.tensor([0])],
+            "scored": [True],
         }
     )
 
@@ -248,6 +249,7 @@ def test_suite_gates_metrics_by_configured_stages() -> None:
             ],
             "gt_boxes": [box.clone()],
             "gt_labels": [torch.tensor([0])],
+            "scored": [True],
         }
     )
     test = suite.result(EvalStage.TEST)

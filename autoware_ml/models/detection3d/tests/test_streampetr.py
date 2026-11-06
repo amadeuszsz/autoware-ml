@@ -187,11 +187,15 @@ def _build_frame_meta(
     ego2globals: torch.Tensor | None = None,
 ) -> FrameMetaBatch:
     batch_size = len(timestamps)
+    if ego2globals is None:
+        ego2globals = torch.eye(4).repeat(batch_size, 1, 1)
     return FrameMetaBatch(
-        ego2globals=torch.eye(4).repeat(batch_size, 1, 1) if ego2globals is None else ego2globals,
+        # The dataset serves the poses in float64
+        ego2globals=ego2globals.double(),
         scene_tokens=list(scene_tokens or [f"db/scene_{index}/0" for index in range(batch_size)]),
         timestamps=torch.tensor(timestamps, dtype=torch.float64),
         lanelet_map_paths=[None] * batch_size,
+        key_frames=[True] * batch_size,
     )
 
 
@@ -314,7 +318,7 @@ def test_ground_truth_drops_the_vertical_velocity() -> None:
         [_collated_box(1.0, 2.0, 0.5, 4.0, 2.0, 1.5, 0.2, 0.3, 0.4, 0.9)], [torch.tensor([1])]
     )
 
-    gt_boxes, gt_labels = _ground_truth(gt_detections, torch.zeros(1, dtype=torch.bool))
+    gt_boxes, gt_labels = _ground_truth(gt_detections, torch.ones(1, dtype=torch.bool))
 
     # The head regresses [x, y, z, l, w, h, yaw, vx, vy]; the vertical velocity is dropped.
     torch.testing.assert_close(
@@ -1226,7 +1230,7 @@ def test_a_padded_eval_batch_keeps_one_entry_per_sample() -> None:
 
     assert len(predictions.detection3d_predictions) == 3
     assert len(eval_out["predictions"]) == len(eval_out["gt_boxes"]) == 3
-    assert eval_out["padding_mask"] == [False, True, False]
+    assert eval_out["scored"] == [True, False, True]
     assert eval_out["scene_token"] == ["db/a/0", "db/b/0", "db/c/0"]
 
 

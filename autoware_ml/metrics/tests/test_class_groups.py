@@ -82,7 +82,8 @@ def _update_confusion(suite) -> None:
                     "target": torch.tensor([1, 0, 3, 2]),
                     "coord": torch.zeros((4, 3)),
                 }
-            ]
+            ],
+            "scored": [True],
         }
     )
 
@@ -131,7 +132,8 @@ def test_point_suite_serves_both_taxonomies_from_one_cache() -> None:
                     "pred": torch.tensor([1, 0, 3, 2]),  # all intra-group confusion
                     "scores": torch.full((4, 4), 0.25),
                 }
-            ]
+            ],
+            "scored": [True],
         }
     )
     report = suite.result(EvalStage.TEST)
@@ -179,7 +181,8 @@ def test_point_suite_grouped_confidence_is_the_predicted_groups_mass() -> None:
                     "target": torch.tensor([2]),
                     "scores": torch.tensor([[0.4, 0.0, 0.35, 0.25]]),
                 }
-            ]
+            ],
+            "scored": [True],
         }
     )
     trained = suite.state_for(None)

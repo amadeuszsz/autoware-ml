@@ -49,6 +49,7 @@ class TestSuiteGroundTruthLabels(unittest.TestCase):
                     ],
                     "gt_boxes": [boxes],
                     "gt_labels": [torch.tensor([0, -1])],
+                    "scored": [True],
                 }
             )
 
