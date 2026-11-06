@@ -19,17 +19,18 @@ import torch
 
 from autoware_ml.metrics.base import (
     IDENTITY,
-    Metric,
     MetricFilter,
     MetricRange,
     MetricSuite,
     rank_zero,
 )
-from autoware_ml.metrics.class_groups import fold_labels, resolve_class_groups
+from autoware_ml.metrics.class_groups import fold_labels_tensor, resolve_class_groups
 from autoware_ml.metrics.detection3d.matching import (
+    Detection3DMetric,
     Detection3DState,
     clip_to_range,
     gt_keep_mask,
+    ignored_prediction_mask,
     resolve_match_cost,
 )
 from autoware_ml.metrics.detection3d.naming import metric_token
@@ -63,7 +64,7 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
 
     def __init__(
         self,
-        components: list[Metric[Detection3DState]],
+        components: list[Detection3DMetric],
         class_names: tuple[str, ...] | None = None,
         ranges: tuple[MetricRange, ...] = (
             MetricRange("0-50m", 0.0, 50.0),
@@ -73,6 +74,8 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
         ),
         max_distances: dict[str, float] | None = None,
         min_num_points: int = 0,
+        ignore_below_min_points: bool = False,
+        ignore_claim_distance: float = 2.0,
         match_cost: str = "center",
         class_groups: dict[str, list[str]] | None = None,
         collision: Any = None,
@@ -81,7 +84,8 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
         """Validate the class setup and register the accumulation states.
 
         Args:
-            components: Injected metrics, as in :class:`MetricSuite`.
+            components: Injected detection metrics, as in :class:`MetricSuite`, each declaring
+                its match distance.
             class_names: Ordered class names for metric keys, or ``None`` to report only
                 classes present in the ground truth.
             ranges: Radial windows every key is also emitted for.
@@ -89,6 +93,12 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
                 filter at accumulation.
             min_num_points: Minimum LiDAR points a GT box needs to count, 0 disables the
                 filter.
+            ignore_below_min_points: Leave out the GT boxes below ``min_num_points`` together
+                with the predictions that claim them, instead of counting those as false
+                positives. The kept boxes first take every prediction within the largest
+                ``match_distance`` of the components.
+            ignore_claim_distance: Largest match cost, in the match cost of the suite, at which
+                a prediction claims an ignored GT box.
             match_cost: Matching cost name, ``center`` or ``corner``.
             class_groups: Group name to member class names. When set, labels are folded onto
                 the group taxonomy at state build, so matching happens between grouped classes.
@@ -102,6 +112,23 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
         _validate_name_tokens(self.class_names)
         self.max_distances = max_distances
         self.min_num_points = int(min_num_points)
+        if ignore_below_min_points and self.min_num_points == 0:
+            raise ValueError("ignore_below_min_points needs a min_num_points filter above 0.")
+        self.ignore_below_min_points = bool(ignore_below_min_points)
+        self.ignore_claim_distance = float(ignore_claim_distance)
+        refused = [
+            type(component).__name__
+            for component in self.components
+            if not isinstance(component, Detection3DMetric)
+        ]
+        if refused:
+            raise TypeError(
+                f"Every component of a detection suite is a Detection3DMetric that declares its "
+                f"match distance, got {refused}."
+            )
+        self.kept_claim_distance = max(
+            (component.match_distance for component in self.components), default=0.0
+        )
         self.match_cost = str(match_cost)
         resolve_match_cost(self.match_cost)  # a config typo must fail at build, not after the epoch
         self.collision = collision
@@ -222,6 +249,49 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
             keys = tuple(dict.fromkeys(keys + ("gt_num_points",)))
         return keys
 
+    def _claims_ignored_boxes(
+        self,
+        gt_boxes: torch.Tensor,
+        gt_labels: torch.Tensor,
+        gt_num_points: torch.Tensor,
+        gt_keep: torch.Tensor,
+        pred_boxes: torch.Tensor,
+        pred_scores: torch.Tensor,
+        pred_labels: torch.Tensor,
+    ) -> torch.Tensor:
+        """Mark the predictions that claim a GT box in range but below the point filter.
+
+        Args:
+            gt_boxes: Every GT box of the frame ``(G, 7+)``.
+            gt_labels: Their labels ``(G,)``.
+            gt_num_points: Their LiDAR point counts ``(G,)``.
+            gt_keep: Keep mask of every GT filter ``(G,)``.
+            pred_boxes: Prediction boxes ``(P, 7+)``.
+            pred_scores: Prediction confidences ``(P,)``.
+            pred_labels: Prediction labels ``(P,)``.
+
+        Returns:
+            Boolean mask ``(P,)`` of the predictions to leave out.
+        """
+        in_range = gt_keep_mask(
+            gt_boxes, gt_labels, None, self.class_names or (), self.max_distances, 0
+        )
+        ignored = in_range & (gt_num_points < self.min_num_points)
+        # The claims run in the label space the suite matches in
+        gt_labels = self._fold(gt_labels)
+        return ignored_prediction_mask(
+            pred_boxes,
+            pred_scores,
+            self._fold(pred_labels),
+            gt_boxes[gt_keep],
+            gt_labels[gt_keep],
+            gt_boxes[ignored],
+            gt_labels[ignored],
+            resolve_match_cost(self.match_cost),
+            self.kept_claim_distance,
+            self.ignore_claim_distance,
+        )
+
     def update(self, eval_out: dict[str, Any]) -> None:
         """Accumulate one batch, applying every GT filter per frame.
 
@@ -271,9 +341,24 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
 
             self._note_frame()
             pred_boxes = prediction["bboxes_3d"].detach().to(dtype=torch.float32)
+            pred_scores = prediction["scores_3d"].detach().to(dtype=torch.float32)
+            pred_labels = prediction["labels_3d"].detach().to(dtype=torch.long)
+            if self.ignore_below_min_points:
+                pred_keep = ~self._claims_ignored_boxes(
+                    frame_boxes,
+                    frame_labels,
+                    num_points,
+                    keep,
+                    pred_boxes,
+                    pred_scores,
+                    pred_labels,
+                )
+                pred_boxes = pred_boxes[pred_keep]
+                pred_scores = pred_scores[pred_keep]
+                pred_labels = pred_labels[pred_keep]
             self.pred_boxes.append(pred_boxes)
-            self.pred_scores.append(prediction["scores_3d"].detach().to(dtype=torch.float32))
-            self.pred_labels.append(prediction["labels_3d"].detach().to(dtype=torch.long))
+            self.pred_scores.append(pred_scores)
+            self.pred_labels.append(pred_labels)
             self.gt_boxes.append(frame_boxes[keep])
             self.gt_labels.append(frame_labels[keep])
             is_padding = bool(padding_mask[i]) if padding_mask is not None else False
@@ -290,12 +375,7 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
                 )
                 self.pred_ttc.append(
                     self._frame_ttc(
-                        pred_boxes,
-                        prediction["labels_3d"].detach().to(dtype=torch.long),
-                        eval_out,
-                        i,
-                        covered,
-                        scores=prediction["scores_3d"].detach(),
+                        pred_boxes, pred_labels, eval_out, i, covered, scores=pred_scores
                     )
                 )
 
@@ -498,5 +578,4 @@ class Detection3DMetricSuite(MetricSuite[Detection3DState]):
         """Fold trained-class labels onto the behaviour taxonomy (identity if unset)."""
         if self._group_lut is None:
             return labels
-        folded = fold_labels(labels.numpy(), self._group_lut)
-        return torch.from_numpy(folded).to(dtype=torch.long)
+        return fold_labels_tensor(labels, self._group_lut)

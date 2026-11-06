@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from autoware_ml.metrics.base import EvalStage, Metric
+from autoware_ml.metrics.base import EvalStage
 from autoware_ml.metrics.detection3d.matching import (
+    Detection3DMetric,
     Detection3DState,
     mean_tp_errors,
     select_optimal_tp_errors,
@@ -19,7 +20,7 @@ from autoware_ml.metrics.detection3d.structures import (
 from autoware_ml.metrics.report import MetricReport
 
 
-class TpErrors(Metric[Detection3DState]):
+class TpErrors(Detection3DMetric):
     """Mean ATE/AOE/ASE/AVE/AAE per recall variant, plus the per-class
     per-threshold errors and their match counts. Variants are the configured
     recall targets plus the optimal-F1 operating point.
@@ -67,6 +68,11 @@ class TpErrors(Metric[Detection3DState]):
         for name, value in self.recall_targets.items():
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"recall target {name!r} must be in [0, 1], got {value}.")
+
+    @property
+    def match_distance(self) -> float:
+        """The largest threshold the metric matches at."""
+        return max(self.thresholds)
 
     def evaluate(self, state: Detection3DState, stage: EvalStage) -> MetricReport:
         """Compute true-positive error summaries for detection predictions.
