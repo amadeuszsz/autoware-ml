@@ -19,3 +19,5 @@ enable_rpe: false
 enable_flash: true
 upcast_attention: false
 upcast_softmax: false
+# Bounded attention logits, the deployed engines run the attention in fp16
+cosine_attention: true
