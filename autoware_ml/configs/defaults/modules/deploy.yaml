@@ -7,6 +7,8 @@ deploy:
     opset_version: 21
     modify_graph: null
     precision: fp32
+    # Share of the fp16 maximum every traced tensor stays within, null for fp32 engines
+    fp16_range_share: 0.25
   tensorrt:
     enabled: true
     workspace_size: 4294967296
